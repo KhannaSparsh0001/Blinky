@@ -1,83 +1,33 @@
 # 🧠 Clicky — AI Desktop Tutor for Students
 
-Clicky is a hackathon-ready Windows desktop AI tutor. It captures the current screen, extracts visible text, asks an AI model for short steps, and highlights the target UI text with a transparent always-on-top overlay.
-
 <div align="center">
 
-### *Ask. Learn. Click. Done.*
+### **Ask. Learn. Click. Done.**
 
-- Tauri 2, React, TypeScript
-- Python 3.11 worker scripts
-- AI providers:
-  - Ollama model (default): `gemma4:e4b`
-  - Groq vision model (optional): `llama-3.2-90b-vision-preview`
-- OCR: Windows OCR API first, EasyOCR fallback
-- Capture: `dxcam`
-- Active window and UI fallback: `pywinauto`
+An AI-powered Windows desktop tutor that teaches users software **directly on their screen** using **local AI**.
 
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Tauri](https://img.shields.io/badge/Tauri-2.x-orange)
-![React](https://img.shields.io/badge/React-TypeScript-61dafb)
-![Python](https://img.shields.io/badge/Python-3.11-yellow)
-![AI](https://img.shields.io/badge/AI-Gemma4%3Ae4b-green)
-![License](https://img.shields.io/badge/license-MIT-purple)
+<p>
+  <img src="https://img.shields.io/badge/platform-Windows-blue" />
+  <img src="https://img.shields.io/badge/Tauri-2.x-orange" />
+  <img src="https://img.shields.io/badge/React-TypeScript-61dafb" />
+  <img src="https://img.shields.io/badge/Python-3.11-yellow" />
+  <img src="https://img.shields.io/badge/AI-Gemma4:e4b-green" />
+  <img src="https://img.shields.io/badge/license-MIT-purple" />
+</p>
 
-An AI-powered Windows desktop tutor that teaches users software directly on their screen using local AI.
-
-1. Install prerequisites:
-   - Node.js 20+
-   - Rust stable
-   - Python 3.11+
-   - Ollama
-2. Pull the local model (default provider):
-   ```powershell
-   ollama pull gemma4:e4b
-   ```
-3. Install app dependencies:
-   ```powershell
-   npm install
-   npm run setup:python
-   npm run check:ollama
-   npm run dev
-   ```
-
-Press `Ctrl + Shift + Enter` to open the small command popup. `Ctrl + Shift + Space` also works as a fallback. Ask something like "How do I install Python extension?" and Clicky will capture the current screen, run OCR, call the configured AI provider, and highlight the matched target text.
-
-## Provider Configuration
-
-By default Clicky uses Ollama. To switch to Groq with image understanding, set these environment variables before running:
-
-```powershell
-$env:CLICKY_AI_PROVIDER="groq"
-$env:GROQ_API_KEY="your-groq-api-key"
-```
-
-Optional overrides:
-
-```powershell
-$env:CLICKY_GROQ_MODEL="llama-3.2-90b-vision-preview"
-$env:CLICKY_GROQ_URL="https://api.groq.com/openai/v1/chat/completions"
-```
-
-For Ollama overrides:
-
-```powershell
-$env:CLICKY_AI_PROVIDER="ollama"
-$env:CLICKY_OLLAMA_MODEL="gemma4:e4b"
-$env:CLICKY_OLLAMA_URL="http://localhost:11434/api/generate"
-```
 </div>
 
 ---
 
 # 🚀 What is Clicky?
 
-Clicky is a hackathon-ready AI desktop tutor that helps students learn software in real time.
+Clicky is a **hackathon-ready AI desktop tutor** that helps students learn software in real time.
 
 Instead of:
-- searching YouTube tutorials
-- reading long documentation
-- switching tabs repeatedly
+
+- Watching long YouTube tutorials
+- Reading confusing documentation
+- Switching tabs repeatedly
 
 Users can simply ask:
 
@@ -87,14 +37,50 @@ Users can simply ask:
 "How do I export this?"
 ```
 
-Clicky:
-1. Captures the current screen
-2. Reads visible UI text
-3. Detects the active application
-4. Uses local AI to generate instructions
-5. Highlights the exact button/menu to click
+Clicky will:
 
-Everything runs locally for speed, privacy, and zero API cost.
+1. Capture the current screen
+2. Read visible UI text
+3. Detect the active application
+4. Generate AI instructions
+5. Highlight the exact button/menu to click
+
+---
+
+# ✨ Features
+
+## 🖥️ Real-Time Screen Capture
+Captures the active screen instantly when the user asks a question.
+
+## 🔍 OCR-Based UI Understanding
+Extracts visible text, buttons, menus, and labels from applications.
+
+- Windows OCR API (primary)
+- EasyOCR fallback
+
+## 🧠 Local AI Reasoning
+Runs fully offline using:
+
+- Ollama
+- `gemma4:e4b`
+
+## 🎯 Smart Overlay Highlighting
+Highlights buttons and menus directly on the user's screen.
+
+## ⚡ Global Hotkey Workflow
+
+Open Clicky instantly using:
+
+```text
+CTRL + SHIFT + SPACE
+```
+
+## 🔒 Privacy Friendly
+
+- Fully local processing
+- No cloud screenshots
+- No tracking
+- No mandatory external APIs
 
 ---
 
@@ -102,52 +88,16 @@ Everything runs locally for speed, privacy, and zero API cost.
 
 Students waste hours learning basic software workflows.
 
-Clicky transforms software learning into an interactive real-time experience.
+Clicky transforms software learning into an **interactive real-time experience**.
 
-## Benefits
+### Benefits
 
 ✅ Learn directly inside apps  
 ✅ No long tutorials  
 ✅ No cloud dependency  
 ✅ Beginner-friendly guidance  
 ✅ Privacy-first local AI  
-✅ Fast workflow assistance  
-
----
-
-# ✨ Features
-
-## 🖥️ Real-Time Screen Capture
-Captures the active screen when the user asks a question.
-
-## 🔍 OCR-Based UI Understanding
-Extracts visible text/buttons/menus from applications.
-
-## 🧠 Local AI Reasoning
-Uses:
-- Ollama
-- Gemma (`gemma4:e4b`)
-
-for offline AI guidance.
-
-## 🎯 Smart Overlay Highlighting
-Highlights buttons and menus directly on the screen.
-
-## ⚡ Global Hotkey Workflow
-
-Press:
-
-```text
-CTRL + SHIFT + SPACE
-```
-
-to instantly ask Clicky for help.
-
-## 🔒 Privacy Friendly
-
-- Fully local processing
-- No cloud screenshots
-- No external APIs required
+✅ Fast workflow assistance
 
 ---
 
@@ -201,6 +151,7 @@ to instantly ask Clicky for help.
 |---|---|
 | Desktop Framework | Tauri 2 |
 | Frontend | React + TypeScript |
+| Backend Runtime | Python 3.11+ |
 | AI Runtime | Ollama |
 | AI Model | `gemma4:e4b` |
 | OCR | Windows OCR API |
@@ -208,44 +159,43 @@ to instantly ask Clicky for help.
 | Screen Capture | `dxcam` |
 | Window Detection | `pywinauto` |
 | Overlay System | Transparent Tauri Window |
-| Backend Runtime | Python 3.11+ |
 
 ---
 
 # 📂 Project Structure
 
 ```text
-/src-tauri
-    Tauri desktop shell
-    Overlay window
-    Global hotkeys
+src-tauri/
+├── Tauri desktop shell
+├── Overlay window
+└── Global hotkeys
 
-/frontend
-    React UI
-    Overlay rendering
-    Chat interface
+frontend/
+├── React UI
+├── Overlay rendering
+└── Chat interface
 
-/python
-    Capture scripts
-    OCR pipeline
-    AI integration
-    Window detection
-    Matching logic
+python/
+├── Capture scripts
+├── OCR pipeline
+├── AI integration
+├── Window detection
+└── Matching logic
 
-/shared
-    Shared schemas
-    JSON payloads
+shared/
+├── Shared schemas
+└── JSON payloads
 
-/scripts
-    Setup scripts
-    Startup helpers
+scripts/
+├── Setup scripts
+└── Startup helpers
 ```
 
 ---
 
 # ⚡ Installation
 
-## 1. Install Requirements
+## 1️⃣ Install Requirements
 
 ### Required Software
 
@@ -256,7 +206,7 @@ to instantly ask Clicky for help.
 
 ---
 
-## 2. Pull Local AI Model
+## 2️⃣ Pull the Local AI Model
 
 ```powershell
 ollama pull gemma4:e4b
@@ -264,7 +214,7 @@ ollama pull gemma4:e4b
 
 ---
 
-## 3. Install Dependencies
+## 3️⃣ Install Dependencies
 
 ```powershell
 npm install
@@ -274,7 +224,7 @@ npm run check:ollama
 
 ---
 
-## 4. Start Development Server
+## 4️⃣ Start Development Server
 
 ```powershell
 npm run dev
@@ -297,9 +247,10 @@ How do I install Python extension?
 ```
 
 Clicky will:
+
 1. Capture the current screen
 2. Extract visible UI text
-3. Detect the current application
+3. Detect the active application
 4. Generate AI instructions
 5. Highlight matching buttons/menus
 
@@ -309,13 +260,15 @@ Clicky will:
 
 ## User Opens VS Code
 
-User asks:
+### User asks:
 
 ```text
 How do I install Python extension?
 ```
 
-## Clicky Detects:
+---
+
+### Clicky detects:
 
 ```text
 Visible UI:
@@ -326,7 +279,9 @@ Visible UI:
 - Search
 ```
 
-## AI Response:
+---
+
+### AI response:
 
 ```json
 {
@@ -346,15 +301,19 @@ Visible UI:
 }
 ```
 
-## Overlay Highlights:
+---
+
+### Overlay highlights
+
 ✅ Extensions button  
-✅ Search field  
+✅ Search field
 
 ---
 
 # 🎮 Supported MVP Apps
 
 Optimized for:
+
 - VS Code
 - Chrome
 - Paint
@@ -366,29 +325,29 @@ Other applications may work depending on OCR quality.
 
 # 🔮 Future Improvements
 
-## Planned Features
+### Planned Features
 
 - Interactive step tracking
 - Voice assistant mode
 - Better UI matching
-- Accessibility features
+- Accessibility improvements
 - Multi-monitor support
-- Auto-guided walkthroughs
 - Cursor tracking
-- AI memory for workflows
+- AI workflow memory
+- Auto-guided walkthroughs
 
 ---
 
 # 🔒 Privacy
 
-Clicky is designed to be privacy-first.
+Clicky is designed to be **privacy-first**.
 
-## Local Processing
+### Local Processing
 
 - No cloud screenshots
 - No remote AI dependency
 - No external tracking
-- Local AI inference
+- Local AI inference only
 
 Everything stays on the user's device.
 
@@ -397,23 +356,22 @@ Everything stays on the user's device.
 # 🧪 Production Notes
 
 This MVP intentionally avoids:
-- FastAPI
-- local web servers
-- microservices
-- cloud APIs
 
-Tauri launches Python worker scripts directly and receives JSON over stdout.
+- FastAPI
+- Local web servers
+- Microservices
+- Cloud APIs
+
+Tauri launches Python worker scripts directly and communicates using JSON over stdout.
+
+### Why?
 
 This makes the app:
-- simpler
-- faster
-- more reliable for hackathons
 
-Ollama runs locally on:
-
-```text
-localhost:11434
-```
+- Simpler
+- Faster
+- Easier to debug
+- More reliable for hackathons
 
 ---
 
@@ -431,7 +389,7 @@ Recommended hackathon assets:
 
 # 🏆 Hackathon Pitch
 
-> “Clicky is an AI desktop tutor that teaches students software directly on their screen using local AI.”
+> **“Clicky is an AI desktop tutor that teaches students software directly on their screen using local AI.”**
 
 ---
 
@@ -440,11 +398,12 @@ Recommended hackathon assets:
 Contributions, ideas, and feedback are welcome.
 
 Feel free to:
-- open issues
-- suggest features
-- improve OCR
-- optimize overlays
-- add app-specific workflows
+
+- Open issues
+- Suggest features
+- Improve OCR
+- Optimize overlays
+- Add app-specific workflows
 
 ---
 
@@ -457,6 +416,7 @@ MIT License
 # ⭐ Support
 
 If you like this project:
+
 - Star the repository
 - Share it with friends
 - Contribute improvements
