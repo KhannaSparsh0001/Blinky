@@ -20,3 +20,17 @@ export async function showCommandBar(): Promise<void> {
 export async function resizeCommandWindow(height: number): Promise<void> {
   return invoke('resize_command_window', { height });
 }
+
+export interface ClickySettings {
+  provider: string;
+  shortcut: string;
+}
+
+export async function getSettings(): Promise<ClickySettings> {
+  return invoke<ClickySettings>('get_settings');
+}
+
+export async function saveSettings(provider: string, shortcut: string): Promise<void> {
+  return invoke('save_settings', { provider, shortcut });
+}
+

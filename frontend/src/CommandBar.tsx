@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ArrowUp, Loader2, Minus, Sparkles, X, Settings, Check } from 'lucide-react';
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { runTutor, showOverlay, resizeCommandWindow } from './lib/tauri';
+import { runTutor, showOverlay, resizeCommandWindow, getSettings, saveSettings } from './lib/tauri';
 
 export function CommandBar() {
   const [question, setQuestion] = useState('');
@@ -13,6 +13,46 @@ export function CommandBar() {
   const [showSettings, setShowSettings] = useState(false);
   const [provider, setProvider] = useState('groq');
   const [shortcut, setShortcut] = useState('Enter');
+
+  // Load settings on mount
+  useEffect(() => {
+    getSettings()
+      .then((settings) => {
+        setProvider(settings.provider);
+        setShortcut(settings.shortcut);
+      })
+      .catch((err) => console.error('Failed to load settings:', err));
+  }, []);
+
+  // Always focus the window on mouse enter to ensure one-click interaction
+  useEffect(() => {
+    const handleMouseEnter = () => {
+      void getCurrentWindow().setFocus();
+    };
+    
+    document.addEventListener('mouseenter', handleMouseEnter);
+    return () => {
+      document.removeEventListener('mouseenter', handleMouseEnter);
+    };
+  }, []);
+
+  const updateProvider = async (newProvider: string) => {
+    setProvider(newProvider);
+    try {
+      await saveSettings(newProvider, shortcut);
+    } catch (err) {
+      console.error('Failed to save provider:', err);
+    }
+  };
+
+  const updateShortcut = async (newShortcut: string) => {
+    setShortcut(newShortcut);
+    try {
+      await saveSettings(provider, newShortcut);
+    } catch (err) {
+      console.error('Failed to save shortcut:', err);
+    }
+  };
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
@@ -115,7 +155,7 @@ export function CommandBar() {
           </div>
           
           <div className="command-top-hint" data-tauri-drag-region>
-            Clicky app <span className="keys">Ctrl + Shift + Enter</span>
+            Clicky app <span className="keys">Ctrl + Shift + {shortcut === 'Space' ? 'Space' : 'Enter'}</span>
           </div>
 
           <div className="command-actions">
@@ -156,7 +196,7 @@ export function CommandBar() {
                 <button
                   type="button"
                   className={`dropdown-option ${provider === 'groq' ? 'active' : ''}`}
-                  onClick={() => setProvider('groq')}
+                  onClick={() => updateProvider('groq')}
                 >
                   <span>Groq</span>
                   {provider === 'groq' && <Check size={14} className="active-dot" />}
@@ -164,7 +204,7 @@ export function CommandBar() {
                 <button
                   type="button"
                   className={`dropdown-option ${provider === 'ollama' ? 'active' : ''}`}
-                  onClick={() => setProvider('ollama')}
+                  onClick={() => updateProvider('ollama')}
                 >
                   <span>Ollama</span>
                   {provider === 'ollama' && <Check size={14} className="active-dot" />}
@@ -178,7 +218,7 @@ export function CommandBar() {
                 <button
                   type="button"
                   className={`dropdown-option ${shortcut === 'Enter' ? 'active' : ''}`}
-                  onClick={() => setShortcut('Enter')}
+                  onClick={() => updateShortcut('Enter')}
                 >
                   <span>Ctrl + Shift + Enter</span>
                   {shortcut === 'Enter' && <Check size={14} className="active-dot" />}
@@ -186,7 +226,7 @@ export function CommandBar() {
                 <button
                   type="button"
                   className={`dropdown-option ${shortcut === 'Space' ? 'active' : ''}`}
-                  onClick={() => setShortcut('Space')}
+                  onClick={() => updateShortcut('Space')}
                 >
                   <span>Ctrl + Shift + Space</span>
                   {shortcut === 'Space' && <Check size={14} className="active-dot" />}
