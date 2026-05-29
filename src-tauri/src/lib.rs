@@ -73,6 +73,81 @@ fn resize_command_window(app: AppHandle, height: f64) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct ClickySettings {
+    provider: String,
+    shortcut: String,
+}
+
+#[tauri::command]
+async fn get_settings(app: AppHandle) -> Result<ClickySettings, String> {
+    let root = project_root(&app)?;
+    let env_vars = read_env_file(&root);
+    
+    let mut provider = "groq".to_string();
+    let mut shortcut = "Enter".to_string();
+    
+    for (key, val) in env_vars {
+        if key == "CLICKY_AI_PROVIDER" {
+            provider = val.to_lowercase();
+        } else if key == "CLICKY_SHORTCUT" {
+            shortcut = val;
+        }
+    }
+    
+    Ok(ClickySettings { provider, shortcut })
+}
+
+#[tauri::command]
+async fn save_settings(app: AppHandle, provider: String, shortcut: String) -> Result<(), String> {
+    let root = project_root(&app)?;
+    let env_path = root.join(".env");
+    
+    // Read the current contents of .env
+    let contents = std::fs::read_to_string(&env_path).unwrap_or_default();
+    
+    // Parse lines, update values, and rebuild
+    let mut lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
+    let mut provider_found = false;
+    let mut shortcut_found = false;
+    
+    for line in lines.iter_mut() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("CLICKY_AI_PROVIDER=") {
+            *line = format!("CLICKY_AI_PROVIDER={}", provider);
+            provider_found = true;
+        } else if trimmed.starts_with("CLICKY_SHORTCUT=") {
+            *line = format!("CLICKY_SHORTCUT={}", shortcut);
+            shortcut_found = true;
+        }
+    }
+    
+    if !provider_found {
+        lines.push(format!("CLICKY_AI_PROVIDER={}", provider));
+    }
+    if !shortcut_found {
+        lines.push(format!("CLICKY_SHORTCUT={}", shortcut));
+    }
+    
+    let new_contents = lines.join("\n") + "\n";
+    std::fs::write(&env_path, new_contents)
+        .map_err(|err| format!("Failed to write .env file: {err}"))?;
+        
+    Ok(())
+}
+
+fn get_active_shortcut_from_env(app: &AppHandle) -> String {
+    if let Ok(root) = project_root(app) {
+        let env_vars = read_env_file(&root);
+        for (key, val) in env_vars {
+            if key == "CLICKY_SHORTCUT" {
+                return val;
+            }
+        }
+    }
+    "Enter".to_string()
+}
+
 fn run_python_worker(app: &AppHandle, question: &str) -> Result<String, String> {
     let root = project_root(app)?;
     let script = root.join("python").join("main.py");
@@ -216,7 +291,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![run_tutor, show_overlay, hide_overlay, show_command_bar, resize_command_window])
+        .invoke_handler(tauri::generate_handler![
+            run_tutor,
+            show_overlay,
+            hide_overlay,
+            show_command_bar,
+            resize_command_window,
+            get_settings,
+            save_settings
+        ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -248,7 +331,15 @@ pub fn run() {
                 let app_handle = app_handle.clone();
                 if let Err(err) = app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        show_command_window(&app_handle);
+                        let active = get_active_shortcut_from_env(&app_handle);
+                        let is_match = match code {
+                            Code::Enter => active == "Enter",
+                            Code::Space => active == "Space",
+                            _ => false,
+                        };
+                        if is_match {
+                            show_command_window(&app_handle);
+                        }
                     }
                 }) {
                     eprintln!("Failed to register command shortcut {code:?}: {err}");
