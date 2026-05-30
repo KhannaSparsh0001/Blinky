@@ -112,6 +112,7 @@ export function App() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const toggleButtonRef = useRef<HTMLButtonElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   const showStatus = isRunning || status !== defaultStatus;
 
@@ -126,7 +127,7 @@ export function App() {
     };
   }, []);
 
-  // Handle clicking outside settings dropdown
+  // Handle clicking outside settings dropdown and window focus change/blur
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (
@@ -139,18 +140,56 @@ export function App() {
       }
     }
 
+    const handleBlur = () => {
+      setShowSettings(false);
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('blur', handleBlur);
+
+    // Listen for Tauri window focus changes to handle global screen clicks
+    const unlistenPromise = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) {
+        setShowSettings(false);
+      }
+    });
+
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('blur', handleBlur);
+      unlistenPromise.then((dispose) => dispose());
     };
   }, []);
 
-  // Automatically resize command window height based on UI expansion state
+  // Dynamically resize window height based on exact DOM container size to prevent bottom cutoffs when typing long text
   useEffect(() => {
-    const isExpanded = showSettings || steps.length > 0 || isRunning;
-    const targetHeight = isExpanded ? 580 : 170;
-    void resizeCommandWindow(targetHeight);
-  }, [showSettings, steps, isRunning]);
+    const formElement = formRef.current;
+    if (!formElement) return;
+
+    const resizeWindow = () => {
+      const formRect = formElement.getBoundingClientRect();
+      let height = formRect.height;
+
+      if (showSettings && dropdownRef.current) {
+        const dropdownRect = dropdownRef.current.getBoundingClientRect();
+        height = Math.max(height, 52 + dropdownRect.height);
+      }
+
+      const targetHeight = Math.ceil(height + 40);
+      void resizeCommandWindow(targetHeight);
+    };
+
+    resizeWindow();
+
+    const observer = new ResizeObserver(() => {
+      resizeWindow();
+    });
+
+    observer.observe(formElement);
+    return () => {
+      observer.disconnect();
+    };
+  }, [showSettings]);
 
   const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setQuestion(event.target.value);
@@ -193,7 +232,7 @@ export function App() {
 
   return (
     <main className="command-window">
-      <form className="command-popup command-mini" onSubmit={submit}>
+      <form ref={formRef} className="command-popup command-mini" onSubmit={submit}>
         <div 
           className="resize-handle resize-handle-left" 
           onPointerDown={(e) => startResize(e, 'left')}
@@ -212,9 +251,9 @@ export function App() {
           className="command-header" 
           data-tauri-drag-region
           onMouseDown={(event) => {
-            // Only start dragging if not clicking a button
-            if ((event.target as HTMLElement).tagName !== 'BUTTON' && (event.target as HTMLElement).parentElement?.tagName !== 'BUTTON') {
-              event.preventDefault();
+            // Only start dragging if not clicking a button, settings options, or interactive items
+            const target = event.target as HTMLElement;
+            if (!target.closest('button') && !target.closest('.command-settings-dropdown')) {
               void startDrag();
             }
           }}
@@ -311,7 +350,7 @@ export function App() {
         )}
 
         <div className="command-stack">
-          <div className="command-input">
+          <div className="command-input" onClick={() => inputRef.current?.focus()}>
             <textarea
               ref={inputRef}
               rows={1}
