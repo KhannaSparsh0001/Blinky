@@ -4,7 +4,7 @@ import psutil
 
 from utils.logging import get_logger
 
-LOGGER = get_logger("clicky.window")
+LOGGER = get_logger("blinky.window")
 
 SUPPORTED_PROCESSES = {
     "code.exe",
@@ -18,7 +18,7 @@ SUPPORTED_PROCESSES = {
 
 
 def get_target_window_element(window=None, target_pid: int | None = None):
-    """Retrieve the first visible top-level window in Z-order that is NOT Slicky itself
+    """Retrieve the first visible top-level window in Z-order that is NOT Blinky itself
     or a Windows system shell.
 
     *window* — pass a pre-resolved pywinauto element to skip Z-order scanning entirely.
@@ -51,8 +51,8 @@ def get_target_window_element(window=None, target_pid: int | None = None):
 
                 process_name = psutil.Process(process_id).name().lower()
                 
-                # Exclude Slicky, Tauri, or prompt bars
-                if "clicky" in process_name or "tauri" in process_name or "slicky" in title.lower():
+                # Exclude Blinky, Tauri, or prompt bars
+                if "blinky" in process_name or "tauri" in process_name or "blinky" in title.lower():
                     continue
                 
                 # Exclude Windows system shells and background services

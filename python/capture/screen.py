@@ -8,7 +8,7 @@ from PIL import ImageGrab
 
 from utils.logging import get_logger
 
-LOGGER = get_logger("clicky.capture")
+LOGGER = get_logger("blinky.capture")
 
 
 @dataclass

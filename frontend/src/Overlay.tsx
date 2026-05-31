@@ -23,7 +23,7 @@ export function Overlay() {
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
-    const unlisten = listen<TutorResult>('clicky://guidance', (event) => {
+    const unlisten = listen<TutorResult>('blinky://guidance', (event) => {
       setResult(event.payload);
       setDismissedKeys(new Set());
     });
@@ -52,22 +52,22 @@ export function Overlay() {
           const key = `${step.step}-${step.target_text}-${match.x}-${match.y}`;
 
           // Raw dimensions in overlay CSS pixels
-          const rawLeft   = Math.round(match.x * scaleX);
-          const rawTop    = Math.round(match.y * scaleY);
-          const rawWidth  = Math.max(8, Math.round(match.width  * scaleX));
+          const rawLeft = Math.round(match.x * scaleX);
+          const rawTop = Math.round(match.y * scaleY);
+          const rawWidth = Math.max(8, Math.round(match.width * scaleX));
           const rawHeight = Math.max(8, Math.round(match.height * scaleY));
 
           // Cap to MAX_BOX × MAX_BOX, keeping the element center fixed
-          const displayWidth  = Math.min(rawWidth,  MAX_BOX);
+          const displayWidth = Math.min(rawWidth, MAX_BOX);
           const displayHeight = Math.min(rawHeight, MAX_BOX);
-          const displayLeft   = rawLeft + Math.round((rawWidth  - displayWidth)  / 2);
-          const displayTop    = rawTop  + Math.round((rawHeight - displayHeight) / 2);
+          const displayLeft = rawLeft + Math.round((rawWidth - displayWidth) / 2);
+          const displayTop = rawTop + Math.round((rawHeight - displayHeight) / 2);
 
           return {
             key,
-            left:   displayLeft,
-            top:    displayTop,
-            width:  displayWidth,
+            left: displayLeft,
+            top: displayTop,
+            width: displayWidth,
             height: displayHeight,
           };
         })
@@ -76,7 +76,7 @@ export function Overlay() {
   }, [result, scaleX, scaleY]);
 
   useEffect(() => {
-    const unlisten = listen<GlobalClick>('clicky://global-click', (event) => {
+    const unlisten = listen<GlobalClick>('blinky://global-click', (event) => {
       const clickedFrame = frames.find((frame) => containsClick(frame, event.payload, scaleX, scaleY));
       if (!clickedFrame) return;
 

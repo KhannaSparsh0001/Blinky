@@ -25,13 +25,13 @@ export async function resizeAndMoveCommandWindow(x: number, y: number, width: nu
   return invoke('resize_and_move_command_window', { x, y, width, height });
 }
 
-export interface ClickySettings {
+export interface BlinkySettings {
   provider: string;
   shortcut: string;
 }
 
-export async function getSettings(): Promise<ClickySettings> {
-  return invoke<ClickySettings>('get_settings');
+export async function getSettings(): Promise<BlinkySettings> {
+  return invoke<BlinkySettings>('get_settings');
 }
 
 export async function saveSettings(provider: string, shortcut: string): Promise<void> {

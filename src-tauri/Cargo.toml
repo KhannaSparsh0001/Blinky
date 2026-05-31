@@ -1,12 +1,12 @@
 [package]
-name = "clicky"
+name = "blinky"
 version = "0.1.0"
-description = "Clicky AI desktop tutor"
-authors = ["Clicky Team"]
+description = "Blinky AI desktop tutor"
+authors = ["Blinky Team"]
 edition = "2021"
 
 [lib]
-name = "clicky_lib"
+name = "blinky_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

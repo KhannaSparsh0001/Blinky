@@ -23,7 +23,7 @@ export function App() {
   const startResize = async (event: React.PointerEvent<HTMLDivElement>, side: 'left' | 'right') => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    
+
     const appWindow = getCurrentWindow();
     const size = await appWindow.innerSize();
     const position = await appWindow.outerPosition();
@@ -43,7 +43,7 @@ export function App() {
 
   const handleResize = async (event: React.PointerEvent<HTMLDivElement>) => {
     if (!isResizing || !resizeRef.current) return;
-    
+
     const { startX, initialWidth, initialHeight, initialX, initialY, scaleFactor, side } = resizeRef.current;
     const dx = (event.screenX - startX) / scaleFactor;
 
@@ -84,7 +84,7 @@ export function App() {
     const handleMouseEnter = () => {
       void getCurrentWindow().setFocus();
     };
-    
+
     document.addEventListener('mouseenter', handleMouseEnter);
     return () => {
       document.removeEventListener('mouseenter', handleMouseEnter);
@@ -121,7 +121,7 @@ export function App() {
     const focusInput = () => window.setTimeout(() => inputRef.current?.focus(), 60);
     focusInput();
 
-    const unlisten = listen('clicky://open-command', focusInput);
+    const unlisten = listen('blinky://open-command', focusInput);
     return () => {
       unlisten.then((dispose) => dispose());
     };
@@ -233,22 +233,22 @@ export function App() {
   return (
     <main className="command-window">
       <form ref={formRef} className="command-popup command-mini" onSubmit={submit}>
-        <div 
-          className="resize-handle resize-handle-left" 
+        <div
+          className="resize-handle resize-handle-left"
           onPointerDown={(e) => startResize(e, 'left')}
           onPointerMove={handleResize}
           onPointerUp={stopResize}
           onPointerCancel={stopResize}
         />
-        <div 
-          className="resize-handle resize-handle-right" 
+        <div
+          className="resize-handle resize-handle-right"
           onPointerDown={(e) => startResize(e, 'right')}
           onPointerMove={handleResize}
           onPointerUp={stopResize}
           onPointerCancel={stopResize}
         />
-        <div 
-          className="command-header" 
+        <div
+          className="command-header"
           data-tauri-drag-region
           onMouseDown={(event) => {
             // Only start dragging if not clicking a button, settings options, or interactive items
@@ -261,9 +261,9 @@ export function App() {
           <div className="command-icon">
             <Sparkles size={18} />
           </div>
-          
+
           <div className="command-top-hint" data-tauri-drag-region>
-            Slicky app <span className="keys">Ctrl + Shift + {shortcut === 'Space' ? 'Space' : 'Enter'}</span>
+            Blinky app <span className="keys">Ctrl + Shift + {shortcut === 'Space' ? 'Space' : 'Enter'}</span>
           </div>
 
           <div className="command-actions">

@@ -14,7 +14,7 @@ from utils.matching import attach_matches
 from utils.uia import get_visible_ui_text
 from utils.window import get_active_window
 
-LOGGER = get_logger("clicky.main")
+LOGGER = get_logger("blinky.main")
 
 
 def run(question: str) -> dict:

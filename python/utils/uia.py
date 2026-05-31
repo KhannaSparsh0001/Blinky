@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from utils.logging import get_logger
 
-LOGGER = get_logger("clicky.uia")
+LOGGER = get_logger("blinky.uia")
 
 
 def get_visible_ui_text(window=None, target_pid: int | None = None) -> list[dict]:

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 
 def build_prompt(question: str, active_app: dict, ocr_items: list[dict]) -> str:
-    # Filter out any OCR items that belong to Slicky itself (the host tutor app)
-    # to prevent Slicky from referencing or recommending clicks inside its own UI.
-    slicky_ignored_terms = {
-        "slicky app", "slicky command", "ctrl + shift", "space", "enter", "ask anything", 
+    # Filter out any OCR items that belong to Blinky itself (the host tutor app)
+    # to prevent Blinky from referencing or recommending clicks inside its own UI.
+    blinky_ignored_terms = {
+        "blinky app", "blinky command", "ctrl + shift", "space", "enter", "ask anything", 
         "groq", "ollama", "shortcut key", "theme: ember", "about: v1.0.0", "action guide",
-        "slicky", "clicky"
+        "blinky", "blinky"
     }
     
     cleaned_question = question.lower().strip()
@@ -15,10 +15,10 @@ def build_prompt(question: str, active_app: dict, ocr_items: list[dict]) -> str:
     filtered_items = []
     for item in ocr_items:
         text = str(item.get("text", "")).lower().strip()
-        # Skip if the item matches any Slicky UI text
-        if any(term in text for term in slicky_ignored_terms):
+        # Skip if the item matches any Blinky UI text
+        if any(term in text for term in blinky_ignored_terms):
             continue
-        # Skip Slicky's input text box content matching the user's question
+        # Skip Blinky's input text box content matching the user's question
         if item.get("source") != "uia" and cleaned_question and text == cleaned_question:
             continue
         filtered_items.append(item)
@@ -36,7 +36,7 @@ def build_prompt(question: str, active_app: dict, ocr_items: list[dict]) -> str:
     ]
 
     return f"""
-You are Clicky, a free offline AI desktop tutor for students.
+You are Blinky, a free offline AI desktop tutor for students.
 
 The student asks: {question}
 
@@ -48,7 +48,7 @@ Visible OCR items:
 
 Rules:
 - ONLY reference visible UI elements from the OCR items.
-- ALWAYS ignore Slicky's own floating window. Slicky is the tutor app itself (labeled "Slicky app" in the header). NEVER suggest actions, clicks, or typing inside Slicky itself!
+- ALWAYS ignore Blinky's own floating window. Blinky is the tutor app itself (labeled "Blinky app" in the header). NEVER suggest actions, clicks, or typing inside Blinky itself!
 - NEVER invent buttons, menus, commands, tabs, or labels.
 - Use exact visible text names in target_text.
 - NEVER mention screen coordinates, physical coordinates, pixel offsets, or values (such as "y = 104px", "y-offset", "at y = 156") in the instruction, target_text, or summary. Explain instructions in clean human-friendly layout terms (e.g. "Click the Source Control button on the left sidebar").
