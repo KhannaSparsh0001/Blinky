@@ -25,31 +25,47 @@ def ask_groq_vision(prompt: str, screenshot_path: Path) -> dict[str, Any]:
 
     model = _active_groq_model()
     groq_url = os.getenv("CLICKY_GROQ_URL", DEFAULT_GROQ_URL).strip() or DEFAULT_GROQ_URL
+    
+    # Allow configuring timeout via environment variable, defaulting to 90s for slower networks/heavy API load
+    try:
+        timeout_val = int(os.getenv("CLICKY_GROQ_TIMEOUT", "90").strip())
+    except ValueError:
+        timeout_val = 90
 
     image_payload = _image_to_data_url(screenshot_path)
-    response = requests.post(
-        groq_url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "temperature": 0.1,
-            "max_tokens": 700,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_payload}},
-                    ],
-                }
-            ],
-        },
-        timeout=45,
-    )
+    
+    try:
+        response = requests.post(
+            groq_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0.1,
+                "max_tokens": 700,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": image_payload}},
+                        ],
+                    }
+                ],
+            },
+            timeout=timeout_val,
+        )
+    except requests.exceptions.Timeout:
+        raise RuntimeError(
+            f"Groq API request timed out after {timeout_val} seconds. Please check your network connection "
+            f"or switch CLICKY_AI_PROVIDER to local 'ollama' under your Settings for offline offline guidance."
+        )
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Groq API connection error: {exc}")
+
     if not response.ok:
         raise RuntimeError(_format_groq_error(response))
     body = response.json()

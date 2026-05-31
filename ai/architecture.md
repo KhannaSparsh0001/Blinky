@@ -1,6 +1,6 @@
 # Slicky — System Architecture & Technical Specifications
 
-Slicky is a local, privacy-first AI-powered desktop tutor for Windows. It captures the screen, extracts text through OCR and Windows UI Automation, resolves guidance via local heuristics or LLMs (Ollama / Groq), and projects a visual click overlay directly on the user's screen.
+Slicky is a local, privacy-first AI-powered desktop tutor for Windows. It captures the screen, extracts text through OCR and Windows UI Automation, resolves guidance via LLMs (Ollama / Groq), and projects a visual click overlay directly on the user's screen.
 
 This specification serves as the primary system-design reference for both human engineers and AI coding agents.
 
@@ -50,18 +50,18 @@ The system uses a multi-process architecture consisting of:
                          └─────────────────────────┘
                                        │
                                        ▼ (JSON Stdout)
-           ┌────────────────────────┐
-           │  B. Tauri App Shell    │
-           └────────────────────────┘
-                        │
-                        ▼ (clicky://guidance)
-           ┌────────────────────────┐
-           │  G. Overlay Canvas     │
-           │        (React)         │
-           └────────────────────────┘
-                        │
-                        ▼ (Draw Rings)
-                  User Desktop
+                          ┌────────────────────────┐
+                          │  B. Tauri App Shell    │
+                          └────────────────────────┘
+                                        │
+                                        ▼ (clicky://guidance)
+                          ┌────────────────────────┐
+                          │  G. Overlay Canvas     │
+                          │        (React)         │
+                          └────────────────────────┘
+                                        │
+                                        ▼ (Draw Rings)
+                                  User Desktop
 ```
 
 ---
@@ -144,7 +144,7 @@ The sequence diagram below traces the end-to-end flow of a single tutor request,
 * **Overlay Canvas (`Overlay.tsx`)**: Calculates scale factor ratios mapping from the saved 1920x1080 screenshot space to active user display coordinates, placing highlights on exact pixel targets.
 
 ### 3.3 Python Engine (`python/`)
-* **`main.py`**: Merges OCR and UIA coordinates via proximity grids, runs the local-intent routing, executes prompt templates, and runs fuzzy targets alignment.
+* **`main.py`**: Merges OCR and UIA coordinates via proximity grids, compiles prompt templates, executes dynamic AI model routing, and runs fuzzy targets alignment.
 * **`ocr/extract.py`**: OCR hub. Tries Windows WinRT OCR first (instant, lightweight C++ API), falling back to PyTorch-powered local `EasyOCR` if native WinRT bindings are missing.
 * **`utils/matching.py`**: Fuzzy matching utility. Scores targets using difflib string similarities alongside coordinate weight metrics.
 * **`utils/uia.py`**: Queries the Windows active window's UI Automation tree via `pywinauto`. Captures coordinate bounding boxes of IDE menus, tabs, and folder structures.

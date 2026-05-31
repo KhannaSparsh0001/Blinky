@@ -386,11 +386,6 @@ export function CommandBar() {
                         <span>{step.step || (idx + 1)}</span>
                         <div>
                           <p>{step.instruction}</p>
-                          {step.target_text && (
-                            <small className="target-text-badge">
-                              Target: <code>{step.target_text}</code>
-                            </small>
-                          )}
                         </div>
                       </li>
                     ))}

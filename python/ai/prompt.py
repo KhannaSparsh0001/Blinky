@@ -19,7 +19,7 @@ def build_prompt(question: str, active_app: dict, ocr_items: list[dict]) -> str:
         if any(term in text for term in slicky_ignored_terms):
             continue
         # Skip Slicky's input text box content matching the user's question
-        if cleaned_question and len(text) > 3 and (text in cleaned_question or cleaned_question in text):
+        if item.get("source") != "uia" and cleaned_question and text == cleaned_question:
             continue
         filtered_items.append(item)
 
@@ -51,6 +51,7 @@ Rules:
 - ALWAYS ignore Slicky's own floating window. Slicky is the tutor app itself (labeled "Slicky app" in the header). NEVER suggest actions, clicks, or typing inside Slicky itself!
 - NEVER invent buttons, menus, commands, tabs, or labels.
 - Use exact visible text names in target_text.
+- NEVER mention screen coordinates, physical coordinates, pixel offsets, or values (such as "y = 104px", "y-offset", "at y = 156") in the instruction, target_text, or summary. Explain instructions in clean human-friendly layout terms (e.g. "Click the Source Control button on the left sidebar").
 - Give concise beginner-friendly steps.
 - Maximum 1 step (only return the immediate next action).
 - If a sequence of actions is required, return only the FIRST immediate action for the current screen.
