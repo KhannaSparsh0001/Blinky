@@ -5,18 +5,63 @@ from utils.logging import get_logger
 LOGGER = get_logger("clicky.uia")
 
 
-def get_visible_ui_text() -> list[dict]:
+def get_visible_ui_text(window=None, target_pid: int | None = None) -> list[dict]:
     """Read visible UI Automation text from the active window.
 
-    This complements OCR for IDE sidebars, tabs, and tree rows where OCR can be
-    noisy but Windows UI Automation knows the element name and rectangle.
+    *window* — optional pre-resolved pywinauto element (skips Z-order scan).
+    *target_pid* — preferred: restrict the Z-order scan to this process ID so
+               that focus changes during the OCR phase don't affect which window
+               is scanned. A fresh COM element is resolved each call, avoiding
+               the stale-descriptor bug that occurs when an element is cached
+               for > ~15 s.
+
+    Windows UI Automation returns element bounding rectangles in
+    screen-absolute coordinates (logical pixels). These are in the same space
+    as the overlay window and match the screenshot after the scaleX/scaleY
+    transform applied in Overlay.tsx.
     """
     try:
-        from pywinauto import Desktop
+        from utils.window import get_target_window_element
 
-        active = Desktop(backend="uia").get_active()
+        active = get_target_window_element(window=window, target_pid=target_pid)
+        if not active:
+            LOGGER.warning("No target window resolved for UIA query")
+            return []
+
+        process_name = ""
+        try:
+            import psutil
+            process_name = psutil.Process(active.process_id()).name().lower()
+            LOGGER.info("UIA: active process = '%s'", process_name)
+        except Exception as exc:
+            LOGGER.warning("UIA: failed to resolve process name: %s", exc)
+
+        # Restrict traversal to interactive control types to prune layout panels
+        # and wrappers. Speeds up UIA tree scanning ~50x.
+        ALLOWED_CONTROL_TYPES = {
+            "Button",
+            "TabItem",
+            "MenuItem",
+            "TreeItem",
+            "Edit",
+            "Hyperlink",
+            "ListItem",
+            "HeaderItem",
+            "Custom",
+            "Image",
+            "Pane",
+        }
+
         items: list[dict] = []
+
         for element in active.descendants():
+            try:
+                ctype = element.element_info.control_type
+                if ctype not in ALLOWED_CONTROL_TYPES:
+                    continue
+            except Exception:
+                continue
+
             text = _element_text(element)
             if not text:
                 continue
@@ -27,11 +72,17 @@ def get_visible_ui_text() -> list[dict]:
             if width < 4 or height < 4:
                 continue
 
+            # Skip elements with clearly invalid coordinates (off-screen)
+            x = int(rect.left)
+            y = int(rect.top)
+            if x < -1000 or y < -1000:
+                continue
+
             items.append(
                 {
                     "text": text,
-                    "x": int(rect.left),
-                    "y": int(rect.top),
+                    "x": x,
+                    "y": y,
                     "width": width,
                     "height": height,
                     "confidence": 0.98,
@@ -39,8 +90,21 @@ def get_visible_ui_text() -> list[dict]:
                 }
             )
 
-        LOGGER.info("UI Automation returned %s visible text items", len(items))
+        # Debug: log sidebar-region elements so we can verify positions
+        sidebar_items = [i for i in items if i["x"] <= 100]
+        LOGGER.info(
+            "UIA: %d sidebar-region elements (x<=100) out of %d total",
+            len(sidebar_items), len(items),
+        )
+        for si in sidebar_items[:15]:
+            LOGGER.info(
+                "UIA sidebar: %-60s  x=%d y=%d w=%d h=%d",
+                repr(si["text"][:55]), si["x"], si["y"], si["width"], si["height"],
+            )
+
+        LOGGER.info("UI Automation returned %d visible text items total", len(items))
         return _dedupe(items)
+
     except Exception as exc:
         LOGGER.warning("UI Automation text extraction failed: %s", exc)
         return []
@@ -48,10 +112,16 @@ def get_visible_ui_text() -> list[dict]:
 
 def _element_text(element) -> str:
     try:
-        text = element.window_text() or element.element_info.name or ""
+        name = element.window_text() or element.element_info.name or ""
+        help_text = ""
+        try:
+            help_text = element.element_info.help_text or ""
+        except Exception:
+            pass
+        # Prefer help_text (tooltip/accessible description) when available.
+        text = help_text if help_text.strip() else name
     except Exception:
         return ""
-
     return " ".join(str(text).strip().split())
 
 

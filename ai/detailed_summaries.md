@@ -179,9 +179,3 @@ Formats screen context into a compact markdown instruction set for the model.
   To prevent the AI model from instructing users to click inside the Slicky app itself, `build_prompt()` filters out any OCR coordinates containing words from the `slicky_ignored_terms` set (e.g. "Slicky app", "groq", "ollama", "ask anything"). It also filters out OCR elements that match the user's input question.
 * **Text Length Optimization**:
   To avoid exceeding LLM context limits, the prompt builder limits the OCR elements list to the first $180$ elements.
-
-### 3.6 `python/ai/local_intents.py` (Deterministic router)
-Intercepts common queries to provide immediate, reliable answers.
-
-* **`answer_local_question(question: str, visible_items: list) -> dict | None`**:
-  Checks if the normalized query contains the word "frontend". If found, it searches `visible_items` for files matching `frontend/src/app.tsx` or `app.tsx`. If found, it returns immediate, structured navigation steps, bypassing model inference completely.

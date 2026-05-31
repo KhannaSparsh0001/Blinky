@@ -38,6 +38,11 @@ export function Overlay() {
   const scaleX = window.innerWidth / screenshotWidth;
   const scaleY = window.innerHeight / screenshotHeight;
   const frames = useMemo<HighlightFrame[]>(() => {
+    // Maximum size the highlight box will grow to.
+    // UIA elements in Electron can have large bounding rects (e.g. full
+    // sidebar width); we cap and center so the indicator stays icon-sized.
+    const MAX_BOX = 50;
+
     return (
       result?.steps
         .map((step) => {
@@ -45,12 +50,25 @@ export function Overlay() {
           if (!match) return null;
 
           const key = `${step.step}-${step.target_text}-${match.x}-${match.y}`;
+
+          // Raw dimensions in overlay CSS pixels
+          const rawLeft   = Math.round(match.x * scaleX);
+          const rawTop    = Math.round(match.y * scaleY);
+          const rawWidth  = Math.max(8, Math.round(match.width  * scaleX));
+          const rawHeight = Math.max(8, Math.round(match.height * scaleY));
+
+          // Cap to MAX_BOX × MAX_BOX, keeping the element center fixed
+          const displayWidth  = Math.min(rawWidth,  MAX_BOX);
+          const displayHeight = Math.min(rawHeight, MAX_BOX);
+          const displayLeft   = rawLeft + Math.round((rawWidth  - displayWidth)  / 2);
+          const displayTop    = rawTop  + Math.round((rawHeight - displayHeight) / 2);
+
           return {
             key,
-            left: Math.round(match.x * scaleX),
-            top: Math.round(match.y * scaleY),
-            width: Math.max(8, Math.round(match.width * scaleX)),
-            height: Math.max(8, Math.round(match.height * scaleY)),
+            left:   displayLeft,
+            top:    displayTop,
+            width:  displayWidth,
+            height: displayHeight,
           };
         })
         .filter((frame): frame is HighlightFrame => Boolean(frame)) || []
