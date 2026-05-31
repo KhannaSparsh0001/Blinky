@@ -1,4 +1,4 @@
-# 🧠 Clicky — AI Desktop Tutor for Students
+# 🧠 Blinky — AI Desktop Tutor for Students
 
 <div align="center">
 
@@ -72,14 +72,14 @@ npm run check:ollama
 
 ---
 
-## 4️⃣ Start Clicky
+## 4️⃣ Start Blinky
 
 ```powershell
 npm run dev
 ```
 
 
-## ⌨️ Open Clicky
+## ⌨️ Open Blinky
 
 ### Main Hotkey
 
@@ -101,7 +101,7 @@ Ask something like:
 How do I install Python extension?
 ```
 
-Clicky will:
+Blinky will:
 
 * Capture the current screen
 * Run OCR
@@ -115,34 +115,34 @@ Clicky will:
 
 ## Provider Configuration
 
-By default Clicky uses Ollama. To switch to Groq with image understanding, set these environment variables before running:
+By default Blinky uses Ollama. To switch to Groq with image understanding, set these environment variables before running:
 
 ```powershell
-$env:CLICKY_AI_PROVIDER="groq"
+$env:BLINKY_AI_PROVIDER="groq"
 $env:GROQ_API_KEY="your-groq-api-key"
 ```
 
 Optional overrides:
 
 ```powershell
-$env:CLICKY_GROQ_MODEL="llama-3.2-90b-vision-preview"
-$env:CLICKY_GROQ_URL="https://api.groq.com/openai/v1/chat/completions"
+$env:BLINKY_GROQ_MODEL="llama-3.2-90b-vision-preview"
+$env:BLINKY_GROQ_URL="https://api.groq.com/openai/v1/chat/completions"
 ```
 
 For Ollama overrides:
 
 ```powershell
-$env:CLICKY_AI_PROVIDER="ollama"
-$env:CLICKY_OLLAMA_MODEL="gemma4:e4b"
-$env:CLICKY_OLLAMA_URL="http://localhost:11434/api/generate"
+$env:BLINKY_AI_PROVIDER="ollama"
+$env:BLINKY_OLLAMA_MODEL="gemma4:e4b"
+$env:BLINKY_OLLAMA_URL="http://localhost:11434/api/generate"
 ```
 </div>
 
 ---
 
-# 🚀 What is Clicky?
+# 🚀 What is Blinky?
 
-Clicky is a **hackathon-ready AI desktop tutor** that helps students learn software in real time.
+Blinky is a **hackathon-ready AI desktop tutor** that helps students learn software in real time.
 
 Instead of:
 
@@ -158,7 +158,7 @@ Users can simply ask:
 "How do I export this?"
 ```
 
-Clicky will:
+Blinky will:
 
 1. Capture the current screen
 2. Read visible UI text
@@ -190,7 +190,7 @@ Highlights buttons and menus directly on the user's screen.
 
 ## ⚡ Global Hotkey Workflow
 
-Open Clicky instantly using:
+Open Blinky instantly using:
 
 ```text
 CTRL + SHIFT + SPACE
@@ -209,7 +209,7 @@ CTRL + SHIFT + SPACE
 
 Students waste hours learning basic software workflows.
 
-Clicky transforms software learning into an **interactive real-time experience**.
+Blinky transforms software learning into an **interactive real-time experience**.
 
 ### Benefits
 
@@ -367,7 +367,7 @@ Then ask:
 How do I install Python extension?
 ```
 
-Clicky will:
+Blinky will:
 
 1. Capture the current screen
 2. Extract visible UI text
@@ -389,7 +389,7 @@ How do I install Python extension?
 
 ---
 
-### Clicky detects:
+### Blinky detects:
 
 ```text
 Visible UI:
@@ -461,7 +461,7 @@ Other applications may work depending on OCR quality.
 
 # 🔒 Privacy
 
-Clicky is designed to be **privacy-first**.
+Blinky is designed to be **privacy-first**.
 
 ### Local Processing
 
@@ -510,7 +510,7 @@ Recommended hackathon assets:
 
 # 🏆 Hackathon Pitch
 
-> **“Clicky is an AI desktop tutor that teaches students software directly on their screen using local AI.”**
+> **“Blinky is an AI desktop tutor that teaches students software directly on their screen using local AI.”**
 
 ---
 

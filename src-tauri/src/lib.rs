@@ -34,7 +34,7 @@ async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<serde_json::
 
     if let Some(overlay) = app.get_webview_window("overlay") {
         configure_overlay_passthrough(&overlay);
-        let _ = overlay.emit("clicky://guidance", parsed.clone());
+        let _ = overlay.emit("blinky://guidance", parsed.clone());
         let _ = overlay.show();
     }
 
@@ -88,13 +88,13 @@ fn resize_and_move_command_window(app: AppHandle, x: f64, y: f64, width: f64, he
 }
 
 #[derive(Serialize, Deserialize)]
-struct ClickySettings {
+struct BlinkySettings {
     provider: String,
     shortcut: String,
 }
 
 #[tauri::command]
-async fn get_settings(app: AppHandle) -> Result<ClickySettings, String> {
+async fn get_settings(app: AppHandle) -> Result<BlinkySettings, String> {
     let root = project_root(&app)?;
     let env_vars = read_env_file(&root);
     
@@ -102,14 +102,14 @@ async fn get_settings(app: AppHandle) -> Result<ClickySettings, String> {
     let mut shortcut = "Enter".to_string();
     
     for (key, val) in env_vars {
-        if key == "CLICKY_AI_PROVIDER" {
+        if key == "BLINKY_AI_PROVIDER" {
             provider = val.to_lowercase();
-        } else if key == "CLICKY_SHORTCUT" {
+        } else if key == "BLINKY_SHORTCUT" {
             shortcut = val;
         }
     }
     
-    Ok(ClickySettings { provider, shortcut })
+    Ok(BlinkySettings { provider, shortcut })
 }
 
 #[tauri::command]
@@ -127,20 +127,20 @@ async fn save_settings(app: AppHandle, provider: String, shortcut: String) -> Re
     
     for line in lines.iter_mut() {
         let trimmed = line.trim();
-        if trimmed.starts_with("CLICKY_AI_PROVIDER=") {
-            *line = format!("CLICKY_AI_PROVIDER={}", provider);
+        if trimmed.starts_with("BLINKY_AI_PROVIDER=") {
+            *line = format!("BLINKY_AI_PROVIDER={}", provider);
             provider_found = true;
-        } else if trimmed.starts_with("CLICKY_SHORTCUT=") {
-            *line = format!("CLICKY_SHORTCUT={}", shortcut);
+        } else if trimmed.starts_with("BLINKY_SHORTCUT=") {
+            *line = format!("BLINKY_SHORTCUT={}", shortcut);
             shortcut_found = true;
         }
     }
     
     if !provider_found {
-        lines.push(format!("CLICKY_AI_PROVIDER={}", provider));
+        lines.push(format!("BLINKY_AI_PROVIDER={}", provider));
     }
     if !shortcut_found {
-        lines.push(format!("CLICKY_SHORTCUT={}", shortcut));
+        lines.push(format!("BLINKY_SHORTCUT={}", shortcut));
     }
     
     let new_contents = lines.join("\n") + "\n";
@@ -154,7 +154,7 @@ fn get_active_shortcut_from_env(app: &AppHandle) -> String {
     if let Ok(root) = project_root(app) {
         let env_vars = read_env_file(&root);
         for (key, val) in env_vars {
-            if key == "CLICKY_SHORTCUT" {
+            if key == "BLINKY_SHORTCUT" {
                 return val;
             }
         }
@@ -364,7 +364,7 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("failed to run Slicky");
+        .expect("failed to run Blinky");
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
@@ -372,8 +372,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_command, &quit])?;
 
-    let mut tray = TrayIconBuilder::with_id("clicky")
-        .tooltip("Slicky")
+    let mut tray = TrayIconBuilder::with_id("blinky")
+        .tooltip("Blinky")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -398,7 +398,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 fn show_command_window(app: &AppHandle) {
     if let Some(command) = app.get_webview_window("command") {
-        let _ = command.emit("clicky://open-command", ());
+        let _ = command.emit("blinky://open-command", ());
         let _ = command.unminimize();
         let _ = command.show();
         let _ = command.set_focus();
@@ -415,7 +415,7 @@ fn start_global_click_listener(app: AppHandle) {
                 if let Some(overlay) = app.get_webview_window("overlay") {
                     if overlay.is_visible().unwrap_or(false) {
                         let click = click.with_overlay_metrics(&overlay);
-                        let _ = overlay.emit("clicky://global-click", click);
+                        let _ = overlay.emit("blinky://global-click", click);
                     }
                 }
             }
@@ -494,9 +494,9 @@ mod tests {
     #[test]
     fn parses_env_line_with_quoted_value() {
         assert_eq!(
-            parse_env_line(r#"CLICKY_GROQ_MODEL="meta-llama/llama-4-scout-17b-16e-instruct""#),
+            parse_env_line(r#"BLINKY_GROQ_MODEL="meta-llama/llama-4-scout-17b-16e-instruct""#),
             Some((
-                "CLICKY_GROQ_MODEL".to_string(),
+                "BLINKY_GROQ_MODEL".to_string(),
                 "meta-llama/llama-4-scout-17b-16e-instruct".to_string()
             ))
         );

@@ -1,6 +1,6 @@
-# Slicky — System Architecture & Technical Specifications
+# Blinky — System Architecture & Technical Specifications
 
-Slicky is a local, privacy-first AI-powered desktop tutor for Windows. It captures the screen, extracts text through OCR and Windows UI Automation, resolves guidance via LLMs (Ollama / Groq), and projects a visual click overlay directly on the user's screen.
+Blinky is a local, privacy-first AI-powered desktop tutor for Windows. It captures the screen, extracts text through OCR and Windows UI Automation, resolves guidance via LLMs (Ollama / Groq), and projects a visual click overlay directly on the user's screen.
 
 This specification serves as the primary system-design reference for both human engineers and AI coding agents.
 
@@ -55,7 +55,7 @@ The system uses a multi-process architecture consisting of:
                           │  B. Tauri App Shell    │
                           └────────────────────────┘
                                         │
-                                        ▼ (clicky://guidance)
+                                        ▼ (blinky://guidance)
                           ┌────────────────────────┐
                           │  G. Overlay Canvas     │
                           │        (React)         │
@@ -168,7 +168,7 @@ The sequence diagram below traces the end-to-end flow of a single tutor request,
 * **`ocr/extract.py`**: OCR hub. Tries Windows WinRT OCR first (instant, lightweight C++ API), falling back to PyTorch-powered local `EasyOCR` if native WinRT bindings are missing.
 * **`utils/matching.py`**: Fuzzy matching utility. Scores targets using difflib string similarities alongside coordinate weight metrics.
 * **`utils/uia.py`**: Queries the Windows active window's UI Automation tree via `pywinauto`. Accepts an optional `target_pid` so it always scans the app that was in focus at query time, not the app in focus when UIA runs (which may differ after the OCR wait).
-* **`utils/window.py`**: Z-order window scanner. Returns the first non-Slicky visible window. Accepts `target_pid` to restrict the scan to a specific process, enabling PID-based window locking across the OCR phase.
+* **`utils/window.py`**: Z-order window scanner. Returns the first non-Blinky visible window. Accepts `target_pid` to restrict the scan to a specific process, enabling PID-based window locking across the OCR phase.
 
 ---
 
@@ -249,19 +249,19 @@ If an unhandled exception occurs inside the worker, it prints a standard error p
 
 ### 4.3 Tauri Inter-Process Events
 
-#### `clicky://guidance`
+#### `blinky://guidance`
 * **Source**: Tauri Command `run_tutor`
 * **Destination**: `/overlay` webview
 * **Payload**: The exact JSON stdout structure from the Python worker.
 * **Action**: Signals the overlay webview to display highlight rings.
 
-#### `clicky://open-command`
+#### `blinky://open-command`
 * **Source**: Tauri Global Hotkey handler
 * **Destination**: `/command` webview
 * **Payload**: `()`
 * **Action**: Commands the popup bar to focus the textarea.
 
-#### `clicky://global-click`
+#### `blinky://global-click`
 * **Source**: Rust background mouse thread
 * **Destination**: `/overlay` webview
 * **Payload**:
@@ -361,12 +361,12 @@ Configure system variables inside a `.env` file in the project root:
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
-| `CLICKY_AI_PROVIDER` | `ollama` | Intelligence source. Set to `ollama` (local) or `groq` (cloud). |
-| `CLICKY_OLLAMA_URL` | `http://localhost:11434/api/generate` | Custom URL endpoint for local Ollama instances. |
-| `CLICKY_OLLAMA_MODEL` | `gemma4:e4b` | Ollama model name to pull and execute. |
-| `CLICKY_GROQ_MODEL` | `llama-3.1-70b-versatile` | Groq model. Vision models are chosen dynamically. |
-| `CLICKY_GROQ_API_KEY` | *(None)* | API secret key needed if using Groq cloud options. |
-| `CLICKY_SHORTCUT` | `Enter` | The primary popup hotkey. Evaluates to `Ctrl + Shift + Enter`. |
+| `BLINKY_AI_PROVIDER` | `ollama` | Intelligence source. Set to `ollama` (local) or `groq` (cloud). |
+| `BLINKY_OLLAMA_URL` | `http://localhost:11434/api/generate` | Custom URL endpoint for local Ollama instances. |
+| `BLINKY_OLLAMA_MODEL` | `gemma4:e4b` | Ollama model name to pull and execute. |
+| `BLINKY_GROQ_MODEL` | `llama-3.1-70b-versatile` | Groq model. Vision models are chosen dynamically. |
+| `BLINKY_GROQ_API_KEY` | *(None)* | API secret key needed if using Groq cloud options. |
+| `BLINKY_SHORTCUT` | `Enter` | The primary popup hotkey. Evaluates to `Ctrl + Shift + Enter`. |
 
 ---
 
@@ -401,7 +401,7 @@ Common gotchas and error conditions encountered during Windows native developmen
   1. **COM Staleness**: UIA was called after OCR on a cached `UIAWrapper` object. The `descendants()` call returns very few items (e.g. 4 instead of 115).
   2. **Wrong Window**: OCR took 15 s during which the user focused a different app; UIA then scanned that app's tree.
   3. **Missing UIA→Screenshot scale**: UIA returns physical screen pixels; if not multiplied by `screenshot.width / screen_width`, coordinates overshoot on non-1080p screens.
-* **Diagnosis**: Check `tmp/logs/clicky.log` for:
+* **Diagnosis**: Check `tmp/logs/blinky.log` for:
   * `UIA: active process = '...'` — confirm it matches the intended app.
   * `UIA: N sidebar-region elements` — N should be 8–12 for VS Code; if N < 5, COM is stale.
   * `Scaling UIA coords from screen (AxB) → screenshot (CxD)` — confirms the normalisation ran.
@@ -409,15 +409,15 @@ Common gotchas and error conditions encountered during Windows native developmen
 
 ### 8.3 Offsets or Drifting in Overlay Highlight Rings (DPI Scaling)
 * **Symptom**: Highlights render consistently offset from visual elements across all elements.
-* **Root Cause**: Windows display scaling (e.g. `125%` or `150%`) can affect DPI. Verify scale factor is captured correctly via `clicky://global-click` coordinate logs.
+* **Root Cause**: Windows display scaling (e.g. `125%` or `150%`) can affect DPI. Verify scale factor is captured correctly via `blinky://global-click` coordinate logs.
 * **Workaround**: Tauri's `overlay.scale_factor()` queries native display properties. The UIA→screenshot normalisation handles aspect-ratio mismatch automatically.
 
 ### 8.4 Local Ollama Inference Has Extreme Latency
-* **Symptom**: Slicky status is stuck at `Reading the screen...` for more than 10 seconds.
+* **Symptom**: Blinky status is stuck at `Reading the screen...` for more than 10 seconds.
 * **Root Cause**: Ollama executes models on standard CPU cores if no compatible Nvidia CUDA or AMD ROCm graphics engines are detected.
-* **Workaround**: Verify Ollama is downloaded and pulled via `ollama list`. If running on CPU-only machines, set `CLICKY_AI_PROVIDER=groq` inside your `.env` to delegate reasoning to Groq cloud APIs instantly.
+* **Workaround**: Verify Ollama is downloaded and pulled via `ollama list`. If running on CPU-only machines, set `BLINKY_AI_PROVIDER=groq` inside your `.env` to delegate reasoning to Groq cloud APIs instantly.
 
 ### 8.5 dxcam Screen Capture Errors
 * **Symptom**: Telemetry prints `dxcam capture failed, using ImageGrab: ...` or crash loop.
 * **Root Cause**: dxcam targets Windows Desktop Duplication APIs (DirectX). This can fail if running on dual hybrid GPU laptops (Nvidia Optimus) where display layers are managed dynamically, or when active screen captures/sharing blocks native device handles.
-* **Workaround**: Slicky catches these captures automatically and switches to standard GDI-based PIL `ImageGrab` loop, ensuring no interruption.
+* **Workaround**: Blinky catches these captures automatically and switches to standard GDI-based PIL `ImageGrab` loop, ensuring no interruption.

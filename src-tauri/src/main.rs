@@ -1,3 +1,3 @@
 fn main() {
-    clicky_lib::run()
+    blinky_lib::run()
 }

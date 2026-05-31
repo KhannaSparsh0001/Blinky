@@ -1,6 +1,6 @@
-# Slicky — AI Directory & Developer Guides
+# Blinky — AI Directory & Developer Guides
 
-Welcome to the AI integration and developer documentation directory for **Slicky** (referred to as Clicky). 
+Welcome to the AI integration and developer documentation directory for **Blinky** (referred to as Blinky). 
 
 This directory contains comprehensive guides designed to ramp up human developers quickly and instruct offline AI coding agents on the systems architectures, API interfaces, and coordinate mapping formulas used throughout the codebase.
 
@@ -21,7 +21,7 @@ For a detailed walkthrough of the codebase, select one of the core guides below:
 ## 🚀 Quick Repository Overview
 
 ```text
-  c:\projects\Jarvis  (Slicky Project Root)
+  c:\projects\Jarvis  (Blinky Project Root)
    ├── ai/                      ──► AI Documentation Hub (this folder)
    ├── frontend/src/            ──► React TypeScript GUI and Canvas viewports
    ├── src-tauri/src/           ──► Rust Native Core & Mouse Click hooks
@@ -40,7 +40,7 @@ For a detailed walkthrough of the codebase, select one of the core guides below:
 
 ## 🛠️ Rapid Dev Commands
 
-Set up Slicky locally using the following commands:
+Set up Blinky locally using the following commands:
 
 ```powershell
 # 1. Install standard dependencies

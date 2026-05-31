@@ -1,8 +1,8 @@
 {
-  "name": "clicky",
+  "name": "blinky",
   "version": "0.1.0",
   "private": true,
-  "description": "Clicky is an offline-first AI desktop tutor for Windows.",
+  "description": "Blinky is an offline-first AI desktop tutor for Windows.",
   "scripts": {
     "dev": "npm run tauri:dev",
     "tauri:dev": "tauri dev",

@@ -7,7 +7,7 @@ from PIL import Image
 
 from utils.logging import get_logger
 
-LOGGER = get_logger("clicky.ocr")
+LOGGER = get_logger("blinky.ocr")
 
 
 def extract_visible_text(image_path: Path) -> list[dict[str, Any]]:

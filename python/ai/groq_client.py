@@ -11,7 +11,7 @@ import requests
 
 from utils.logging import get_logger
 
-LOGGER = get_logger("clicky.groq")
+LOGGER = get_logger("blinky.groq")
 
 DEFAULT_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -21,14 +21,14 @@ DECOMMISSIONED_GROQ_MODELS = {"llama-3.2-90b-vision-preview"}
 def ask_groq_vision(prompt: str, screenshot_path: Path) -> dict[str, Any]:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY is required when CLICKY_AI_PROVIDER=groq.")
+        raise RuntimeError("GROQ_API_KEY is required when BLINKY_AI_PROVIDER=groq.")
 
     model = _active_groq_model()
-    groq_url = os.getenv("CLICKY_GROQ_URL", DEFAULT_GROQ_URL).strip() or DEFAULT_GROQ_URL
+    groq_url = os.getenv("BLINKY_GROQ_URL", DEFAULT_GROQ_URL).strip() or DEFAULT_GROQ_URL
     
     # Allow configuring timeout via environment variable, defaulting to 90s for slower networks/heavy API load
     try:
-        timeout_val = int(os.getenv("CLICKY_GROQ_TIMEOUT", "90").strip())
+        timeout_val = int(os.getenv("BLINKY_GROQ_TIMEOUT", "90").strip())
     except ValueError:
         timeout_val = 90
 
@@ -61,7 +61,7 @@ def ask_groq_vision(prompt: str, screenshot_path: Path) -> dict[str, Any]:
     except requests.exceptions.Timeout:
         raise RuntimeError(
             f"Groq API request timed out after {timeout_val} seconds. Please check your network connection "
-            f"or switch CLICKY_AI_PROVIDER to local 'ollama' under your Settings for offline offline guidance."
+            f"or switch BLINKY_AI_PROVIDER to local 'ollama' under your Settings for offline offline guidance."
         )
     except requests.exceptions.RequestException as exc:
         raise RuntimeError(f"Groq API connection error: {exc}")
@@ -74,7 +74,7 @@ def ask_groq_vision(prompt: str, screenshot_path: Path) -> dict[str, Any]:
 
 
 def _active_groq_model() -> str:
-    model = os.getenv("CLICKY_GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
+    model = os.getenv("BLINKY_GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
     if model in DECOMMISSIONED_GROQ_MODELS:
         LOGGER.warning("Ignoring decommissioned Groq model %s; using %s", model, DEFAULT_GROQ_MODEL)
         return DEFAULT_GROQ_MODEL

@@ -1,6 +1,6 @@
-# Clicky — Granular Per-File API & Contract Specifications
+# Blinky — Granular Per-File API & Contract Specifications
 
-This reference document provides developer-level documentation for all key source files in Slicky. It details classes, functions, argument types, return values, and implementation specifics.
+This reference document provides developer-level documentation for all key source files in Blinky. It details classes, functions, argument types, return values, and implementation specifics.
 
 ---
 
@@ -13,7 +13,7 @@ Orchestrates Tauri commands, system tray lifecycle, and schedules asynchronous s
   * `async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<Value, String>`
     * *Inputs*: `TutorRequest { question: String }`
     * *Outputs*: Resolves with the `TutorResult` JSON output from the Python worker.
-    * *Side-effects*: Invokes `run_python_worker()`, emits `clicky://guidance` with result payload to `/overlay`, and shows the overlay window.
+    * *Side-effects*: Invokes `run_python_worker()`, emits `blinky://guidance` with result payload to `/overlay`, and shows the overlay window.
   * `fn show_overlay(app: AppHandle) -> Result<(), String>`
     * Sets overlay window cursor-passthrough style and makes the window visible.
   * `fn hide_overlay(app: AppHandle) -> Result<(), String>`
@@ -22,7 +22,7 @@ Orchestrates Tauri commands, system tray lifecycle, and schedules asynchronous s
     * Focuses and reveals the command bar popup.
   * `fn resize_command_window(app: AppHandle, height: f64) -> Result<(), String>`
     * Resizes the command bar height to dynamically match the webview's DOM height.
-  * `async fn get_settings(app: AppHandle) -> Result<ClickySettings, String>`
+  * `async fn get_settings(app: AppHandle) -> Result<BlinkySettings, String>`
     * Reads key-value pairs from `.env` to return configured providers and shortcuts.
   * `async fn save_settings(app: AppHandle, provider: String, shortcut: String) -> Result<(), String>`
     * Writes updated provider and shortcut entries back to `.env`.
@@ -31,7 +31,7 @@ Orchestrates Tauri commands, system tray lifecycle, and schedules asynchronous s
   * `fn run_python_worker(app: &AppHandle, question: &str) -> Result<String, String>`
     * Spawns `python.exe` targeting `python/main.py`. Pipes prompt input as JSON into standard input, reads standard output synchronously, and checks standard error.
   * `fn start_global_click_listener(app: AppHandle)`
-    * Spawns a background OS thread running a `loop` that uses the Windows `GetAsyncKeyState` API to capture mouse clicks. Emits `clicky://global-click` with cursor metrics.
+    * Spawns a background OS thread running a `loop` that uses the Windows `GetAsyncKeyState` API to capture mouse clicks. Emits `blinky://global-click` with cursor metrics.
 
 ---
 
@@ -47,7 +47,7 @@ Orchestrates Tauri commands, system tray lifecycle, and schedules asynchronous s
                        │
          ┌─────────────┼─────────────┐
          ▼             ▼             ▼
-    ( "/overlay" ) ( "/command" ) ( default / )
+    ("/overlay") ("/command") (/ default)
          │             │             │
          ▼             ▼             ▼
     ┌───────────┐ ┌───────────┐ ┌───────────┐
@@ -154,13 +154,13 @@ Captures the primary display and records dimensions needed for coordinate normal
   Uses `dxcam` for GPU-accelerated capture, falling back to PIL `ImageGrab`. Scales to fit within 1920×1080 (Lanczos) while preserving aspect ratio.
 
 ### 3.3 `python/utils/window.py` (Window Resolver)
-Resolves the target application window, excluding Slicky itself and Windows system shells.
+Resolves the target application window, excluding Blinky itself and Windows system shells.
 
 * **`get_target_window_element(window=None, target_pid: int | None = None)`**:
   * If `window` is provided, returns it immediately (bypass scan).
   * If `target_pid` is provided, scans the Z-order and returns the **first visible window whose `process_id()` matches `target_pid`** — acquiring a fresh COM element.
   * Otherwise, returns the first non-excluded visible window.
-  * Exclusions: process names containing `clicky`/`tauri`, window titles containing `slicky`, system shells (`searchhost.exe`, etc.), `Taskbar`, `Program Manager`.
+  * Exclusions: process names containing `blinky`/`tauri`, window titles containing `blinky`, system shells (`searchhost.exe`, etc.), `Taskbar`, `Program Manager`.
 
 * **`get_active_window(window=None, target_pid: int | None = None) -> dict`**:
   Thin wrapper returning `{ title, process, supported }` for the resolved window.
@@ -201,7 +201,7 @@ Maps LLM target text recommendations back to concrete physical text boxes on scr
 ### 3.7 `python/ai/prompt.py` (Prompt Builder)
 Formats screen context into a compact markdown instruction set for the model.
 
-* **Slicky UI Filtering Heuristics**:
-  To prevent the AI model from instructing users to click inside the Slicky app itself, `build_prompt()` filters out any OCR coordinates containing words from the `slicky_ignored_terms` set (e.g. "Slicky app", "groq", "ollama", "ask anything"). It also filters out OCR elements that match the user's input question.
+* **Blinky UI Filtering Heuristics**:
+  To prevent the AI model from instructing users to click inside the Blinky app itself, `build_prompt()` filters out any OCR coordinates containing words from the `blinky_ignored_terms` set (e.g. "Blinky app", "groq", "ollama", "ask anything"). It also filters out OCR elements that match the user's input question.
 * **Text Length Optimization**:
   To avoid exceeding LLM context limits, the prompt builder limits the OCR elements list to the first $180$ elements.

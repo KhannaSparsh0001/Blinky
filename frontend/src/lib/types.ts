@@ -38,7 +38,7 @@ export interface TutorResult {
 
 export interface ChatMessage {
   id: string;
-  role: 'student' | 'clicky';
+  role: 'student' | 'blinky';
   content: string;
   result?: TutorResult;
 }
