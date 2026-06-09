@@ -1,79 +1,77 @@
-# Blinky — AI Directory & Developer Guides
+# Blinky AI Documentation Hub
 
-Welcome to the AI integration and developer documentation directory for **Blinky**. 
+This folder is the developer and AI-agent map for the Blinky repository. It reflects the current codebase: a Tauri desktop tutor, a Python screen-understanding worker, a Python browser-agent sidecar exposed over WebSocket, and an Expo mobile remote.
 
-This directory contains comprehensive guides designed to ramp up human developers quickly and instruct offline AI coding agents on the system architecture, API interfaces, coordinate mapping formulas, matching heuristics, and voice integrations used throughout the codebase.
+## Reading Order
 
----
+| File | Purpose |
+| :--- | :--- |
+| `00_repo_summary.md` | Repository map, setup commands, and guide index. |
+| `01_architecture.md` | Desktop architecture, IPC/event flow, settings, and platform notes. |
+| `02_coordinate_scaling.md` | Screenshot, UIA, and overlay coordinate transforms. |
+| `03_matching_heuristics.md` | Target matching, merge rules, and post-processing pipeline. |
+| `04_ai_inference.md` | Screen tutor prompts, preflight, provider clients, locator fast path, and conversation state. |
+| `05_sarvam.md` | Sarvam TTS/STT integration used by the desktop command bar. |
+| `06_detailed_summaries.md` | Per-file implementation reference for core modules. |
+| `07_agent_router.md` | Remote browser-agent sidecar, generated tools, streaming synthesis, and WebSocket protocol. |
+| `08_mobile_remote.md` | Expo mobile remote app, connection lifecycle, PC controls, and remote agent UI. |
+| `files_index.json` | Machine-readable file index for agents and scripts. |
 
-## 📖 Available Guides (Logical Reading Order)
+## Current Product Shape
 
-We recommend reading these guides in the following order:
+Blinky has two major interaction modes:
 
-| File | Guide | Description | Target Audience |
-| :--- | :--- | :--- | :--- |
-| `00` | 🏠 **[Master Entryway](file:///c:/projects/Jarvis/ai/00_repo_summary.md)** | Overview of directory structure, rapid setup commands, and guide index. | All Developers, AI Agents |
-| `01` | 🏗️ **[System Architecture](file:///c:/projects/Jarvis/ai/01_architecture.md)** | Multi-process models, high-level system flows, sequence diagrams, and IPC protocols. | Architects, System Integrators, AI Agents |
-| `02` | 📐 **[Coordinate Scaling & Normalization](file:///c:/projects/Jarvis/ai/02_coordinate_scaling.md)** | Calculations mapping physical screens to downsampled screenshots and web view CSS layout coordinates. | Developers, QA, AI Agents |
-| `03` | 🎯 **[Matching Heuristics & Deduplication](file:///c:/projects/Jarvis/ai/03_matching_heuristics.md)** | Fuzzy target matching algorithms, context scoring bonuses, coordinate grids, and steps post-processing. | Developers, AI Agents |
-| `04` | 🧠 **[AI Inference & Prompts](file:///c:/projects/Jarvis/ai/04_ai_inference.md)** | Chat engine prompts, preflight classification, continuation logic, single-step enforcement, and Ollama/Groq configs. | Prompt Engineers, AI Agents |
-| `05` | 🗣️ **[Sarvam AI Voice Integration](file:///c:/projects/Jarvis/ai/05_sarvam.md)** | Bulbul (TTS) and Saaras (STT) payload formats, authentication headers, error messages, and frontend hooks. | Audio Engineers, AI Agents |
-| `06` | 📝 **[Per-File API Reference](file:///c:/projects/Jarvis/ai/06_detailed_summaries.md)** | Detailed function signatures, classes, arguments, and module-level responsibilities. | Developers, AI Agents |
-| `Index` | 🗂️ **[Files Index](file:///c:/projects/Jarvis/ai/files_index.json)** | Machine-readable JSON listing of core codebase assets and their functional descriptions. | AI Agents, Automations |
+1. **Desktop screen tutor**: The Tauri command bar accepts a question, Python captures the active screen, OCR/UIA extract visible controls, an LLM returns the immediate next action, and the overlay highlights the matched UI element.
+2. **Remote mobile control**: The Expo app connects to the desktop WebSocket server on port `9001`, sends power commands or browser-agent queries, and displays streamed status/results from `python/agent_router.py`.
 
----
-
-## 🚀 Quick Repository Overview
+## Repository Map
 
 ```text
-  /home/fev/GitRepos/clonedGitRepos/Jarvis  (Blinky Project Root - Linux)
-  c:\projects\Jarvis                       (Blinky Project Root - Windows)
-   ├── ai/                      ──► AI Documentation Hub (this folder)
-   ├── frontend/src/            ──► React TypeScript GUI and Canvas viewports
-   ├── src-tauri/src/           ──► Rust Native Core & Mouse Click hooks
-   ├── python/                  ──► Capture, OCR Extraction & Targets Fuzzy Matching
-   └── tmp/captures/            ──► Captured Telemetry Screen Buffers (temporary)
+c:\projects\Jarvis
+├── ai/                  Documentation hub
+├── frontend/src/        React/Tauri command bar and overlay views
+├── mobile/              Expo remote controller
+├── python/              Screen tutor worker, AI clients, OCR/capture, router tools
+├── scripts/             Setup and Ollama checks
+├── shared/              Result schema examples
+└── src-tauri/           Rust host, WebSocket server, tray, shortcuts, windows
 ```
 
-* **Purpose**: Privacy-first, local AI-powered tutor that captures screen states, extracts visible UI controls, runs coordinate-aware fuzzy matching, and places graphical click-target overlays on screen — one step at a time.
-* **Core Tech Stack (Cross-Platform)**: 
-  * **Tauri (v2) + Rust**: OS-level hooks, shortcuts, window controllers, capture exclusion (`WDA_EXCLUDEFROMCAPTURE` on Windows, window coordinate off-sets on Linux to clear system panel).
-  * **React + TypeScript**: Form inputs, dynamic height rendering, canvas overlay graphics (with platform-specific coordinate scaling).
-  * **Python 3.11**: Screen captures (`dxcam` on Windows; D-Bus Wayland Desktop Portal & `gnome-screenshot` on Linux), OCR (WinRT OCR / EasyOCR on Windows; local `tesseract` OCR on Linux), UI elements extraction (`pywinauto` on Windows; native coordinate OCR parsing on Linux).
-  * **LLM Intelligence**: Local Ollama (`gemma4:e4b`) or cloud-hosted Groq Vision API (`llama-4-scout`).
+## Common Commands
 
----
-
-## 🛠️ Rapid Dev Commands
-
-Set up Blinky locally using the following commands:
-
-### Windows Setup
 ```powershell
-# 1. Install standard dependencies
 bun install
-
-# 2. Configure Python virtual environments and pull EasyOCR
 bun run setup:python
-
-# 3. Pull default local AI models
-ollama pull gemma4:e4b
-
-# 4. Start the application in development mode
+bun run check:ollama
 bun run dev
+bun run build
 ```
 
-### Linux (Fedora/Ubuntu) Setup
-```bash
-# 1. Install system prerequisites (Tesseract OCR & development libs)
-sudo dnf install tesseract tesseract-devel  # Fedora
-# or: sudo apt-get install tesseract-ocr libtesseract-dev  # Ubuntu
+Mobile app:
 
-# 2. Install standard node dependencies
-bun install
-
-# 3. Start the application in development mode
-bun run dev
+```powershell
+cd mobile
+npm install
+npm run start
 ```
 
-*For details on configuring `.env` variables and custom shortcut hotkeys, please refer to the [System Architecture Guide](file:///home/fev/GitRepos/clonedGitRepos/Jarvis/ai/01_architecture.md#6-environment--settings-variables).*
+## Key Runtime Defaults
+
+| Setting | Default / Source |
+| :--- | :--- |
+| Desktop app name | `Blinky` in `src-tauri/tauri.conf.json` |
+| Command route | `/command` -> `frontend/src/CommandBar.tsx` |
+| Overlay route | `/overlay` -> `frontend/src/Overlay.tsx` |
+| WebSocket server | `0.0.0.0:9001` in `src-tauri/src/websocket.rs` |
+| AI provider default in Rust settings | `groq` |
+| AI provider default in Python client | `ollama` if env is absent |
+| Ollama model | `gemma4:e4b` |
+| Groq model | `meta-llama/llama-4-scout-17b-16e-instruct` |
+| Sarvam TTS/STT | `bulbul:v3` / `saaras:v3` |
+
+## Agent Notes
+
+- Treat `CommandBar.tsx` as the primary command UI. `App.tsx` remains as the default route fallback and is less feature-complete.
+- Keep the Python screen worker stdout JSON-clean. The only non-JSON stdout marker is `__BLINKY_CAPTURED__`.
+- Keep screen-tutor guidance single-step. The frontend advances by re-running the worker after each completed step.
+- The mobile agent path is separate from the screen-tutor path. It uses WebSocket -> Rust daemon manager -> `python/agent_router.py`, not `run_tutor`.

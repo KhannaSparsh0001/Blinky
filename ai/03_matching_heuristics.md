@@ -15,6 +15,8 @@ $$\text{Score} = (\text{Similarity} \times 0.94) + (\text{OCR Confidence} \times
 2. **Substring Match**: If target is a substring of candidate text (or vice versa): `Similarity = 0.86`
 3. **Fuzzy Match**: Evaluates `difflib.SequenceMatcher.ratio()`. If ratio is $< 0.65$, it is ignored.
 
+If the LLM includes generic UI words in `target_text`, `_target_candidates()` also tries a stripped version without words like `icon`, `button`, `tab`, `menu`, `sidebar`, or `panel`. For some control-locator instructions, `_instruction_target_candidates()` can extract a better target from quoted text or phrases such as `Click the X button`.
+
 ---
 
 ## 2. Match Bonuses & Penalties
@@ -34,6 +36,23 @@ To resolve ambiguities when multiple similar terms exist on screen, the engine a
 A candidate match is only accepted if its final score satisfies:
 $$\text{Score} \ge 0.52$$
 Otherwise, the engine reports no match.
+
+### Ambiguity Diagnostics
+`find_best_match_with_score()` returns diagnostics used by the locator fast path:
+
+```json
+{
+  "score": 0.94,
+  "text_similarity": 1.0,
+  "is_exact_text": true,
+  "candidate_count": 3,
+  "ambiguous_candidate_count": 1,
+  "source": "uia",
+  "control_type": "button"
+}
+```
+
+`ambiguous_candidate_count` increases when another visible candidate has the same normalized text or a score within `0.10` of the best candidate, unless both boxes overlap the same visual target. Locator requests use this to avoid confidently highlighting the wrong duplicate button or icon.
 
 ---
 
