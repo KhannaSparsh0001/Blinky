@@ -1,123 +1,198 @@
-# Blinky — Granular Per-File API & Contract Specifications
+# Blinky Per-File Reference
 
-This reference document provides developer-level documentation for all key source files in Blinky. It details classes, functions, argument types, return values, and implementation specifics.
+This reference summarizes the files that most often matter when changing Blinky.
 
----
+## 1. Desktop Host
 
-## 1. Native Integration & System Logic
+### `src-tauri/src/lib.rs`
 
-### 1.1 `src-tauri/src/lib.rs` (Tauri App Core)
-Orchestrates Tauri commands, system tray lifecycle, flicker-free capture exclusion, and asynchronous system tasks.
+Rust Tauri app core.
 
-* **Commands Exposed to Frontend**:
-  * `async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<Value, String>`
-    * *Inputs*: `TutorRequest { question: String, previous_question?: String, progress?: Value }`
-    * *Outputs*: Resolves with the `TutorResult` JSON output from the Python worker.
-    * *Side-effects*: Sets `WDA_EXCLUDEFROMCAPTURE` on command + overlay windows, invokes `run_python_worker()`, restores `WDA_NONE` after `__BLINKY_CAPTURED__` marker, emits `blinky://guidance` with result payload to `/overlay`, and shows the overlay window.
-  * `fn show_overlay(app: AppHandle) -> Result<(), String>`
-    * Sets overlay window cursor-passthrough style and makes the window visible.
-  * `fn hide_overlay(app: AppHandle) -> Result<(), String>`
-    * Hides the full-screen overlay window.
-  * `fn show_command_bar(app: AppHandle) -> Result<(), String>`
-    * Focuses and reveals the command bar popup.
-  * `fn resize_command_window(app: AppHandle, height: f64) -> Result<(), String>`
-    * Resizes the command bar height to dynamically match the webview's DOM height.
-  * `fn resize_and_move_command_window(app: AppHandle, x: f64, y: f64, width: f64, height: f64) -> Result<(), String>`
-    * Resizes and repositions the command bar (used for drag-resize).
-  * `async fn get_settings(app: AppHandle) -> Result<BlinkySettings, String>`
-    * Reads key-value pairs from `.env` to return configured providers, shortcuts, and API keys.
-  * `async fn save_settings(app: AppHandle, provider: String, shortcut: String, sarvam_api_key: String, groq_api_key: String) -> Result<(), String>`
-    * Writes updated settings entries back to `.env`.
+- Exposes frontend commands: `run_tutor`, `show_overlay`, `hide_overlay`, `show_command_bar`, `resize_command_window`, `resize_and_move_command_window`, `get_settings`, `save_settings`.
+- Spawns `python/main.py` for screen-tutor requests.
+- Sends `question`, `previous_question`, `progress`, and `conversation_history` over stdin.
+- Watches stdout for `__BLINKY_CAPTURED__` and restores capture visibility immediately.
+- Emits `blinky://guidance`, `blinky://open-command`, `blinky://global-click`, and `blinky://global-enter`.
+- Registers Ctrl+Shift+Enter and Ctrl+Shift+Space, with the active shortcut selected by `.env`.
+- Starts the WebSocket server from `websocket.rs`.
 
-* **Internal Helpers**:
-  * `fn run_python_worker(app: &AppHandle, question: &str, previous_question: Option<&str>, progress: Option<&Value>, command: Option<WebviewWindow>, overlay: Option<WebviewWindow>) -> Result<String, String>`
-    * Spawns `python.exe` targeting `python/main.py`. Pipes question, previous_question, and optional progress as JSON into standard input. Reads stdout line-by-line, watching for the `__BLINKY_CAPTURED__` marker to restore capture visibility. Returns the final JSON output line.
-  * `fn set_window_capture_exclusion(window: &WebviewWindow, exclude: bool)`
-    * Calls `SetWindowDisplayAffinity` to toggle `WDA_EXCLUDEFROMCAPTURE` / `WDA_NONE`.
-  * `fn start_global_click_listener(app: AppHandle)`
-    * Spawns a background OS thread running a `loop` that uses the Windows `GetAsyncKeyState` API to capture mouse clicks. Emits `blinky://global-click` with cursor metrics.
+### `src-tauri/src/websocket.rs`
 
----
+Remote-control WebSocket server.
 
-## 2. Frontend Interface & Coordinate Mapping
+- Binds `0.0.0.0:9001`.
+- Accepts raw power commands and JSON query messages.
+- Starts/reuses a persistent `python -u python/agent_router.py` daemon.
+- Streams daemon response lines back to the WebSocket client.
+- Restarts the daemon once if it exits or its pipe breaks.
 
-```text
-          ┌────────────────────────┐
-          │  Vite Entry (main.tsx) │
-          └────────────────────────┘
-                       │
-                       ▼
-          [ window.location.pathname ]
-                       │
-         ┌─────────────┼─────────────┐
-         ▼             ▼             ▼
-    ("/overlay") ("/command") (/ default)
-         │             │             │
-         ▼             ▼             ▼
-    ┌───────────┐ ┌───────────┐ ┌───────────┐
-    │  Overlay  │ │CommandBar │ │    App    │
-    │(Overlay.tsx)│(CommandBar│ │ (App.tsx) │
-    └───────────┘ └───────────┘ └───────────┘
-```
+### `src-tauri/tauri.conf.json`
 
-### 2.1 `frontend/src/Overlay.tsx` (Target Pulse Canvas)
-A transparent, fullscreen React view that maps raw text coordinates onto the active viewport and handles target dismissal.
-* **Scaling and Capping**: Translates coordinate rects from downsampled screenshot coordinates back to active CSS layout pixels. For input elements, the standard sizing restrictions are bypassed.
-* See the [Coordinate Scaling & Resolution Normalization Guide](file:///c:/projects/Jarvis/ai/02_coordinate_scaling.md) for formulas and implementation logic.
+Defines the two main windows:
 
-### 2.2 `frontend/src/App.tsx` (Tutor Container)
-The user interface for prompt input, status displays, settings configuration, and window resize handling.
-* **Dynamic Size Manager**: Spawns a `ResizeObserver` on mount that watches the main container's DOM height. Calls `resizeCommandWindow` to dynamically adjust Tauri's window height.
-* **Drag Resize**: Supports left/right edge drag-resizing via pointer events, calling `resizeAndMoveCommandWindow` for smooth repositioning.
-* **Settings Panel**: Uses React hooks to bind `provider` (Groq/Ollama), `shortcut` (Enter/Space), and API keys (Groq, Sarvam). Saves directly to `.env` via Tauri backend bindings.
+- `command`: `/command`, transparent, always-on-top, initially hidden.
+- `overlay`: `/overlay`, transparent, click-through configured in Rust, initially hidden.
 
-### 2.3 `frontend/src/lib/tts.ts` (Sarvam voice serialization)
-Helper methods for assembling payloads and audio URL mapping.
-* See the [Sarvam AI Voice Integration Guide](file:///c:/projects/Jarvis/ai/05_sarvam.md) for full payload structures, properties, and error message parsing.
+## 2. Frontend
 
----
+### `frontend/src/main.tsx`
 
-## 3. Python Processing Engine
+Route switch:
 
-### 3.1 `python/main.py` (Worker Orchestrator)
-The standard input/output interface for processing questions and screen coordinates.
-* **`run(question: str, previous_question: str | None = None, progress: dict | None = None) -> dict`**: Executes the primary pipeline.
-* **`skip_completed_navigation_steps(steps: list[dict]) -> list[dict]`**: If step 1 is a navigation action and step 2 has a visible match on screen, removes step 1.
-* **`_fill_empty_search_targets(steps: list[dict], visible_items: list[dict]) -> list[dict]`**: Fallback that scans visible items for the first search/filter box if target_text is empty.
-* **`classify_request(question, previous_question, warnings) -> dict | None`**: Calls text-only model to check if screen capture is needed.
-* **`answer_without_screen(question: str) -> dict`**: General conversation responder.
-* **`merge_visible_items(ocr_items: list, uia_items: list) -> list`**: Deduplicates and aligns elements. See the [Target Matching Heuristics Guide](file:///c:/projects/Jarvis/ai/03_matching_heuristics.md) for merge details.
+- `/command` -> `CommandBar`
+- `/overlay` -> `Overlay`
+- `/` -> `App`
 
-### 3.2 `python/capture/screen.py` (Screen Capture)
-* **`Screenshot` dataclass**: Captures pixel metrics for scaling calculations. See [Coordinate Scaling Guide](file:///c:/projects/Jarvis/ai/02_coordinate_scaling.md) for metrics description.
-* **`capture_screen() -> Screenshot`**: Captures via `dxcam` (falling back to PIL `ImageGrab`) and downsamples to fit $1920 \times 1080$.
+### `frontend/src/CommandBar.tsx`
 
-### 3.3 `python/utils/window.py` (Window Resolver)
-* **`get_target_window_element(window=None, target_pid: int | None = None)`**: Resolves target application window, excluding Blinky itself.
-* **`get_active_window(window=None, target_pid: int | None = None) -> dict`**: Thin wrapper returning `{ title, process, supported }` for the resolved window.
+Primary command UI.
 
-### 3.4 `python/utils/uia.py` (UI Automation Tree Inspector)
-* **`get_visible_ui_text(window=None, target_pid: int | None = None) -> list[dict]`**: Traverses `active.descendants()` to extract active controls of `ALLOWED_CONTROL_TYPES`. Requires `target_pid` to acquire a fresh COM window instance.
+- Submits tutor requests through `runTutor()`.
+- Tracks progress, current guide step, completed targets/instructions, last query, and conversation history.
+- Handles Sarvam microphone recording, transcription, TTS playback, and voice-first readback.
+- Listens for `blinky://target-clicked` and `blinky://global-enter` to advance workflows.
+- Emits `blinky://guidance` directly after a `runTutor` result and shows/hides overlay based on highlightable steps.
+- Saves provider, shortcut, Groq key, and Sarvam key through Tauri settings commands.
 
-### 3.5 `python/ocr/extract.py` (OCR Parser)
-* **`extract_visible_text(image_path: Path) -> list[dict]`**: Runs Windows WinRT OCR engine with EasyOCR fallback.
+### `frontend/src/App.tsx`
 
-### 3.6 `python/utils/matching.py` (Fuzzy Matcher)
-* **`find_best_match(target: str, ocr_items: list[dict], instruction: str = "") -> dict | None`**: Fuzzy-matches step `target_text` to visible screen controls. Uses weighted scoring matrix. See [Target Matching Heuristics Guide](file:///c:/projects/Jarvis/ai/03_matching_heuristics.md) for formulas and bonuses.
+Fallback/default command route. It has prompt input, settings, and basic result display, but it does not include the richer continuation and voice workflow in `CommandBar.tsx`.
 
-### 3.7 `python/ai/prompt.py` (Prompt Builder)
-* **`build_preflight_prompt(question, previous_question=None) -> str`**: Compiles preflight classifier prompt.
-* **`build_chat_prompt(question) -> str`**: Compiles conversational chat prompt.
-* **`build_prompt(question, active_app, ocr_items, progress=None, latest_update=None) -> str`**: Compiles main visual-context prompt. See [AI Inference Guide](file:///c:/projects/Jarvis/ai/04_ai_inference.md) for formatting rules.
+### `frontend/src/Overlay.tsx`
 
-### 3.8 `python/ai/client.py` (Model Router)
-* **`ask_model(prompt, screenshot_path) -> dict`**: Routes requests to selected LLM vision provider.
-* **`ask_text_model(prompt) -> dict`**: Routes requests to selected LLM text-only provider.
+Transparent highlight renderer.
 
-### 3.9 `python/ai/ollama_client.py` (Local Ollama)
-* **`ask_ollama(prompt) -> dict`**: Local vision execution.
-* **`ask_ollama_text(prompt) -> dict`**: Local preflight/chat text execution.
+- Receives `TutorResult` via `blinky://guidance`.
+- Uses `getHighlightSteps()` to render only the active matched target.
+- Maps screenshot-space rectangles to CSS pixels.
+- Handles Windows device-pixel-ratio and Linux overlay y-offset.
+- Emits `blinky://target-clicked` when a global click lands in a highlighted frame.
 
-### 3.10 `python/ai/groq_client.py` (Cloud Groq Vision)
-* **`ask_groq_vision(prompt, screenshot_path) -> dict`**: Cloud Groq vision execution.
-* **`ask_groq_text(prompt) -> dict`**: Cloud Groq preflight/chat text execution.
+### `frontend/src/lib/guidance.ts`
+
+Pure step-state helpers.
+
+- Filters displayable steps.
+- Selects the current pending step.
+- Selects highlightable steps.
+- Decides whether highlight click should complete a step.
+- Merges completed history with the current pending step.
+- Decides whether the summary bubble should be visible.
+
+### `frontend/src/lib/tauri.ts`
+
+Typed wrappers around Tauri `invoke()` calls.
+
+### `frontend/src/lib/tts.ts`
+
+Sarvam payload helpers and error parsing.
+
+## 3. Screen Tutor Python Worker
+
+### `python/main.py`
+
+Stdin/stdout screen-tutor orchestrator.
+
+- Normalizes request payloads.
+- Classifies screen vs chat requests.
+- Handles continuation and conversation history.
+- Captures screen and prints `__BLINKY_CAPTURED__`.
+- Resolves locator fast-path requests.
+- Reads active app metadata, OCR items, and UIA items.
+- Scales UIA coordinates into screenshot space.
+- Merges and sorts visible items.
+- Builds prompts, calls the selected AI provider, attaches matches, fills search fallbacks, and slices to one step.
+
+### `python/ai/prompt.py`
+
+Prompt builders.
+
+- `build_preflight_prompt()`: screen-vs-chat and continuation classifier.
+- `build_chat_prompt()`: no-screen conversation response.
+- `build_prompt()`: visual-context screen tutor prompt.
+- Labels unlabeled UIA controls as `Visible Button 1`, `Visible Image 1`, etc. for vision-assisted matching.
+
+### `python/ai/client.py`
+
+Provider router for `ollama` and `groq`.
+
+### `python/ai/ollama_client.py`
+
+Local Ollama client using JSON output, `temperature: 0.1`, `num_predict: 350` for main guidance, and default timeout `35` seconds.
+
+### `python/ai/groq_client.py`
+
+Groq OpenAI-compatible client. Vision calls send the screenshot as a base64 JPEG data URL and request JSON-object output.
+
+### `python/capture/screen.py`
+
+Capture strategies and `Screenshot` dataclass.
+
+- Windows: `dxcam`, falling back to PIL `ImageGrab`.
+- Linux: portal/CLI helpers, `gnome-screenshot`, `maim`, `scrot`, then PIL fallback.
+- Saves optimized JPEGs under `screenshots/`.
+- Thumbnails captures to fit `1920x1080`.
+
+### `python/ocr/extract.py`
+
+OCR provider registry.
+
+- Windows: WinRT OCR when available.
+- Fallback/non-Windows: pytesseract if the binary and Python package are available.
+- Final fallback: mock provider returning no OCR items.
+
+### `python/utils/uia.py`
+
+Windows UI Automation extraction through pywinauto. Uses `target_pid` to re-resolve a fresh COM window after capture/OCR delays.
+
+### `python/utils/window.py`
+
+Active window and overlay exclusion helpers. Supplies target PID locking and ignored overlay rectangles.
+
+### `python/utils/matching.py`
+
+Target matcher.
+
+- `attach_matches()` attaches a `match` object to each step.
+- `find_best_match_with_score()` returns diagnostics for locator fast path.
+- Uses exact/partial/fuzzy text matching, confidence weighting, control bonuses, source penalties, and ambiguity counting.
+
+## 4. Remote Agent Python
+
+### `python/agent_router.py`
+
+Line-oriented sidecar daemon for WebSocket queries.
+
+- Directly handles known open/search commands.
+- Loads `python/tools/registry.json`.
+- Routes to registered tools by LLM decision.
+- Runs up to 3 tool calls concurrently.
+- Checks sufficiency.
+- Generates, audits, verifies, and registers Playwright tools when needed.
+- Streams synthesized text chunks back to Rust.
+
+### `python/tools/registry.json`
+
+Registry of known browser/data tools and their argument names.
+
+### `python/utils/sufficiency_checker.py`
+
+Determines whether a tool result is enough to answer the original query.
+
+### `python/utils/generalizer.py`
+
+Background generalization path for generated tools.
+
+## 5. Mobile
+
+### `mobile/App.tsx`
+
+Expo remote controller UI. Saves PC host, connects over WebSocket, sends queries and power commands, and renders streaming agent status/results.
+
+### `mobile/usePCWebSocket.ts`
+
+WebSocket hook. Appends `:9001` when needed, tracks connection state, parses JSON messages, and exposes `sendCommand()` / `sendQuery()`.
+
+### `mobile/AGENTS.md`
+
+Project instruction: check the exact Expo versioned docs before editing mobile code.

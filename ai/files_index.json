@@ -1,27 +1,148 @@
 {
   "files": [
-    {"path": "ai/00_repo_summary.md", "desc": "Master entryway, quick overview, and table of contents linking all sub-guides"},
-    {"path": "ai/01_architecture.md", "desc": "System architecture, multi-process flows, request lifecycle sequence, native Rust tauri config, and developer guidelines"},
-    {"path": "ai/02_coordinate_scaling.md", "desc": "Coordinate scaling and resolution normalization: physical screens to downsampled screenshots and overlay browser CSS pixels"},
-    {"path": "ai/03_matching_heuristics.md", "desc": "Target fuzzy-matching scoring matrix, bonuses, penalties, UIA-OCR coordinate merging, and step post-processors"},
-    {"path": "ai/04_ai_inference.md", "desc": "Preflight request classifier, continuation logic, single-step prompts, Ollama local client, and cloud Groq client"},
-    {"path": "ai/05_sarvam.md", "desc": "Sarvam AI voice integration: text-to-speech payloads, speech-to-text multipart forms, audio elements, and React-Tauri settings hooks"},
-    {"path": "ai/06_detailed_summaries.md", "desc": "Granular, per-file API contracts and function specs for Rust commands, React views, and Python modules"},
-    {"path": "frontend/src/App.tsx", "desc": "Tutor container with drag-resize, settings panel, dynamic height, no-polling reactive architecture"},
-    {"path": "frontend/src/Overlay.tsx", "desc": "Fullscreen coordinate canvas placing pulsar on the single matched target; full-width bypass for input controls, icon/row highlight caps, and click dismissal"},
-    {"path": "frontend/src/lib/tauri.ts", "desc": "Tauri JS interfaces mapping React commands, previous_question, and tutor progress to Rust bindings"},
-    {"path": "python/main.py", "desc": "Python processing loop: preflight+continuation classifier, PID-locked capture, __BLINKY_CAPTURED__ marker, UIA coord normalisation, Blinky UI filtering, and 4-stage post-processing (attach_matches → skip_navigation → fill_search_targets → slice[:1])"},
-    {"path": "python/ai/client.py", "desc": "Model router connecting prompt compilers to Ollama / Groq endpoints with provider label"},
-    {"path": "python/ai/prompt.py", "desc": "Prompt builder: preflight with continuation detection, chat prompt, screen prompt with single-step enforcement, search-bar awareness, and exact target_text requirement for search inputs"},
-    {"path": "python/ai/ollama_client.py", "desc": "Local Ollama inference with num_predict:350, temperature:0.1, retry logic, and 120s timeout"},
-    {"path": "python/ai/groq_client.py", "desc": "Cloud Groq Vision inference with max_tokens:350, configurable timeout, and decommissioned model fallback"},
-    {"path": "python/ocr/extract.py", "desc": "OCR pipeline attempting native Windows WinRT OCR with EasyOCR fallbacks"},
-    {"path": "python/capture/screen.py", "desc": "Display capture engine (dxcam/ImageGrab); Screenshot dataclass with post-thumbnail and physical screen dimensions"},
-    {"path": "python/utils/matching.py", "desc": "Fuzzy matcher with exact match bonus (+0.30), input control preference (+0.30), sidebar context (+0.20), interactive bonuses, and Blinky penalty (-0.40). Includes semantic close/settings button handlers"},
-    {"path": "python/utils/uia.py", "desc": "UI Automation tree traverser; accepts target_pid for fresh COM element; returns screen-absolute coordinates without manual offset"},
-    {"path": "python/utils/window.py", "desc": "Z-order window scanner with target_pid support and Blinky process exclusion"},
-    {"path": "src-tauri/src/lib.rs", "desc": "Rust native backend: system tray, shortcuts, global click hooks, WDA_EXCLUDEFROMCAPTURE capture exclusion, and __BLINKY_CAPTURED__ marker detection"},
-    {"path": "package.json", "desc": "Workspace setup script actions and dev tool definitions"},
-    {"path": "README.md", "desc": "Developer onboarding specs and standard local install instructions"}
+    {
+      "path": "ai/00_repo_summary.md",
+      "desc": "Documentation hub, reading order, repository map, product modes, and common commands"
+    },
+    {
+      "path": "ai/01_architecture.md",
+      "desc": "Current architecture for desktop screen tutor, remote WebSocket agent, Tauri windows/events, settings, and platform behavior"
+    },
+    {
+      "path": "ai/02_coordinate_scaling.md",
+      "desc": "Coordinate mapping between physical screens, downsampled screenshots, UIA bounds, and overlay CSS pixels"
+    },
+    {
+      "path": "ai/03_matching_heuristics.md",
+      "desc": "Fuzzy target matching, UIA/OCR merge rules, bonuses, penalties, ambiguity handling, and single-step post-processing"
+    },
+    {
+      "path": "ai/04_ai_inference.md",
+      "desc": "Screen tutor preflight, continuation state, locator fast path, prompt construction, Ollama/Groq clients, and post-inference enforcement"
+    },
+    {
+      "path": "ai/05_sarvam.md",
+      "desc": "Sarvam text-to-speech and speech-to-text integration for the desktop command bar"
+    },
+    {
+      "path": "ai/06_detailed_summaries.md",
+      "desc": "Per-file implementation reference for Rust, React, Python, remote agent, and mobile modules"
+    },
+    {
+      "path": "ai/07_agent_router.md",
+      "desc": "Remote browser-agent sidecar, WebSocket query protocol, registered/generated tools, safety audit, and streaming synthesis"
+    },
+    {
+      "path": "ai/08_mobile_remote.md",
+      "desc": "Expo mobile remote controller, WebSocket lifecycle, query UI, streamed results, and power commands"
+    },
+    {
+      "path": "frontend/src/main.tsx",
+      "desc": "React route switch for command bar, overlay, and fallback app"
+    },
+    {
+      "path": "frontend/src/CommandBar.tsx",
+      "desc": "Primary desktop command bar with tutor execution, continuation progress, voice input/readback, settings, and overlay coordination"
+    },
+    {
+      "path": "frontend/src/App.tsx",
+      "desc": "Fallback/default command UI with basic prompt, settings, and result display"
+    },
+    {
+      "path": "frontend/src/Overlay.tsx",
+      "desc": "Transparent highlight renderer that maps matched screenshot-space bounds to overlay CSS frames and emits target-clicked events"
+    },
+    {
+      "path": "frontend/src/lib/guidance.ts",
+      "desc": "Pure helpers for visible steps, current pending step, highlightable step, completion decisions, guide history, and summary visibility"
+    },
+    {
+      "path": "frontend/src/lib/tauri.ts",
+      "desc": "Typed frontend wrappers for Tauri commands including run_tutor, overlay visibility, command sizing, and settings"
+    },
+    {
+      "path": "frontend/src/lib/tts.ts",
+      "desc": "Sarvam TTS payload builder, speech content formatter, audio data URL builder, and error parser"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "desc": "Tauri app core: commands, tray, shortcuts, capture exclusion, Python screen worker spawning, overlay events, settings, and global click/Enter polling"
+    },
+    {
+      "path": "src-tauri/src/websocket.rs",
+      "desc": "WebSocket server on port 9001 for mobile remote commands and streamed agent-router queries"
+    },
+    {
+      "path": "src-tauri/tauri.conf.json",
+      "desc": "Tauri window definitions for command and overlay plus bundle resources"
+    },
+    {
+      "path": "python/main.py",
+      "desc": "Screen tutor worker: routing, capture marker, locator fast path, OCR/UIA merge, AI prompt call, matching, search fallback, and single-step result"
+    },
+    {
+      "path": "python/agent_router.py",
+      "desc": "Remote agent sidecar: direct open/search commands, LLM tool routing, tool execution, generated Playwright tools, and streamed synthesis"
+    },
+    {
+      "path": "python/ai/prompt.py",
+      "desc": "Preflight, chat, and visual prompt builders with continuation history, Blinky UI filtering, compact visible-item format, and single-step rules"
+    },
+    {
+      "path": "python/ai/client.py",
+      "desc": "Provider router for Ollama and Groq text/vision calls"
+    },
+    {
+      "path": "python/ai/ollama_client.py",
+      "desc": "Local Ollama JSON client using gemma4:e4b defaults, retry logic, and configurable timeout"
+    },
+    {
+      "path": "python/ai/groq_client.py",
+      "desc": "Groq OpenAI-compatible text and vision client with JSON response format and decommissioned-model fallback"
+    },
+    {
+      "path": "python/capture/screen.py",
+      "desc": "Cross-platform capture strategies, screenshots directory output, and Screenshot dataclass with physical and optimized dimensions"
+    },
+    {
+      "path": "python/ocr/extract.py",
+      "desc": "OCR provider registry for WinRT OCR, pytesseract fallback, and mock empty fallback"
+    },
+    {
+      "path": "python/utils/matching.py",
+      "desc": "Fuzzy matcher with exact/partial/fuzzy scoring, control/source/context bonuses, ambiguity diagnostics, and match attachment"
+    },
+    {
+      "path": "python/utils/uia.py",
+      "desc": "Windows UIA extraction with target_pid support and optional unlabeled controls"
+    },
+    {
+      "path": "python/utils/window.py",
+      "desc": "Active-window resolution, target PID locking, Blinky exclusion, and ignored overlay rectangles"
+    },
+    {
+      "path": "python/tools/registry.json",
+      "desc": "Registered remote-agent tools and argument schemas"
+    },
+    {
+      "path": "mobile/App.tsx",
+      "desc": "Expo remote controller UI for PC connection, browser-agent queries, streamed responses, and power commands"
+    },
+    {
+      "path": "mobile/usePCWebSocket.ts",
+      "desc": "React hook for ws://host:9001 connection lifecycle, JSON response parsing, commands, and queries"
+    },
+    {
+      "path": "mobile/package.json",
+      "desc": "Expo 54 app dependencies and start/android/ios/web scripts"
+    },
+    {
+      "path": "package.json",
+      "desc": "Root Bun/Tauri scripts and frontend dependencies"
+    },
+    {
+      "path": "requirements.txt",
+      "desc": "Python dependencies for capture, OCR, UIA, requests, and platform-specific tooling"
+    }
   ]
 }

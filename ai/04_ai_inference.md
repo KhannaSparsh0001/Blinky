@@ -1,90 +1,121 @@
-# Blinky — AI Inference & Client Configurations
+# Blinky AI Inference and Prompting
 
-This guide details LLM prompt engineering, request routing, preflight classification, continuation detection, and provider configurations for local and cloud models.
+This guide covers the desktop screen-tutor inference path. The remote browser-agent path is documented separately in `07_agent_router.md`.
 
----
+## 1. Request Routing
 
-## 1. Request Flow & Preflight Classification
+`python/main.py` starts with lightweight routing before capture:
 
-Blinky processes incoming user queries through a preflight checks model before performing screen capture operations:
+1. `extract_locator_target()` detects questions like "where is", "show me", "locate", "highlight", or "point to".
+2. `should_force_screen_context()` forces screen mode for UI actions such as click, open, install, search, settings, folder, file, app, button, icon, and locator questions.
+3. Otherwise `classify_request()` calls `ask_text_model(build_preflight_prompt(...))`.
+4. If `needs_screen=false`, `answer_without_screen()` returns a chat response with `steps: []`.
+5. If `is_continuation=true`, the worker reuses `previous_question` as the active goal and treats the current message as `latest_update`.
+
+## 2. Conversation State
+
+`CommandBar.tsx` keeps the last query, completed target/instruction lists, and recent conversation history. It sends:
+
+- `previous_question` for workflow continuation.
+- `progress.completed_targets` and `progress.completed_instructions` after highlight clicks or text-entry Enter events.
+- Up to recent `conversation_history` entries with roles `student` and `blinky`.
+
+`python/main.py` normalizes this history to the last 10 entries and `prompt.py` includes up to the last 8 entries in prompts.
+
+## 3. Locator Fast Path
+
+Locator-style requests can return without the main LLM screen prompt:
 
 ```text
-               [ User Question ]
-                       │
-                       ▼
-          ┌──────────────────────────┐
-          │   Preflight Classifier   │  (Text-only prompt)
-          └──────────────────────────┘
-           /                        \
- (needs_screen=False)             (needs_screen=True)
-         /                            \
-  ┌──────────────┐             ┌──────────────┐
-  │ Chat Engine  │             │ Screen Engine│
-  │ (No Capture) │             │ (Screen Cap) │
-  └──────────────┘             └──────────────┘
+question -> capture -> UIA include_unlabeled=True -> find_best_match_with_score()
 ```
 
----
+The fast path accepts a match only when confidence and ambiguity checks pass. For control locator questions, the accepted candidate must be an interactive UIA control and must not be ambiguous. If confidence is low or icon-like controls need visual interpretation, the request falls back to the main screen AI path.
 
-## 2. Classifier & Conversation Logic
+## 4. Screen Prompt Construction
 
-### 2.1 Preflight Classifier (`build_preflight_prompt`)
-Determines if a request requires active screen context.
-* **Continuation Detection (`is_continuation`)**: Analyzes if a request is a follow-up to the active workflow (e.g. *"what next?"*, *"now what?"*, *"it worked"*, *"done"*, *"next step"*).
-* **Behavior**: If `is_continuation` is true, the engine swaps the effective query to the `previous_question` context while passing the current message as `latest_update`.
+`build_prompt()` receives:
 
-### 2.2 Chat Engine (`build_chat_prompt`)
-Used for conversational queries (e.g. *"how does Rust compile?"*). Chat prompts return direct summaries immediately with an empty `steps: []` list. This prevents system instructions from leaking into the UI.
+- effective student goal
+- active app metadata
+- visible OCR/UIA items
+- completed workflow context
+- optional latest follow-up comment
+- recent conversation history
 
----
+Visible items are serialized compactly:
 
-## 3. Screen-Bound Prompt Construction (`build_prompt`)
+```text
+"Search Extensions in Marketplace" (80,90,320,30,Edit)
+"Extensions" (18,170,48,48,TabItem)
+```
 
-When screen analysis is triggered, the builder compiles coordinates and text tags into a highly optimized visual structure:
+Prompt selection rules:
 
-* **Compact Item Format**: Screen targets are serialized into a dense representation to minimize context window size and local inference times:
-  ```text
-  "Extensions" (18, 170, 48, 48, Tab)
-  "Search Extensions in Marketplace" (80, 90, 320, 30, Edit)
-  ```
-  *Maximum element capacity is capped at 45 items.*
+- Keep only the immediate next action.
+- Return at most one step.
+- Use exact visible `target_text` for highlights.
+- Use an empty `target_text` only when guidance is needed but no visible target exists.
+- Skip navigation steps if the relevant search/filter/find box is already visible.
+- Ignore Blinky's own UI unless the user explicitly asks about Blinky settings.
+- Never mention coordinates in user-facing text.
 
-* **Blinky UI Filtering**: OCR terms associated with Blinky's overlay or settings labels (defined in `blinky_ignored_terms`) are stripped out.
-* **Single-Step Rule**: The prompt template contains instructions strictly forbidding the generation of more than **1 step**.
-* **Search-Bar Policy**: If a placeholder search box is visible, the AI must skip any navigation/sidebar steps and target the search field directly.
-* **Target Text Requirement**: For typing actions, `target_text` must contain the exact placeholder text of the input.
+## 5. Provider Router
 
----
+`python/ai/client.py` selects the provider from `BLINKY_AI_PROVIDER`.
 
-## 4. Provider Client Specifications
+| Function | Ollama | Groq |
+| :--- | :--- | :--- |
+| `ask_model(prompt, screenshot_path)` | `ask_ollama(prompt)` | `ask_groq_vision(prompt, screenshot_path)` |
+| `ask_text_model(prompt, max_tokens=300)` | `ask_ollama_text(prompt, max_tokens)` | `ask_groq_text(prompt, max_tokens)` |
 
-Requests are routed via [client.py](file:///c:/projects/Jarvis/python/ai/client.py) based on the `BLINKY_AI_PROVIDER` environment variable.
+Unsupported values raise `RuntimeError("Unsupported BLINKY_AI_PROVIDER...")`.
 
-### 4.1 Local Ollama Client (`ollama_client.py`)
-Executes inference on local machines (typically utilizing `gemma4:e4b`).
-* **Main Prompt Parameters**:
-  * `num_predict`: 350
-  * `temperature`: 0.1
-  * `timeout`: 120 seconds
-* **Preflight/Chat Prompt Parameters**:
-  * `num_predict`: 300
-* **Retry Strategy**: 2 attempt fallback sequence on endpoint failures.
+## 6. Ollama Client
 
-### 4.2 Cloud Groq Client (`groq_client.py`)
-Routes vision/text request payloads to cloud API endpoints.
-* **Main Prompt Parameters**:
-  * `max_tokens`: 350
-  * `timeout`: Configurable via `BLINKY_GROQ_TIMEOUT` (Default: 90s)
-* **Preflight/Chat Prompt Parameters**:
-  * `max_tokens`: 300
-* **Model Fallback**: If the configured vision model fails, falls back gracefully to `meta-llama/llama-4-scout-17b-16e-instruct` or standard default engines.
-* **Format**: Captures are transmitted as Base64-encoded Data URLs.
+Source: `python/ai/ollama_client.py`
 
----
+| Setting | Value |
+| :--- | :--- |
+| URL env | `BLINKY_OLLAMA_URL` |
+| Default URL | `http://localhost:11434/api/generate` |
+| Model env | `BLINKY_OLLAMA_MODEL` |
+| Default model | `gemma4:e4b` |
+| Timeout env | `BLINKY_OLLAMA_TIMEOUT` |
+| Default timeout | `35` seconds |
+| Main output cap | `num_predict: 350` |
+| Text output cap | caller default `300` |
+| Format | `json` |
+| Temperature | `0.1` |
 
-## Related Guides & Files
-- [01 System Architecture](file:///c:/projects/Jarvis/ai/01_architecture.md)
-- [Prompt Compiler](file:///c:/projects/Jarvis/python/ai/prompt.py)
-- [Model Router](file:///c:/projects/Jarvis/python/ai/client.py)
-- [Ollama Integration](file:///c:/projects/Jarvis/python/ai/ollama_client.py)
-- [Groq Integration](file:///c:/projects/Jarvis/python/ai/groq_client.py)
+The main guidance call retries twice for non-timeout failures and validates the final payload into `{ summary, steps, warnings }`.
+
+## 7. Groq Client
+
+Source: `python/ai/groq_client.py`
+
+| Setting | Value |
+| :--- | :--- |
+| URL env | `BLINKY_GROQ_URL` |
+| Default URL | `https://api.groq.com/openai/v1/chat/completions` |
+| Model env | `BLINKY_GROQ_MODEL` |
+| Default model | `meta-llama/llama-4-scout-17b-16e-instruct` |
+| Timeout env | `BLINKY_GROQ_TIMEOUT` |
+| Default timeout | `90` seconds |
+| Main output cap | `max_tokens: 350` |
+| Text output cap | caller default `300` |
+| Response format | JSON object |
+| Temperature | `0.1` |
+
+Groq vision sends the screenshot as a base64 JPEG data URL. The decommissioned `llama-3.2-90b-vision-preview` model is ignored and replaced with the default model.
+
+## 8. Post-Inference Enforcement
+
+After model output:
+
+1. `attach_matches()` links `target_text` to visible coordinates.
+2. `skip_completed_navigation_steps()` removes a stale first navigation step when the next target is already visible.
+3. `_fill_empty_search_targets()` attaches visible search/filter/find inputs to search-like steps with empty target text.
+4. `steps[:1]` enforces single-step mode even if a model returns more.
+
+See `03_matching_heuristics.md` for scoring and merge details.

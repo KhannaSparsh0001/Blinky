@@ -20,7 +20,7 @@ The aspect ratio is strictly preserved.
 
 ## 2. UIA Coordinate Normalization
 
-Windows UI Automation (UIA) returns control bounding rectangles in physical desktop coordinates (relative to the full display). EasyOCR/WinRT OCR results are extracted directly from the downsampled screenshot buffer, meaning they are already in downsampled screenshot-space.
+Windows UI Automation (UIA) returns control bounding rectangles in physical desktop coordinates (relative to the full display). WinRT OCR and pytesseract OCR results are extracted directly from the downsampled screenshot buffer, meaning they are already in downsampled screenshot-space.
 
 To align both coordinate systems in the same space, [main.py](file:///c:/projects/Jarvis/python/main.py) maps UIA bounds to screenshot-space bounds:
 
