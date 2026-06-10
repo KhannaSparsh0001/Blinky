@@ -90,9 +90,13 @@ def run(
     previous_question: str | None = None,
     progress: dict | None = None,
     conversation_history: list[dict] | None = None,
+    web_search_enabled: bool = False,
 ) -> dict:
     started = time.perf_counter()
     warnings: list[str] = []
+
+    if web_search_enabled:
+        return run_web_intelligence(question, conversation_history, started, warnings)
 
     locator_target = extract_locator_target(question)
     force_screen = should_force_screen_context(question, previous_question)
@@ -274,6 +278,51 @@ def answer_without_screen(question: str, conversation_history: list[dict] | None
     if not summary:
         raise RuntimeError("The chat model returned an empty reply.")
     return {"summary": summary, "steps": []}
+
+
+def run_web_intelligence(
+    question: str,
+    conversation_history: list[dict] | None,
+    started: float,
+    warnings: list[str],
+) -> dict:
+    import asyncio
+    from wil.pipeline import WILPipeline
+
+    def on_status(phase: str, data: dict) -> None:
+        message = data.get("message", f"Web search stage: {phase}")
+        print(json.dumps({"type": "status", "phase": phase, "message": message}), flush=True)
+        LOGGER.info("WIL pipeline status [%s]: %s", phase, message)
+
+    def on_chunk(chunk: str) -> None:
+        if chunk.strip().startswith("[Synthesis Error"):
+            return
+        print(json.dumps({"type": "chunk", "message": chunk}), flush=True)
+
+    result = asyncio.run(
+        WILPipeline().run(
+            query=question,
+            conversation_history=conversation_history,
+            on_status=on_status,
+            on_chunk=on_chunk,
+        )
+    )
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    return {
+        "summary": str(result.get("synthesized_response", "")).strip(),
+        "steps": [],
+        "active_app": {"title": "", "process": "", "supported": False},
+        "ocr": {"count": 0, "items": []},
+        "elapsed_ms": elapsed_ms,
+        "provider": get_provider_label(),
+        "warnings": warnings,
+        "is_continuation": False,
+        "web": {
+            "needs_web_search": result.get("needs_web_search", True),
+            "searxng_offline": result.get("searxng_offline", False),
+            "sources": result.get("sources", []),
+        },
+    }
 
 
 def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None, warnings: list[str], started: float) -> dict | None:
@@ -749,10 +798,11 @@ def main() -> None:
         if not isinstance(progress, dict):
             progress = {}
         conversation_history = normalize_conversation_history(payload.get("conversation_history"))
+        web_search_enabled = bool(payload.get("web_search_enabled", False))
         if not question:
             raise ValueError("Question is required.")
 
-        result = run(question, previous_question, progress, conversation_history)
+        result = run(question, previous_question, progress, conversation_history, web_search_enabled)
         print(json.dumps(result, ensure_ascii=True))
     except Exception as exc:
         LOGGER.exception("Worker failed")

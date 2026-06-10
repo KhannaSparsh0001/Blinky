@@ -1,6 +1,6 @@
 # Blinky AI Documentation Hub
 
-This folder is the developer and AI-agent map for the Blinky repository. It reflects the current codebase: a Tauri desktop tutor, a bounded screen autopilot loop, a Python screen-understanding worker, a Python browser-agent sidecar exposed over WebSocket, and an Expo mobile remote.
+This folder is the developer and AI-agent map for the Blinky repository. It reflects the current codebase: a Tauri desktop tutor, a bounded screen autopilot loop, a Python screen-understanding worker, a Python browser-agent sidecar exposed over WebSocket, a SearXNG-backed Web Intelligence Layer, and an Expo mobile remote.
 
 ## Reading Order
 
@@ -48,6 +48,12 @@ bun run dev
 bun run build
 ```
 
+Local web search:
+
+```powershell
+docker compose up -d searxng
+```
+
 Mobile app:
 
 ```powershell
@@ -70,6 +76,7 @@ npm run start
 | Groq model | `meta-llama/llama-4-scout-17b-16e-instruct` |
 | Sarvam TTS/STT | `bulbul:v3` / `saaras:v3` |
 | Browser controller | Playwright `chromium.launch(channel="msedge", headless=false)` by default |
+| SearXNG URL | `http://localhost:8888` |
 | Autopilot attempts | 5 max per command-bar globe/web request |
 
 ## Agent Notes

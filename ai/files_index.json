@@ -101,6 +101,22 @@
       "desc": "Persistent Playwright controller that opens visible Microsoft Edge by default"
     },
     {
+      "path": "python/wil/pipeline.py",
+      "desc": "Web Intelligence Layer orchestration for planning, SearXNG retrieval, source acquisition, processing, and synthesis"
+    },
+    {
+      "path": "python/wil/searxng_client.py",
+      "desc": "Async SearXNG JSON search client for the local http://localhost:8888 service"
+    },
+    {
+      "path": "docker-compose.yml",
+      "desc": "Starts the local SearXNG service exposed on host port 8888"
+    },
+    {
+      "path": "searxng/settings.yml",
+      "desc": "SearXNG settings enabling HTML and JSON search formats"
+    },
+    {
       "path": "python/ai/prompt.py",
       "desc": "Preflight, chat, and visual prompt builders with continuation history, Blinky UI filtering, compact visible-item format, and single-step rules"
     },
