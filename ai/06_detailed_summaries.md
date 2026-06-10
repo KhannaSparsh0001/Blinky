@@ -116,6 +116,7 @@ Stdin/stdout screen-tutor orchestrator.
 - Normalizes request payloads.
 - Classifies screen vs chat requests.
 - Handles continuation and conversation history.
+- Runs the Web Intelligence Layer when `web_search_enabled` is true.
 - Captures screen and prints `__BLINKY_CAPTURED__`.
 - Resolves locator fast-path requests.
 - Reads active app metadata, OCR items, and UIA items.
@@ -208,6 +209,16 @@ Persistent Playwright browser controller.
 - Launches Chromium with `channel="msedge"` by default.
 - Uses visible browser mode by default.
 - Reuses the browser/context/page across requests when possible.
+
+### `python/wil/`
+
+SearXNG-backed Web Intelligence Layer.
+
+- `pipeline.py`: coordinates planning, SearXNG retrieval, content acquisition, processing, and answer synthesis.
+- `searxng_client.py`: queries local SearXNG JSON search at `http://localhost:8888`.
+- `acquirer.py`, `http_fetcher.py`, `browser_engine.py`: fetch source pages through HTTP first, escalating to Playwright for thin/blocked pages.
+- `processor.py`: cleans and selects relevant source text.
+- `reasoner.py`: synthesizes the final answer with the configured AI provider, with fallback source summaries when synthesis is unavailable.
 
 ### `python/tools/registry.json`
 

@@ -19,6 +19,7 @@ struct TutorRequest {
     previous_question: Option<String>,
     progress: Option<serde_json::Value>,
     conversation_history: Option<serde_json::Value>,
+    web_search_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +65,7 @@ async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<serde_json::
         request.previous_question.as_deref(),
         request.progress.as_ref(),
         request.conversation_history.as_ref(),
+        request.web_search_enabled.unwrap_or(false),
         command.clone(),
         overlay.clone(),
     );
@@ -281,6 +283,7 @@ fn run_python_worker(
     previous_question: Option<&str>,
     progress: Option<&serde_json::Value>,
     conversation_history: Option<&serde_json::Value>,
+    web_search_enabled: bool,
     command_window: Option<WebviewWindow>,
     overlay_window: Option<WebviewWindow>,
 ) -> Result<String, String> {
@@ -305,6 +308,7 @@ fn run_python_worker(
         "previous_question": previous_question,
         "progress": progress.unwrap_or(&serde_json::Value::Null),
         "conversation_history": conversation_history.unwrap_or(&serde_json::Value::Null),
+        "web_search_enabled": web_search_enabled,
     });
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -336,6 +340,21 @@ fn run_python_worker(
                 restored = true;
             }
         } else {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Some(msg_type) = parsed.get("type").and_then(|value| value.as_str()) {
+                    if msg_type == "status" {
+                        if let Some(ref w) = command_window {
+                            let _ = w.emit("blinky://tutor-status", parsed.clone());
+                        }
+                    } else if msg_type == "chunk" {
+                        if let Some(ref w) = command_window {
+                            let _ = w.emit("blinky://tutor-chunk", parsed.clone());
+                        }
+                    }
+                    line.clear();
+                    continue;
+                }
+            }
             stdout_accumulated.push_str(&line);
         }
         line.clear();

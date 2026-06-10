@@ -80,6 +80,16 @@ bun run check:ollama
 bun run dev
 ```
 
+## Optional: Start Local Web Search
+
+For globe/web intelligence backed by SearXNG:
+
+```powershell
+docker compose up -d searxng
+```
+
+SearXNG is exposed at `http://localhost:8888` and returns JSON search results for the Python Web Intelligence Layer.
+
 
 ## ⌨️ Open Blinky
 
@@ -338,6 +348,7 @@ Globe/web mode adds:
 | Screen Capture | `dxcam` |
 | Window Detection | `pywinauto` |
 | Browser Automation | Playwright + Microsoft Edge |
+| Local Web Search | SearXNG + Docker Compose |
 | Overlay System | Transparent Tauri Window |
 
 ---
@@ -360,6 +371,7 @@ python/
 ├── OCR pipeline
 ├── AI integration
 ├── Edge browser agent
+├── Web Intelligence Layer
 ├── Window detection
 └── Matching logic
 

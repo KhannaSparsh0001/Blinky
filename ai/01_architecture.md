@@ -16,6 +16,8 @@ User
 │       └── runAgentQuery -> browser_agent/browser_controller
 │           └── visible Microsoft Edge through Playwright
 │               └── runTutor observe -> click_screen_point act -> repeat max 5
+│       └── run_tutor web_search_enabled -> python/wil pipeline
+│           └── SearXNG on localhost:8888 -> retrieved sources -> streamed answer
 └── Expo mobile app
     └── ws://<pc>:9001
         └── src-tauri/src/websocket.rs
@@ -37,6 +39,8 @@ User
 10. `CommandBar.tsx` records completed progress and re-runs `run_tutor` for the next screen state.
 
 In globe/web mode, `CommandBar.tsx` first runs `runAgentQuery()` so the browser planner can open/search in Edge. It then calls `runAutopilotLoop()`, which repeatedly observes the screen with `runTutor()`, clicks one safe matched target through `click_screen_point`, waits briefly, and observes again. The loop stops at completion, unsafe/missing targets, unchanged repeated targets, or 5 attempts.
+
+When `web_search_enabled` reaches `python/main.py`, the worker can run the Web Intelligence Layer in `python/wil/`. That path plans search queries, queries SearXNG at `http://localhost:8888`, fetches top sources, processes text, and streams status/chunks back through `blinky://tutor-status` and `blinky://tutor-chunk`.
 
 ## 3. Remote WebSocket / Agent Flow
 
@@ -154,6 +158,7 @@ Settings are persisted to `.env` through `get_settings` / `save_settings` in Rus
 | `BLINKY_SHORTCUT` | Rust/frontend | `Enter` or `Space`, meaning Ctrl+Shift+Enter or Ctrl+Shift+Space. |
 | `BLINKY_BROWSER_CHANNEL` | Python browser controller | Defaults to `msedge`. |
 | `BLINKY_BROWSER_HEADLESS` | Python browser controller | Defaults to visible browser mode (`false`). |
+| SearXNG local service | Docker Compose | `docker compose up -d searxng`, exposed on port `8888`. |
 
 ## 7. Platform Notes
 
