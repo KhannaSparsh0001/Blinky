@@ -2,7 +2,7 @@
 
 <div align="center">
 
-### *Ask. Learn. Click. Done.*
+### _Ask. Learn. Click. Done._
 
 <br>
 
@@ -44,6 +44,8 @@
 An AI-powered Windows desktop tutor that teaches users software directly on their screen using local AI. In web mode it can also open/search in your default Edge browser and run a bounded safe-click autopilot loop after reading the screen. In **Agent Mode** it can launch apps, play Spotify tracks, and press keyboard shortcuts entirely autonomously.
 
 # ⚡ Quick Start
+
+please refer to [linux_quick_start.md](./linux_quick_start.md) if you are using a **linux based machine**.
 
 ## 1️⃣ Install Prerequisites
 
@@ -90,7 +92,6 @@ docker compose up -d searxng
 
 SearXNG is exposed at `http://localhost:8888` and returns JSON search results for the Python Web Intelligence Layer and Spotify URI resolution.
 
-
 ## ⌨️ Open Blinky
 
 ### Main Hotkey
@@ -115,15 +116,14 @@ How do I install Python extension?
 
 Blinky will:
 
-* Capture the current screen
-* Run OCR + Windows UIA
-* Detect the active application
-* Generate AI instructions with screen-element `@refs`
-* Highlight matching UI elements
-* In globe/web mode, optionally click safe matched targets for up to 5 observe-act attempts
+- Capture the current screen
+- Run OCR + Windows UIA
+- Detect the active application
+- Generate AI instructions with screen-element `@refs`
+- Highlight matching UI elements
+- In globe/web mode, optionally click safe matched targets for up to 5 observe-act attempts
 
 In **Agent Mode** (🤖), Blinky can autonomously open apps, play music on Spotify, press shortcuts, scroll, and type — all with no clicks from you.
-
 
 ## Provider Configuration
 
@@ -148,6 +148,7 @@ $env:BLINKY_AI_PROVIDER="ollama"
 $env:BLINKY_OLLAMA_MODEL="gemma4:e4b"
 $env:BLINKY_OLLAMA_URL="http://localhost:11434/api/generate"
 ```
+
 </div>
 
 ---
@@ -186,7 +187,9 @@ Blinky will:
 ## 🌟 Recent Enhancements
 
 ### 🤖 Full Agent Mode (Computer Use)
+
 Blinky now ships a dedicated **Agent Mode** (activate with the 🤖 button) that can perform direct computer-use actions without requiring you to click anything:
+
 - **Open any app** — uses app protocol URIs, known executable paths, Windows Start Apps (`Get-StartApps`), and finally Windows Search as a fallback chain.
 - **Play Spotify tracks** — searches SearXNG (and falls back to DuckDuckGo HTML) to resolve a `spotify:track:ID` URI and opens it directly in the Spotify desktop app.
 - **Press keyboard shortcuts** — parses natural-language shortcut descriptions (`Ctrl+S`, `Alt+H`, `Win+D`) and executes them via `pywinauto`.
@@ -196,7 +199,9 @@ Blinky now ships a dedicated **Agent Mode** (activate with the 🤖 button) that
 - The bounded autopilot loop (max 5 attempts) now handles `type`, `search`, `submit`, and `scroll` actions in addition to safe clicks.
 
 ### 🧠 Intent Classification (Preflight Router)
+
 Before any screenshot is taken, Blinky runs a fast **preflight classifier** that routes requests into one of five intents:
+
 - `DESKTOP_AUTOMATION` — needs screen capture + OCR + AI overlay
 - `OPEN_APP` — directly launches the named app
 - `MEDIA_PLAYBACK` — plays a named song on Spotify
@@ -206,7 +211,9 @@ Before any screenshot is taken, Blinky runs a fast **preflight classifier** that
 Safety overrides prevent `OPEN_APP` from being triggered by in-app feature names (e.g., "tabs", "settings", "downloads") or multi-word queries.
 
 ### 🗂️ Dynamic App Context Generation
+
 For any app Blinky hasn't seen before, `app_context/registry.py` now **auto-generates a navigation guide** on first encounter:
+
 1. Queries SearXNG for `"<AppName> Windows keyboard shortcuts menus navigation"`
 2. Asks the LLM to produce a structured markdown guide from those search results
 3. Saves the guide to `python/app_context/<process_name>.md` for future runs
@@ -215,20 +222,26 @@ For any app Blinky hasn't seen before, `app_context/registry.py` now **auto-gene
 Built-in context files cover: VS Code, Chrome/Edge, File Explorer, WhatsApp, ChatGPT, Windows Settings, and Spotify.
 
 ### 🏷️ Screen Element `@ref` System
+
 Every visible UI element is now tagged with a stable `@ref` (e.g., `@e14`). The AI prompt uses these refs for precise target identification:
+
 - The model returns `target_ref: "@e14"` alongside `target_text`
 - Matching can use the ref directly for O(1) lookup, bypassing fuzzy text search
 - Refs are preserved across subsequent observations using an IOU + name-similarity cache (`utils/ui_map_cache.py`)
 
 ### 🗃️ UI Map Cache with Stable Refs
+
 `utils/ui_map_cache.py` caches the merged OCR+UIA map for the current window with a 2-second TTL:
+
 - Cache key is a signature of `(process, title, pid, screenshot dimensions)`
 - On cache hit, visible items are returned immediately without re-running OCR or UIA
 - On cache miss, fresh items are built and refs from the previous snapshot are **re-used** for unchanged elements using `automation_id` exact match and IOU/name-similarity scoring
 - This makes autopilot continuation fast and stable — the same element keeps the same `@ref` across observations
 
 ### 🧭 Bounded Autopilot Loop (Extended)
+
 Blinky can now run a small observe-act-observe loop from the command bar's Agent Mode button.
+
 - **Safe actions**: click, open, select, choose, go to, type, enter, search, submit, scroll
 - **Blocked actions**: install, enable, delete, remove, buy, purchase, pay, sign in, login
 - **Scroll support**: `scroll_at_point` through Rust `SendInput` (up or down, configurable amount)
@@ -237,64 +250,83 @@ Blinky can now run a small observe-act-observe loop from the command bar's Agent
 - Stops after 5 attempts, when the task is complete, when the same target repeats, or when the next action is unsafe
 
 ### 🌐 Edge Browser Intelligence
+
 The Python router now has a safer browser-planning path before generated tools.
+
 - Common open/search/site-search requests are planned as JSON actions.
 - Playwright launches visible Microsoft Edge (`msedge`) instead of a hidden throwaway browser when possible.
 - Generated Playwright code is still available as a fallback, but common API mistakes are repaired before safety auditing and verification.
 
 ### 🛡️ Dynamic Capture Exclusion (Flicker-Free Mode)
+
 Blinky now uses the native Windows API (`SetWindowDisplayAffinity` / `WDA_EXCLUDEFROMCAPTURE`) to exclude its own command and overlay windows from screen captures programmatically.
+
 - **The Blinky UI remains fully visible and active to you.**
 - **The screenshots captured for the AI model are completely clean**, hiding the Blinky UI from its own vision without needing to minimize or hide the app.
 - **Manual user screenshots (e.g., `Ctrl + Win + S` / `Win + Shift + S`) still capture Blinky correctly** because capture exclusion is dynamically restored immediately after the AI's screenshot is captured (under 100ms).
 
 ### 🎯 Full-Width Search & Input Highlighting
+
 Highlight boxes for search bars and text inputs are no longer constrained or shrunk to specific OCR words.
+
 - Blinky automatically detects when OCR text lies within a native text-input control (using UIA boundaries).
 - It scales and extends the highlight overlay to cover the **entire width of the input field**, providing a clean, clear visual guide.
 
 ### 📋 Robust Action Guides & Fallbacks
+
 Action-oriented tasks (such as searching, downloading, or configuring settings) will **always generate a step-by-step Action Guide**, even when the target view, panel, or extension marketplace is currently closed.
+
 - Instead of defaulting to a plain text summary, Blinky guides you to open the appropriate panel or sidebar view first, followed by the search and interaction steps.
 - Non-visible targets are listed as text guidance with `target_text: ""` to keep guidance clear without drawing empty highlights.
 
 ### ⚡ Local Inference Performance Optimizations
+
 Local Ollama (Gemma) execution speed has been optimized to **5-7 seconds** (down from 15+ seconds) through:
+
 - **Duplicate Capture Elimination:** Removed redundant screenshot and OCR execution loops in the Python worker.
 - **Prompt Compression:** Compressed OCR layout tokens by converting items to a compact `@ref role=X name="Y" box=(x,y,w,h)` format, reducing prompt tokens by ~1800.
 - **UI Map Caching:** 2-second TTL cache avoids re-running OCR/UIA on consecutive observations.
 - **Timeout Tuning:** Extended connection timeouts to 120 seconds to prevent local model load-time failures.
 
 ### 🔬 Tool Sufficiency Auditing
+
 The browser agent router now runs a two-stage sufficiency check on all tool results:
+
 1. **Heuristic pass** — immediately rejects empty strings, empty JSON, or outputs containing "no results", "not found", "error", "404".
 2. **LLM audit** — sends tool output to the AI with a lenient prompt: if the result contains concrete data (names, prices, links), it is marked sufficient.
 
 ### 🛠️ Command Window Resizable
+
 The command bar window can now be **dragged wider or narrower** using resize handles on the left and right edges. Width is clamped to a minimum of 560px.
 
 ### ⏹️ Run Cancellation
+
 A **Stop button** (square icon) appears in the send button position while Blinky is thinking. Clicking it immediately cancels the current run and clears the overlay.
 
 ## 🖥️ Real-Time Screen Capture
+
 Captures the active screen instantly when the user asks a question.
 
 ## 🔍 OCR-Based UI Understanding
+
 Extracts visible text, buttons, menus, and labels from applications.
 
 - Windows OCR API (primary)
 - EasyOCR fallback
 
 ## 🧠 Local AI Reasoning
+
 Runs fully offline using:
 
 - Ollama
 - `gemma4:e4b`
 
 ## 🎯 Smart Overlay Highlighting
+
 Highlights buttons and menus directly on the user's screen using stable `@ref`-tracked elements.
 
 ## 🖱️ Safe Autopilot Clicking
+
 When Agent Mode or globe/web mode is active, Blinky can convert matched screenshot coordinates back to physical screen coordinates and call the native Windows click command. The AI still sees the optimized screenshot; the click lands in the real desktop coordinate space.
 
 ## ⚡ Global Hotkey Workflow
@@ -421,25 +453,25 @@ Globe/web mode adds:
 
 # 🛠️ Tech Stack
 
-| Component | Technology |
-|---|---|
-| Desktop Framework | Tauri 2 |
-| Frontend | React 19 + TypeScript |
-| JavaScript Runtime / Package Manager | Bun 1.3.14 |
-| Backend Runtime | Python 3.11+ |
-| AI Runtime | Ollama |
-| AI Model | `gemma4:e4b` |
-| Cloud AI (optional) | Groq — `meta-llama/llama-4-scout-17b-16e-instruct` |
-| OCR | Windows OCR API (WinRT) |
-| OCR Fallback | pytesseract |
-| Screen Capture | `dxcam` |
-| Window Detection | `pywinauto` |
-| Browser Automation | Playwright + Microsoft Edge |
-| Local Web Search | SearXNG + Docker Compose |
-| Overlay System | Transparent Tauri Window |
-| Voice Input | Sarvam AI `saaras:v3` (STT) |
-| Voice Output | Sarvam AI `bulbul:v3` (TTS) |
-| Agent Actions | `computer_use/` — app launch, Spotify, shortcuts |
+| Component                            | Technology                                         |
+| ------------------------------------ | -------------------------------------------------- |
+| Desktop Framework                    | Tauri 2                                            |
+| Frontend                             | React 19 + TypeScript                              |
+| JavaScript Runtime / Package Manager | Bun 1.3.14                                         |
+| Backend Runtime                      | Python 3.11+                                       |
+| AI Runtime                           | Ollama                                             |
+| AI Model                             | `gemma4:e4b`                                       |
+| Cloud AI (optional)                  | Groq — `meta-llama/llama-4-scout-17b-16e-instruct` |
+| OCR                                  | Windows OCR API (WinRT)                            |
+| OCR Fallback                         | pytesseract                                        |
+| Screen Capture                       | `dxcam`                                            |
+| Window Detection                     | `pywinauto`                                        |
+| Browser Automation                   | Playwright + Microsoft Edge                        |
+| Local Web Search                     | SearXNG + Docker Compose                           |
+| Overlay System                       | Transparent Tauri Window                           |
+| Voice Input                          | Sarvam AI `saaras:v3` (STT)                        |
+| Voice Output                         | Sarvam AI `bulbul:v3` (TTS)                        |
+| Agent Actions                        | `computer_use/` — app launch, Spotify, shortcuts   |
 
 ---
 
@@ -649,7 +681,7 @@ Play lo-fi beats on Spotify
 3. Searches SearXNG for `site:open.spotify.com/track lo-fi beats`
 4. Extracts `spotify:track:XXXXXXXX` URI
 5. Calls `os.startfile("spotify:track:XXXXXXXX")` to open it in Spotify desktop
-6. Returns: *"Playing 'lo-fi beats' in Spotify."*
+6. Returns: _"Playing 'lo-fi beats' in Spotify."_
 
 ---
 
@@ -666,7 +698,7 @@ Open WhatsApp
 1. Preflight → `OPEN_APP`, app_name = "whatsapp"
 2. Tries `whatsapp:` protocol URI via `os.startfile`
 3. Falls back to known executable path, then `Get-StartApps`, then Windows Search
-4. Returns: *"Opened WhatsApp."*
+4. Returns: _"Opened WhatsApp."_
 
 ---
 
