@@ -15,6 +15,8 @@ import {
 import { runTutor, showOverlay, hideOverlay, resizeCommandWindow, getSettings, saveSettings, resizeAndMoveCommandWindow, clickScreenPoint, openUrl, typeText, scrollAtPoint } from './lib/tauri';
 import { linkCitationMarkers } from './lib/citations';
 import { buildAudioDataUrl, buildSarvamTtsPayload, buildSpeechContent, getSarvamErrorMessage } from './lib/tts';
+import { SarvamSpeechToTextStream, SarvamTextToSpeechStream } from './lib/sarvamStream';
+import { AdaptiveTransportManager } from './lib/adaptiveTransport';
 import type { TutorConversationMessage, TutorProgress, TutorResult } from './lib/types';
 
 interface TargetClickedPayload {
@@ -146,6 +148,23 @@ export function CommandBar() {
   const conversationHistoryRef = useRef<TutorConversationMessage[]>([]);
   const runIdRef = useRef(0);
   const cancelledRunIdsRef = useRef<Set<number>>(new Set());
+  const latestTranscriptRef = useRef<string>('');
+
+  // WebTransport and WebSocket streaming refs
+  const sttStreamRef = useRef<SarvamSpeechToTextStream | null>(null);
+  const ttsStreamRef = useRef<SarvamTextToSpeechStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const nextPlayTimeRef = useRef<number>(0);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const transportManagerRef = useRef<AdaptiveTransportManager | null>(null);
+  const transportStateRef = useRef<'WEBTRANSPORT' | 'WEBSOCKET'>('WEBTRANSPORT');
+
+  // TTS Streaming state
+  const speechBufferRef = useRef<string>('');
+  const ttsTextQueueRef = useRef<string[]>([]);
+  const ttsAudioQueueRef = useRef<string[]>([]);
+  const isFetchingTtsRef = useRef<boolean>(false);
+  const isPlayingTtsRef = useRef<boolean>(false);
 
   const rememberCompletedStep = (targetText?: string, instruction?: string) => {
     const cleanTarget = targetText?.trim();
@@ -165,17 +184,67 @@ export function CommandBar() {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
+    activeSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch {}
+    });
+    activeSourcesRef.current = [];
+    if (ttsStreamRef.current) {
+      ttsStreamRef.current.disconnect();
+      ttsStreamRef.current = null;
+    }
+
+    ttsTextQueueRef.current = [];
+    ttsAudioQueueRef.current = [];
+    isFetchingTtsRef.current = false;
+    isPlayingTtsRef.current = false;
+    speechBufferRef.current = '';
+
     setIsSpeaking(false);
   };
 
-  // Cleanup audio on unmount
+  // Initialize Adaptive Transport Manager when API key is loaded
+  useEffect(() => {
+    if (sarvamApiKey) {
+      const wtUrl = import.meta.env.VITE_SARVAM_GATEWAY_WT_URL || 'wt://gateway.blinky.internal/sarvam-stream';
+      const wsUrl = `wss://api.sarvam.ai/speech-to-text-stream?api-subscription-key=${encodeURIComponent(sarvamApiKey)}`;
+      
+      transportManagerRef.current = new AdaptiveTransportManager(
+        wtUrl,
+        wsUrl,
+        sarvamApiKey,
+        (state) => {
+          transportStateRef.current = state;
+          console.log(`Adaptive network engine transitioned to: ${state}`);
+        }
+      );
+      void transportManagerRef.current.reEvaluateConnection();
+    }
+  }, [sarvamApiKey]);
+
+  // Cleanup audio and streams on unmount
   useEffect(() => {
     return () => {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
       }
+      activeSourcesRef.current.forEach((source) => {
+        try {
+          source.stop();
+        } catch {}
+      });
+      if (ttsStreamRef.current) {
+        ttsStreamRef.current.disconnect();
+      }
+      if (sttStreamRef.current) {
+        sttStreamRef.current.disconnect();
+      }
     };
   }, []);
+
+  // Use a ref to avoid stale closure for the fetch queue function
+  const processTtsFetchQueueRef = useRef<() => void>(() => {});
 
   // Listen for real-time status and streaming chunks from python worker
   useEffect(() => {
@@ -187,6 +256,7 @@ export function CommandBar() {
     });
 
     unlistenChunk = listen<{ message: string }>('blinky://tutor-chunk', (event) => {
+      const msg = event.payload.message;
       setStatus((prev) => {
         if (
           prev === 'Thinking...' ||
@@ -197,10 +267,23 @@ export function CommandBar() {
           prev.startsWith('Fetching content') ||
           prev.startsWith('Cleaning and filtering')
         ) {
-          return event.payload.message;
+          return msg;
         }
-        return prev + event.payload.message;
+        return prev + msg;
       });
+
+      if (workflowStartedWithReadbackRef.current) {
+        speechBufferRef.current += msg;
+        const match = speechBufferRef.current.match(/([^.!?\n]+[.!?\n]+)(\s*|$)/);
+        if (match) {
+          const sentence = match[1].trim();
+          speechBufferRef.current = speechBufferRef.current.substring(match[0].length);
+          if (sentence) {
+            ttsTextQueueRef.current.push(sentence);
+            void processTtsFetchQueueRef.current();
+          }
+        }
+      }
     });
 
     return () => {
@@ -209,6 +292,168 @@ export function CommandBar() {
     };
   }, []);
 
+  // Callbacks refs to avoid stale closures in WebSockets
+  const onTranscriptRef = useRef<(transcript: string, isFinal: boolean) => void>(() => {});
+  const onAudioChunkRef = useRef<(base64Audio: string) => void>(() => {});
+
+  // Update refs on every render
+  onTranscriptRef.current = (transcript, isFinal) => {
+    const cleanText = (transcript || '').trim();
+    if (cleanText) {
+      setQuestion(cleanText);
+      latestTranscriptRef.current = cleanText;
+      if (isFinal) {
+        setStatus(`Searching for: "${cleanText}"`);
+        stopRecording();
+        void executeTutor(cleanText, true);
+      }
+    }
+  };
+
+  onAudioChunkRef.current = async (base64Audio) => {
+    if (!audioCtxRef.current) return;
+    const binary = atob(base64Audio);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    
+    try {
+      let audioBuffer: AudioBuffer;
+      try {
+        audioBuffer = await audioCtxRef.current.decodeAudioData(bytes.buffer.slice(0));
+      } catch {
+        const int16Array = new Int16Array(bytes.buffer);
+        const float32Array = new Float32Array(int16Array.length);
+        for (let i = 0; i < int16Array.length; i++) {
+          float32Array[i] = int16Array[i] / 32768.0;
+        }
+        audioBuffer = audioCtxRef.current.createBuffer(1, float32Array.length, 16000);
+        audioBuffer.getChannelData(0).set(float32Array);
+      }
+
+      const source = audioCtxRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioCtxRef.current.destination);
+
+      const startTime = Math.max(audioCtxRef.current.currentTime, nextPlayTimeRef.current);
+      source.start(startTime);
+      nextPlayTimeRef.current = startTime + audioBuffer.duration;
+      activeSourcesRef.current.push(source);
+
+      source.onended = () => {
+        activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
+        if (activeSourcesRef.current.length === 0) {
+          setIsSpeaking(false);
+        }
+      };
+    } catch (e) {
+      console.error('Failed to decode incoming voice buffer:', e);
+    }
+  };
+
+  const processTtsFetchQueue = async () => {
+    if (isFetchingTtsRef.current || ttsTextQueueRef.current.length === 0 || !sarvamApiKey) return;
+    isFetchingTtsRef.current = true;
+
+    while (ttsTextQueueRef.current.length > 0) {
+      const text = ttsTextQueueRef.current.shift();
+      if (!text) continue;
+
+      try {
+        const payload = buildSarvamTtsPayload(text);
+        payload.output_audio_codec = 'mp3';
+
+        const res = await fetch('https://api.sarvam.ai/text-to-speech', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'api-subscription-key': sarvamApiKey,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const base64Audio = data.audios[0];
+          ttsAudioQueueRef.current.push(base64Audio); // push base64 directly
+          void processTtsPlayQueue();
+        } else {
+          console.error('TTS Fetch failed with status:', res.status);
+        }
+      } catch (err) {
+        console.error('Failed to fetch TTS for sentence:', err);
+      }
+    }
+    isFetchingTtsRef.current = false;
+  };
+
+  // Update ref so useEffect closure always uses the latest state
+  processTtsFetchQueueRef.current = processTtsFetchQueue;
+
+  const processTtsPlayQueue = async () => {
+    if (isPlayingTtsRef.current || ttsAudioQueueRef.current.length === 0) return;
+    isPlayingTtsRef.current = true;
+    setIsSpeaking(true);
+
+    while (ttsAudioQueueRef.current.length > 0) {
+      const base64Audio = ttsAudioQueueRef.current.shift();
+      if (!base64Audio) continue;
+
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        }
+        const ctx = audioCtxRef.current;
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
+
+        const binary = atob(base64Audio);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+        } catch (decodeErr) {
+          console.warn('decodeAudioData failed, falling back to PCM:', decodeErr);
+          const validByteLength = bytes.buffer.byteLength - (bytes.buffer.byteLength % 2);
+          const int16Array = new Int16Array(bytes.buffer, 0, validByteLength / 2);
+          const float32Array = new Float32Array(int16Array.length);
+          for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0;
+          }
+          audioBuffer = ctx.createBuffer(1, float32Array.length, 16000);
+          audioBuffer.getChannelData(0).set(float32Array);
+        }
+
+        await new Promise<void>((resolve) => {
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(ctx.destination);
+          activeSourcesRef.current.push(source);
+          
+          source.onended = () => {
+            activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
+            resolve();
+          };
+          source.start(0);
+        });
+      } catch (e) {
+        console.error('Error decoding/playing TTS chunk:', e);
+      }
+    }
+    
+    isPlayingTtsRef.current = false;
+    
+    if (ttsTextQueueRef.current.length === 0 && !isFetchingTtsRef.current) {
+      setIsSpeaking(false);
+    }
+  };
+
   const speakText = async (summaryText: string, stepsList: any[], options: { includeSteps?: boolean } = {}) => {
     if (!sarvamApiKey) {
       setStatus('Please set your Sarvam AI API Key in settings first.');
@@ -216,49 +461,18 @@ export function CommandBar() {
     }
     
     const speechContent = buildSpeechContent(summaryText, stepsList, options);
+    if (!speechContent) return;
 
-    setIsSpeaking(true);
-    try {
-      const response = await fetch('https://api.sarvam.ai/text-to-speech', {
-        method: 'POST',
-        headers: {
-          'api-subscription-key': sarvamApiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(buildSarvamTtsPayload(speechContent)),
-      });
+    stopSpeaking();
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(getSarvamErrorMessage(errorData, response.status));
-      }
+    const sentences = (speechContent.match(/[^.!?\n]+[.!?\n]*/g) || [speechContent])
+      .map(s => s.trim())
+      .filter(Boolean);
 
-      const data = await response.json();
-      if (!data.audios || data.audios.length === 0) {
-        throw new Error('No audio returned from Sarvam AI TTS API.');
-      }
-
-      const base64Audio = data.audios[0];
-      const audioUrl = buildAudioDataUrl(base64Audio);
-      const audio = new Audio(audioUrl);
-      
-      currentAudioRef.current = audio;
-      audio.onended = () => {
-        setIsSpeaking(false);
-        currentAudioRef.current = null;
-      };
-      audio.onerror = (e) => {
-        console.error('Audio playback error:', e);
-        setIsSpeaking(false);
-        currentAudioRef.current = null;
-      };
-
-      await audio.play();
-    } catch (err: any) {
-      console.error('TTS error:', err);
-      setStatus(`Voice readback failed: ${err.message}`);
-      setIsSpeaking(false);
+    for (const sentence of sentences) {
+      ttsTextQueueRef.current.push(sentence);
     }
+    void processTtsFetchQueue();
   };
 
   const speakResponse = () => {
@@ -269,66 +483,20 @@ export function CommandBar() {
     }
   };
 
-  const startRecording = async () => {
+  const handleAudioTranscription = async (blob: Blob) => {
     if (!sarvamApiKey) {
       setStatus('Please set your Sarvam AI API Key in settings first.');
       return;
     }
-    audioChunksRef.current = [];
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const options = { mimeType: 'audio/webm' };
-      const recorder = new MediaRecorder(stream, options);
-      
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await handleAudioTranscription(audioBlob);
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-      setStatus('Listening... Click mic to stop.');
-    } catch (err) {
-      console.error('Error starting audio recording:', err);
-      setStatus('Microphone access failed or was denied.');
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      stopSpeaking();
-      void startRecording();
-    }
-  };
-
-  const handleAudioTranscription = async (blob: Blob) => {
-    setIsTranscribing(true);
-    setStatus('Transcribing speech...');
     
+    setStatus('Transcribing...');
     try {
       const formData = new FormData();
       formData.append('file', blob, 'query.webm');
       formData.append('model', 'saaras:v3');
       formData.append('language_code', 'en-IN');
-      
-      const response = await fetch('https://api.sarvam.ai/speech-to-text', {
+
+      const res = await fetch('https://api.sarvam.ai/speech-to-text', {
         method: 'POST',
         headers: {
           'api-subscription-key': sarvamApiKey,
@@ -336,26 +504,138 @@ export function CommandBar() {
         body: formData,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Sarvam STT failed with status ${response.status}`);
+      if (!res.ok) {
+        let payload: any = {};
+        try { payload = await res.json(); } catch {}
+        throw new Error(getSarvamErrorMessage(payload, res.status));
       }
 
-      const data = await response.json();
-      const text = (data.transcript || '').trim();
-      if (!text) {
-        throw new Error('Could not understand speech. Please try again.');
-      }
+      const data = await res.json();
+      const transcript = data.transcript?.trim() || '';
 
-      setQuestion(text);
-      setStatus(`Searching for: "${text}"`);
-      
-      void executeTutor(text, true);
+      if (transcript) {
+        setStatus(`Searching for: "${transcript}"`);
+        void executeTutor(transcript, true);
+      } else {
+        setStatus('Could not hear anything clearly.');
+      }
     } catch (err: any) {
-      console.error('Transcription error:', err);
-      setStatus(err.message || 'Failed to transcribe audio.');
-    } finally {
-      setIsTranscribing(false);
+      console.error('STT error:', err);
+      setStatus(`Transcription failed: ${err.message}`);
+    }
+  };
+
+  const startRecording = async () => {
+    if (!sarvamApiKey) {
+      setStatus('Please set your Sarvam AI API Key in settings first.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      (mediaRecorderRef as any).current = mediaRecorder;
+      
+      const audioChunks: BlobPart[] = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+      
+      // Setup VAD using the shared global AudioContext which was initialized during toggleRecording
+      const audioCtx = audioCtxRef.current!;
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      
+      let hasSpoken = false;
+      let silenceStartTime = 0;
+      let silenceTimeoutTriggered = false;
+      const SILENCE_THRESHOLD = 0.015;
+      const SPEECH_THRESHOLD = 0.035;
+      const SILENCE_DURATION_MS = 800;
+
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sum / inputData.length);
+
+        if (rms > SPEECH_THRESHOLD) {
+          if (!hasSpoken) {
+            hasSpoken = true;
+          }
+          silenceStartTime = 0;
+        } else if (hasSpoken && rms < SILENCE_THRESHOLD) {
+          const now = Date.now();
+          if (silenceStartTime === 0) {
+            silenceStartTime = now;
+          } else if (now - silenceStartTime > SILENCE_DURATION_MS) {
+            if (!silenceTimeoutTriggered) {
+              silenceTimeoutTriggered = true;
+              console.log("VAD: Local silence timeout reached. Stopping recording and submitting query.");
+              
+              if ((mediaRecorderRef as any).current?.state === 'recording') {
+                stopRecording();
+              }
+            }
+          }
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        try { processor.disconnect(); source.disconnect(); } catch {}
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        void handleAudioTranscription(audioBlob);
+      };
+      
+      mediaRecorder.start();
+      setIsRecording(true);
+      setStatus('Listening... Click mic to stop.');
+      
+      // Auto-stop after 10 seconds as a fallback
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          stopRecording();
+        }
+      }, 10000);
+      
+    } catch (err) {
+      console.error('Error starting audio recording:', err);
+      setStatus('Microphone access failed or was denied.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+    } else if (audioCtxRef.current.state === 'suspended') {
+      void audioCtxRef.current.resume();
+    }
+
+    if (isRecording) {
+      stopRecording();
+    } else {
+      stopSpeaking();
+      void startRecording();
     }
   };
 
@@ -375,11 +655,13 @@ export function CommandBar() {
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
 
+    // Immediately enable streaming TTS if requested
+    workflowStartedWithReadbackRef.current = shouldSpeakAfter;
+
     if (options.resetProgress) {
       completedTargetsRef.current = [];
       completedInstructionsRef.current = [];
       currentGuideStepsRef.current = [];
-      workflowStartedWithReadbackRef.current = shouldSpeakAfter;
       setSteps([]);
       setShowGuideCompletionSummary(false);
       lastQueryRef.current = '';
@@ -479,7 +761,6 @@ export function CommandBar() {
           completedInstructionsRef.current = [];
         }
         currentGuideStepsRef.current = [];
-        workflowStartedWithReadbackRef.current = shouldSpeakAfter;
         setSteps([]);
         setShowGuideCompletionSummary(false);
         lastQueryRef.current = queryText;
@@ -513,13 +794,18 @@ export function CommandBar() {
       if (inputRef.current) {
         inputRef.current.style.height = 'auto';
       }
-      
       if (shouldSpeakAfter) {
-        if (currentGuideSteps.length > 0) {
-          void speakText('', [currentGuideSteps[0]], { includeSteps: true });
-        } else if (result.summary) {
-          void speakText(result.summary, []);
+        if (speechBufferRef.current.trim()) {
+          ttsTextQueueRef.current.push(speechBufferRef.current.trim());
+          speechBufferRef.current = '';
         }
+        
+        if (currentGuideSteps.length > 0) {
+          const stepText = currentGuideSteps.map((s, i) => `Step ${i + 1}. ${s.instruction}`).join('. ');
+          ttsTextQueueRef.current.push(`Steps: ${stepText}`);
+        }
+
+        void processTtsFetchQueueRef.current();
       }
     } catch (error) {
       if (cancelledRunIdsRef.current.has(runId)) {
@@ -621,7 +907,7 @@ export function CommandBar() {
     forceShow: showGuideCompletionSummary,
   });
 
-  // Focus input when open-command event is heard
+  // Focus input when open-command event is heard and prewarm connections
   useEffect(() => {
     const focusInput = () => {
       stopSpeaking();
@@ -633,7 +919,7 @@ export function CommandBar() {
     return () => {
       unlisten.then((dispose) => dispose());
     };
-  }, []);
+  }, [sarvamApiKey]);
 
   useEffect(() => {
     const unlisten = listen<TargetClickedPayload>('blinky://target-clicked', (event) => {
@@ -767,6 +1053,13 @@ export function CommandBar() {
     event.preventDefault();
     const trimmed = question.trim();
     if (!trimmed || isRunning) return;
+
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+    } else if (audioCtxRef.current.state === 'suspended') {
+      void audioCtxRef.current.resume();
+    }
+
     void executeTutor(trimmed, false);
   }
 

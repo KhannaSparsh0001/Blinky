@@ -4,8 +4,8 @@ export interface SarvamTtsPayload {
   target_language_code: 'en-IN';
   speaker: 'ratan';
   pace: number;
-  speech_sample_rate: 16000;
-  output_audio_codec: 'mp3';
+  speech_sample_rate: number;
+  output_audio_codec: 'mp3' | 'pcm';
 }
 
 export function buildSarvamTtsPayload(text: string): SarvamTtsPayload {
@@ -16,7 +16,7 @@ export function buildSarvamTtsPayload(text: string): SarvamTtsPayload {
     speaker: 'ratan',
     pace: 1.05,
     speech_sample_rate: 16000,
-    output_audio_codec: 'mp3',
+    output_audio_codec: 'pcm',
   };
 }
 
