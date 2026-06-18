@@ -10,7 +10,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command as TokioCommand};
 use tokio::sync::Mutex;
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 struct AgentDaemon {
     child: Child,
@@ -216,8 +217,26 @@ async fn handle_connection(
     stream: tokio::net::TcpStream,
     peer_addr: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut ws_stream = accept_async(stream).await?;
-    println!("WebSocket handshake succeeded with {}", peer_addr);
+    let path = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let path_clone = path.clone();
+    let mut ws_stream = tokio_tungstenite::accept_hdr_async(stream, move |req: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
+        if let Ok(mut p) = path_clone.lock() {
+            *p = req.uri().path().to_string();
+        }
+        Ok(response)
+    }).await?;
+
+    let active_path = {
+        let p = path.lock().unwrap();
+        p.clone()
+    };
+    println!("WebSocket handshake succeeded with {} for path {}", peer_addr, active_path);
+
+    if active_path == "/sarvam-stt" {
+        return handle_sarvam_stt_proxy(ws_stream).await;
+    } else if active_path == "/sarvam-tts" {
+        return handle_sarvam_tts_proxy(ws_stream).await;
+    }
 
     while let Some(msg) = ws_stream.next().await {
         let msg = msg?;
@@ -667,4 +686,165 @@ mod tests {
         assert!(error.contains("Failed to open YouTube"));
         assert!(error.contains("no browser"));
     }
+}
+
+fn get_sarvam_api_key() -> String {
+    let root = project_root();
+    let envs = read_env_file(&root);
+    envs.into_iter()
+        .find(|(k, _)| k == "SARVAM_API_KEY")
+        .map(|(_, v)| v)
+        .unwrap_or_default()
+}
+
+async fn handle_sarvam_stt_proxy(
+    client_ws: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let api_key = get_sarvam_api_key();
+    if api_key.is_empty() {
+        return Err("SARVAM_API_KEY is not configured in environment".into());
+    }
+
+    let url = "wss://api.sarvam.ai/speech-to-text/ws?model=saaras:v3&language-code=en-IN";
+    let mut request = url.into_client_request()?;
+    request.headers_mut().insert("api-subscription-key", api_key.parse()?);
+
+    let (sarvam_ws, _) = connect_async(request).await?;
+    println!("Successfully connected proxy to Sarvam STT WebSocket");
+
+    let (mut client_write, mut client_read) = client_ws.split();
+    let (mut sarvam_write, mut sarvam_read) = sarvam_ws.split();
+
+    let client_to_sarvam = async {
+        while let Some(msg) = client_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("STT: Client sent close");
+                let _ = sarvam_write.send(msg).await;
+                break;
+            }
+            if msg.is_text() {
+                println!("STT: Client -> Sarvam text: {:?}", msg.to_text().unwrap_or(""));
+            } else if msg.is_binary() {
+                println!("STT: Client -> Sarvam binary ({} bytes)", msg.len());
+            }
+            if let Err(e) = sarvam_write.send(msg).await {
+                eprintln!("STT: Error sending to Sarvam: {:?}", e);
+                break;
+            }
+        }
+        println!("STT: client_to_sarvam ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let sarvam_to_client = async {
+        while let Some(msg) = sarvam_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("STT: Sarvam sent close");
+                let _ = client_write.send(msg).await;
+                break;
+            }
+            if msg.is_text() {
+                println!("STT: Sarvam -> Client text: {:?}", msg.to_text().unwrap_or(""));
+            } else if msg.is_binary() {
+                println!("STT: Sarvam -> Client binary ({} bytes)", msg.len());
+            }
+            if let Err(e) = client_write.send(msg).await {
+                eprintln!("STT: Error sending to client: {:?}", e);
+                break;
+            }
+        }
+        println!("STT: sarvam_to_client ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let res = tokio::select! {
+        r1 = client_to_sarvam => r1,
+        r2 = sarvam_to_client => r2,
+    };
+
+    if let Err(e) = res {
+        let err_str = e.to_string();
+        if !err_str.contains("closed") && !err_str.contains("Closing") && !err_str.contains("reset") {
+            eprintln!("STT Proxy error: {}", err_str);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_sarvam_tts_proxy(
+    client_ws: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let api_key = get_sarvam_api_key();
+    if api_key.is_empty() {
+        return Err("SARVAM_API_KEY is not configured in environment".into());
+    }
+
+    let url = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3";
+    let mut request = url.into_client_request()?;
+    request.headers_mut().insert("api-subscription-key", api_key.parse()?);
+
+    let (sarvam_ws, _) = connect_async(request).await?;
+    println!("Successfully connected proxy to Sarvam TTS WebSocket");
+
+    let (mut client_write, mut client_read) = client_ws.split();
+    let (mut sarvam_write, mut sarvam_read) = sarvam_ws.split();
+
+    let client_to_sarvam = async {
+        while let Some(msg) = client_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("TTS: Client sent close");
+                let _ = sarvam_write.send(msg).await;
+                break;
+            }
+            if msg.is_text() {
+                println!("TTS: Client -> Sarvam text: {:?}", msg.to_text().unwrap_or(""));
+            } else if msg.is_binary() {
+                println!("TTS: Client -> Sarvam binary ({} bytes)", msg.len());
+            }
+            if let Err(e) = sarvam_write.send(msg).await {
+                eprintln!("TTS: Error sending to Sarvam: {:?}", e);
+                break;
+            }
+        }
+        println!("TTS: client_to_sarvam ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let sarvam_to_client = async {
+        while let Some(msg) = sarvam_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("TTS: Sarvam sent close");
+                let _ = client_write.send(msg).await;
+                break;
+            }
+            if msg.is_text() {
+                println!("TTS: Sarvam -> Client text: {:?}", msg.to_text().unwrap_or(""));
+            } else if msg.is_binary() {
+                println!("TTS: Sarvam -> Client binary ({} bytes)", msg.len());
+            }
+            if let Err(e) = client_write.send(msg).await {
+                eprintln!("TTS: Error sending to client: {:?}", e);
+                break;
+            }
+        }
+        println!("TTS: sarvam_to_client ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let res = tokio::select! {
+        r1 = client_to_sarvam => r1,
+        r2 = sarvam_to_client => r2,
+    };
+
+    if let Err(e) = res {
+        let err_str = e.to_string();
+        if !err_str.contains("closed") && !err_str.contains("Closing") && !err_str.contains("reset") {
+            eprintln!("TTS Proxy error: {}", err_str);
+        }
+    }
+    Ok(())
 }
