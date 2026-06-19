@@ -31,7 +31,11 @@ from utils.logging import get_logger
 from utils.matching import attach_matches, find_best_match_with_score
 from utils.screen_elements import assign_screen_element_refs
 from utils.ui_map_cache import UiMapCache, window_signature
-from uia import get_visible_ui_text
+try:
+    from uia import get_visible_ui_text
+except ImportError:
+    def get_visible_ui_text(**kwargs):
+        return []
 from utils.window import get_active_window, get_ignored_overlay_rects
 
 LOGGER = get_logger("blinky.main")
