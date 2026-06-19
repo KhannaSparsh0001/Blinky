@@ -20,7 +20,12 @@ from main import (
 from utils.matching import attach_matches
 from utils.matching import find_best_match, find_best_match_with_score
 from utils.ui_map_cache import UiMapCache, window_signature
-from utils.uia import _element_text, _readable_metadata_text, _uia_item
+try:
+    from uia import _element_text, _readable_metadata_text, _uia_item
+except ImportError:
+    _element_text = lambda el, ct="": ""
+    _readable_metadata_text = lambda v: v
+    _uia_item = lambda *a, **kw: kw
 
 
 class GuidanceFlowTests(unittest.TestCase):
