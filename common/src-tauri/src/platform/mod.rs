@@ -14,8 +14,6 @@ mod power_impl;
 #[path = "../../../../linux/src-tauri/src/platform/power.rs"]
 mod power_impl;
 
-#[cfg(target_os = "windows")]
-pub use platform_impl::GlobalClick;
 pub use platform_impl::{
     click_screen_point_impl, configure_overlay_passthrough, open_url_impl, scroll_at_point_impl,
     set_window_capture_exclusion, start_global_click_listener, type_text_impl,
