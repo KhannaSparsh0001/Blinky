@@ -136,9 +136,6 @@ export function CommandBar() {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -536,39 +533,22 @@ export function CommandBar() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-
-      // Setup VAD and audio nodes using the shared global AudioContext
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      (mediaRecorderRef as any).current = mediaRecorder;
+      
+      const audioChunks: BlobPart[] = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+      
+      // Setup VAD using the shared global AudioContext which was initialized during toggleRecording
       const audioCtx = audioCtxRef.current!;
       const source = audioCtx.createMediaStreamSource(stream);
-      micSourceRef.current = source;
-
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      scriptProcessorRef.current = processor;
       
-      // Initialize and connect real-time streaming Speech-to-Text
-      latestTranscriptRef.current = '';
-      sttStreamRef.current = new SarvamSpeechToTextStream(
-        sarvamApiKey,
-        onTranscriptRef.current,
-        (err) => {
-          console.error('Sarvam STT WebSocket error:', err);
-          setStatus(`STT Error: ${err.message || String(err)}`);
-        }
-      );
-      sttStreamRef.current.connect();
-      sttStreamRef.current.startSession();
-
-      const floatTo16BitPCM = (float32Array: Float32Array) => {
-        const buffer = new ArrayBuffer(float32Array.length * 2);
-        const view = new DataView(buffer);
-        for (let i = 0; i < float32Array.length; i++) {
-          let s = Math.max(-1, Math.min(1, float32Array[i]));
-          view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-        }
-        return buffer;
-      };
-
       let hasSpoken = false;
       let silenceStartTime = 0;
       let silenceTimeoutTriggered = false;
@@ -585,12 +565,6 @@ export function CommandBar() {
         }
         const rms = Math.sqrt(sum / inputData.length);
 
-        // Convert the raw Float32 audio chunk to 16-bit linear PCM and stream it live
-        const pcmBuffer = floatTo16BitPCM(inputData);
-        if (sttStreamRef.current && sttStreamRef.current.isConnected) {
-          sttStreamRef.current.sendAudioChunk(pcmBuffer);
-        }
-
         if (rms > SPEECH_THRESHOLD) {
           if (!hasSpoken) {
             hasSpoken = true;
@@ -604,12 +578,9 @@ export function CommandBar() {
             if (!silenceTimeoutTriggered) {
               silenceTimeoutTriggered = true;
               console.log("VAD: Local silence timeout reached. Stopping recording and submitting query.");
-              stopRecording();
-              const finalQuery = latestTranscriptRef.current || question;
-              if (finalQuery) {
-                void executeTutor(finalQuery, true);
-              } else {
-                setStatus('Could not hear anything clearly.');
+              
+              if ((mediaRecorderRef as any).current?.state === 'recording') {
+                stopRecording();
               }
             }
           }
@@ -618,21 +589,22 @@ export function CommandBar() {
 
       source.connect(processor);
       processor.connect(audioCtx.destination);
+
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        try { processor.disconnect(); source.disconnect(); } catch {}
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        void handleAudioTranscription(audioBlob);
+      };
       
+      mediaRecorder.start();
       setIsRecording(true);
       setStatus('Listening... Click mic to stop.');
       
       // Auto-stop after 10 seconds as a fallback
       setTimeout(() => {
-        if (micStreamRef.current) {
-          console.log("VAD: Maximum recording duration reached. Stopping recording.");
+        if (mediaRecorder.state === 'recording') {
           stopRecording();
-          const finalQuery = latestTranscriptRef.current || question;
-          if (finalQuery) {
-            void executeTutor(finalQuery, true);
-          } else {
-            setStatus('Could not hear anything clearly.');
-          }
         }
       }, 10000);
       
@@ -643,22 +615,12 @@ export function CommandBar() {
   };
 
   const stopRecording = () => {
-    setIsRecording(false);
-    if (sttStreamRef.current) {
-      sttStreamRef.current.disconnect();
-      sttStreamRef.current = null;
-    }
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((track) => track.stop());
-      micStreamRef.current = null;
-    }
-    if (scriptProcessorRef.current) {
-      try { scriptProcessorRef.current.disconnect(); } catch {}
-      scriptProcessorRef.current = null;
-    }
-    if (micSourceRef.current) {
-      try { micSourceRef.current.disconnect(); } catch {}
-      micSourceRef.current = null;
+    if (mediaRecorderRef.current) {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
     }
   };
 
