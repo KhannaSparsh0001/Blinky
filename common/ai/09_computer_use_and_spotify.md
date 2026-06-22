@@ -4,17 +4,17 @@ This guide explains the desktop **computer-use path** used by Blinky agent mode,
 
 ## 1. What This Path Is
 
-Computer-use actions are handled inside `python/main.py` when `agent_mode` is enabled.
+Computer-use actions are handled inside `common/python/main.py` when `agent_mode` is enabled.
 
 ```text
 Desktop command bar (agent mode)
   -> run_tutor(agent_mode=true)
   -> preflight intent + fallback regex routing
-  -> python/computer_use/tools.py
+  -> common/python/computer_use/tools.py
   -> immediate tool result (or fallback to screen tutor path)
 ```
 
-This path is different from the mobile/WebSocket router path (`python/agent_router.py`), which is browser/web focused.
+This path is different from the mobile/WebSocket router path (`common/python/agent_router.py`), which is browser/web focused.
 
 ## 2. Human Quick Guide
 
@@ -49,8 +49,8 @@ For AI maintainers/agents, the effective contract is:
 
 Safety/quality guards:
 
-- If preflight emits `OPEN_APP` with an in-app action (`open settings`, `open new tab`, etc.), `python/main.py` overrides back to screen mode.
-- `python/computer_use/agent.py` provides regex fallback routing when preflight extraction is missing or ambiguous.
+- If preflight emits `OPEN_APP` with an in-app action (`open settings`, `open new tab`, etc.), `common/python/main.py` overrides back to screen mode.
+- `common/python/computer_use/agent.py` provides regex fallback routing when preflight extraction is missing or ambiguous.
 - Any direct tool failure returns control to the screen-tutor path instead of forcing risky behavior.
 
 ## 4. Spotify Behavior (Desktop Agent Mode)
@@ -70,10 +70,10 @@ Related behavior:
 
 ## 5. Files to Read for Changes
 
-- `python/main.py`
-- `python/computer_use/agent.py`
-- `python/computer_use/tools.py`
-- `python/tests/test_computer_use_tools.py`
-- `python/tests/test_spotify_tool.py`
-- `ai/07_agent_router.md` (boundary with router flow)
-- `ai/08_mobile_remote.md` (mobile routing boundary)
+- `common/python/main.py`
+- `common/python/computer_use/agent.py`
+- `common/python/computer_use/tools.py`
+- `common/python/tests/test_computer_use_tools.py`
+- `common/python/tests/test_spotify_tool.py`
+- `common/ai/07_agent_router.md` (boundary with router flow)
+- `common/ai/08_mobile_remote.md` (mobile routing boundary)

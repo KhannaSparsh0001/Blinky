@@ -1,6 +1,6 @@
 # Blinky Expo Mobile Remote
 
-The mobile app in `mobile/` is an Expo React Native controller for a running Blinky desktop instance.
+The mobile app in `common/mobile/` is an Expo React Native controller for a running Blinky desktop instance.
 
 ## 1. Purpose
 
@@ -11,16 +11,16 @@ The app connects to the desktop WebSocket server and offers:
 - streamed progress and final results
 - power operations: sleep, restart, shutdown
 
-It does not call `run_tutor` directly, does not render desktop overlay highlights, and does not run the desktop command-bar autopilot loop. Its query path goes through `src-tauri/src/websocket.rs` and `python/agent_router.py`.
+It does not call `run_tutor` directly, does not render desktop overlay highlights, and does not run the desktop command-bar autopilot loop. Its query path goes through `common/src-tauri/src/websocket.rs` and `common/python/agent_router.py`.
 
 ## 2. Main Files
 
 | File | Role |
 | :--- | :--- |
-| `mobile/App.tsx` | Main UI, connection form, query card, power controls, response rendering. |
-| `mobile/usePCWebSocket.ts` | WebSocket lifecycle hook and message send helpers. |
-| `mobile/package.json` | Expo 54 / React Native 0.81 app dependencies and scripts. |
-| `mobile/AGENTS.md` | Requires checking exact Expo versioned docs before code edits. |
+| `common/mobile/App.tsx` | Main UI, connection form, query card, power controls, response rendering. |
+| `common/mobile/usePCWebSocket.ts` | WebSocket lifecycle hook and message send helpers. |
+| `common/mobile/package.json` | Expo 54 / React Native 0.81 app dependencies and scripts. |
+| `common/mobile/AGENTS.md` | Requires checking exact Expo versioned docs before code edits. |
 
 ## 3. Connection Flow
 
@@ -59,7 +59,7 @@ When `data.is_chunk` is true, chunks are appended to `agentProgressMsg` for stre
 
 Mobile browser-agent queries can open/search through the router's safe browser planner or use registered/generated tools, but the phone is not the screen-observe/click actor. Bounded safe clicks are handled only by the desktop command bar, where the app can observe the screen and call `click_screen_point`.
 
-Computer-use note: this mobile query path does not invoke `python/computer_use/*` tools directly. Requests are handled by `python/agent_router.py` first.
+Computer-use note: this mobile query path does not invoke `common/python/computer_use/*` tools directly. Requests are handled by `common/python/agent_router.py` first.
 
 ## 5. Power Commands
 
@@ -79,7 +79,7 @@ power_off
 ## 6. Development Commands
 
 ```powershell
-cd mobile
+cd common/mobile
 npm install
 npm run start
 npm run android
@@ -87,10 +87,10 @@ npm run ios
 npm run web
 ```
 
-Before editing mobile code, follow `mobile/AGENTS.md`: check the Expo docs for the exact project version.
+Before editing mobile code, follow `common/mobile/AGENTS.md`: check the Expo docs for the exact project version.
 
 ## 7. Computer-Use and Spotify Boundary
 
-- Mobile remote query messages go to `python/agent_router.py` (browser/web intelligence path).
-- Desktop agent-mode actions such as local app launch, shortcut keypress, and URI-based Spotify track playback are implemented in `python/main.py` + `python/computer_use/`.
+- Mobile remote query messages go to `common/python/agent_router.py` (browser/web intelligence path).
+- Desktop agent-mode actions such as local app launch, shortcut keypress, and URI-based Spotify track playback are implemented in `common/python/main.py` + `common/python/computer_use/`.
 - If you need deterministic desktop Spotify playback (`play ... on Spotify` via `spotify:track:...`), prefer desktop command-bar agent mode rather than mobile remote routing.

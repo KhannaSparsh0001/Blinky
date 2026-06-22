@@ -25,48 +25,35 @@ Classify the student's request before any screen capture happens.
 Student request:
 {question}
 
-Decide whether Blinky needs to inspect the user's screen to answer.
+Decide on the best intent category for the request, whether Blinky needs to inspect the user's screen to answer (needs_screen), and whether it is a continuation.
 
-Use needs_screen=true only when the student wants guidance tied to visible UI,
-such as clicking, opening, selecting, locating, highlighting, installing,
-configuring, or navigating something in an app, file tree, menu, button, tab,
-or window.
+Intents to choose from:
+1. `OPEN_APP`: The user explicitly requests to open, launch, or start a local desktop application (e.g. "open Spotify", "launch vscode", "start WhatsApp"). Extract the app name to "app_name".
+   - Note: Do NOT classify web destinations, sites, or domains (e.g. YouTube, GitHub, Gmail, ChatGPT, or URLs) as `OPEN_APP`. Route those to `DESKTOP_AUTOMATION`.
+2. `MEDIA_PLAYBACK`: The user requests to play a song/artist/playlist on Spotify (e.g. "play blinding lights", "play lo-fi beats on spotify"). Extract the song/query to "song_name".
+3. `SYSTEM_SHORTCUT`: The user requests to trigger or press a keyboard shortcut (e.g. "press alt+tab", "do ctrl+s"). Extract the shortcut combination to "shortcut".
+4. `WEB_SEARCH`: The user is asking for real-time, current/fresh facts, news, weather, comparisons, or recommendations requiring external web lookup (e.g. "what is the price of Bitcoin?", "search gaming chair reviews", "latest news on AI", "who won the match?", "weather in Tokyo").
+5. `INFORMATIONAL_CHAT`: The user is greeting you, asking about your identity, explaining concepts, starting a normal conversation, or asking general questions that don't need screen context or web search (e.g. "hello", "who are you", "what is a variable in Python?").
+6. `DESKTOP_AUTOMATION`: Any step-by-step guidance on the user's active desktop screen/application UI (e.g. "how do I install python extension?", "click the install button", "where is the settings tab?").
 
-If the request is to open or navigate to a website or web destination such as
-YouTube, YouTube Music, Gmail, GitHub, ChatGPT, or a domain/URL, do not classify
-it as OPEN_APP. Treat it as visible desktop/browser automation that needs the
-screen so Blinky can inspect the current UI and target visible controls by refs.
+Rules for needs_screen:
+- needs_screen is true ONLY when the student wants guidance tied to visible UI (like clicking, opening, selecting, locating, highlighting, installing, or navigating something in an app, menu, button, tab, or window).
+- needs_screen is false for OPEN_APP, MEDIA_PLAYBACK, SYSTEM_SHORTCUT, WEB_SEARCH, and INFORMATIONAL_CHAT.
 
-Use needs_screen=false for normal conversation, identity questions, greetings,
-concept explanations, writing help, general knowledge questions, or requests
-that are not about the currently visible app UI.
+Rules for is_continuation:
+- is_continuation is true ONLY if the request is a short follow-up or query directly continuing or asking about the status/next step of the previous active goal/task (e.g. "what next?", "done", "now what?", "it is not showing up", "continue").
+- Otherwise, is_continuation is false.
 
-If the request asks for live/current external information that Blinky cannot
-fetch without a dedicated data source, keep needs_screen=false.
-
-Also, determine if the student's request is a continuation, follow-up, status check, or query about what to do next regarding the previous active goal/task (e.g. asking "what to do", "next", "continue", "how do I proceed", "now what", "go on", "show next step", etc.), rather than starting a new distinct topic or task.
-
-CRITICAL RULES FOR is_continuation:
-- If the student's request starts a new distinct topic, task, command, or action (e.g., "commit changes to git", "download python extension", "how to write a loop", "update the docs and commit", "open a folder"), is_continuation MUST be false.
-- is_continuation MUST be true ONLY if the request is a short follow-up or query directly continuing or asking about the status/next step of the previous active goal/task (e.g., "what next?", "done", "now what?", "it is not showing up", "continue").
-- If there is no previous active goal/task, is_continuation MUST be false.
-
-Examples:
-- previous: "tell me the steps to download code runner extension", current: "update the docs and commit it to github" -> is_continuation = false
-- previous: "tell me the steps to download code runner extension", current: "what to do next?" -> is_continuation = true
-- previous: "open main.py in the sidebar", current: "how to commit changes to github" -> is_continuation = false
-- previous: "open main.py in the sidebar", current: "done" -> is_continuation = true
-
-Return valid JSON only:
+Return valid JSON in the following format only:
 {{
-  "needs_screen": true,
-  "is_continuation": false
-}}
-
-or:
-{{
-  "needs_screen": false,
-  "is_continuation": false
+  "intent": "INTENT_NAME",
+  "needs_screen": true_or_false,
+  "is_continuation": true_or_false,
+  "extracted_params": {{
+    "app_name": "extracted app name",
+    "song_name": "extracted song/artist query",
+    "shortcut": "extracted shortcut key combo"
+  }}
 }}
 """.strip()
 
