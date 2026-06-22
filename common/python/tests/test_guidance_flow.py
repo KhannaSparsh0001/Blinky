@@ -690,8 +690,14 @@ class GuidanceFlowTests(unittest.TestCase):
             screen_height=720,
         )
         ai_response = {"summary": "Use Agent mode to open desktop apps.", "steps": []}
+        preflight_response = {
+            "intent": "DESKTOP_AUTOMATION",
+            "needs_screen": True,
+            "extracted_params": {},
+        }
 
         with (
+            patch("main.ask_text_model", return_value=preflight_response),
             patch("main.capture_screen", return_value=screenshot),
             patch("utils.window.get_target_window_element", return_value=None),
             patch("main.resolve_locator_fast_path", return_value=None),
@@ -705,6 +711,54 @@ class GuidanceFlowTests(unittest.TestCase):
 
         self.assertEqual(result["summary"], "Use Agent mode to open desktop apps.")
         self.assertNotIn("agent_action", result)
+
+    def test_auto_enables_agent_mode_for_spotify(self) -> None:
+        preflight_response = {
+            "intent": "OPEN_APP",
+            "needs_screen": False,
+            "extracted_params": {"app_name": "Spotify"},
+        }
+        action = ToolResult(True, "open_app", "Opened Spotify.", {"app_name": "Spotify"})
+        with (
+            patch("main.ask_text_model", return_value=preflight_response),
+            patch("main.try_run_agent_action", return_value=action),
+            patch("main.capture_screen", side_effect=AssertionError("app launch should not require screen capture")),
+            patch("main.get_active_window", return_value={"title": "Spotify", "process": "Spotify.exe", "supported": False}),
+        ):
+            result = run("open Spotify", agent_mode=False)
+
+        self.assertEqual(result["summary"], "Opened Spotify.")
+        self.assertEqual(result["agent_action"]["tool"], "open_app")
+
+    def test_auto_enables_web_search_mode_for_factual_query(self) -> None:
+        preflight_response = {
+            "intent": "WEB_SEARCH",
+            "needs_screen": False,
+            "extracted_params": {},
+        }
+        mock_web_result = {
+            "summary": "Gaming chairs reviews online...",
+            "steps": [],
+            "active_app": {"title": "", "process": "", "supported": False},
+            "ocr": {"count": 0, "items": []},
+            "elapsed_ms": 100,
+            "provider": "groq",
+            "warnings": [],
+            "is_continuation": False,
+            "web": {
+                "needs_web_search": True,
+                "searxng_offline": False,
+                "sources": [],
+            },
+        }
+        with (
+            patch("main.ask_text_model", return_value=preflight_response),
+            patch("main.run_web_intelligence", return_value=mock_web_result) as mock_wil,
+        ):
+            result = run("what is the best gaming chair?", web_search_enabled=False)
+
+        self.assertEqual(result["summary"], "Gaming chairs reviews online...")
+        mock_wil.assert_called_once()
 
     def test_agent_mode_can_execute_open_app_tool_before_screen_capture(self) -> None:
         preflight_response = {

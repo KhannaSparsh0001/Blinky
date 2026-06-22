@@ -132,6 +132,22 @@ def _fill_empty_search_targets(steps: list[dict], visible_items: list[dict]) -> 
     return steps
 
 
+def should_skip_preflight_for_local_fast_path(question: str) -> bool:
+    normalized = " ".join(question.lower().strip().split())
+    if not normalized:
+        return False
+    if is_followup_continuation_question(normalized):
+        return True
+    click_words = {"click", "select", "choose", "press", "tap"}
+    words = normalized.split()
+    first_word = words[0] if words else ""
+    if first_word in click_words:
+        return True
+    if extract_locator_target(normalized):
+        return True
+    return False
+
+
 def run(
     question: str,
     previous_question: str | None = None,
@@ -147,11 +163,11 @@ def run(
         return run_web_intelligence(question, conversation_history, started, warnings)
 
     locator_target = extract_locator_target(question)
-    force_screen = should_force_screen_context(question, previous_question)
+    skip_preflight = should_skip_preflight_for_local_fast_path(question)
 
     preflight = None
-    if force_screen:
-        LOGGER.info("Skipping preflight for screen-context question")
+    if skip_preflight:
+        LOGGER.info("Skipping preflight for local fast-path or continuation question")
     else:
         preflight_started = time.perf_counter()
         preflight = classify_request(question, previous_question, warnings, conversation_history)
@@ -168,6 +184,17 @@ def run(
     elif previous_question and is_followup_continuation_question(question):
         is_continuation = True
 
+    # Auto-enable modes based on classified intent
+    if intent == "WEB_SEARCH":
+        LOGGER.info("Automatically enabling web search mode for classified intent: WEB_SEARCH")
+        web_search_enabled = True
+    elif intent in {"OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
+        LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
+        agent_mode = True
+
+    if web_search_enabled:
+        return run_web_intelligence(question, conversation_history, started, warnings)
+
     if agent_mode:
         direct_agent_result = None
         if intent == "MEDIA_PLAYBACK":
@@ -181,6 +208,7 @@ def run(
                 if is_web_destination(app) or is_in_app_action(app) or not looks_like_app_name(app):
                     LOGGER.info("Overriding OPEN_APP intent in main.py for app '%s' to DESKTOP_AUTOMATION", app)
                     intent = "DESKTOP_AUTOMATION"
+                    agent_mode = False
                 else:
                     from computer_use.tools import open_app_tool
                     direct_agent_result = open_app_tool(app)
@@ -211,7 +239,7 @@ def run(
     else:
         progress = None
 
-    needs_screen = force_screen
+    needs_screen = True
     if preflight:
         needs_screen = bool(preflight.get("needs_screen", True))
         
