@@ -84,6 +84,24 @@ def _fill_empty_search_targets(steps: list[dict], visible_items: list[dict]) -> 
         best_input = None
         for item in visible_items:
             text = str(item.get("text", "")).lower().strip()
+
+            # Skip browser address/URL bars to avoid highlighting them instead of page-level inputs
+            is_url = text.startswith(("http://", "https://", "www.")) or re.search(r"^[a-z0-9-]+\.[a-z]{2,}", text)
+            is_address_bar = is_url or any(
+                phrase in text
+                for phrase in {
+                    "search or enter web address",
+                    "search or enter address",
+                    "address and search bar",
+                    "search or type web address",
+                    "search or type a web address",
+                    "search or type url",
+                    "enter search term or address",
+                }
+            )
+            if is_address_bar:
+                continue
+
             control_type = str(item.get("control_type", "")).lower()
             is_input = control_type in {"edit", "textbox", "combobox"}
             has_search_keyword = any(k in text for k in {"search", "filter", "find"})
@@ -587,6 +605,9 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
         LOGGER.info("Locator deferred to AI for '%s' reason=icon_or_control_needs_ai", target)
         return None
 
+    if is_open_action_question(question):
+        return None
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     LOGGER.info("Locator local path did not find '%s' after checking %d visible items", target, len(visible_items))
     return {
@@ -762,14 +783,19 @@ def extract_click_target(question: str) -> str | None:
         return None
 
     patterns = [
-        r"^(?:click|select|choose|press)\s+(?:on\s+)?(?:the\s+)?(.+?)(?:\?|$)",
-        r"^(?:tap)\s+(?:on\s+)?(?:the\s+)?(.+?)(?:\?|$)",
+        r"^(?:click|select|choose|press|tap)\s+(?:on\s+)?(?:the\s+)?(.+?)(?:\?|$)",
+        r"^(?:open|launch|start)\s+(?:the\s+)?(.+?)(?:\?|$)",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             return clean_locator_target(match.group(1))
     return None
+
+
+def is_open_action_question(question: str) -> bool:
+    normalized = " ".join(question.lower().strip().split())
+    return normalized.startswith(("open ", "launch ", "start "))
 
 
 def is_click_target_question(question: str) -> bool:

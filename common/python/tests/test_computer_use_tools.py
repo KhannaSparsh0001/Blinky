@@ -23,7 +23,11 @@ def test_agent_routes_web_destination_to_browser_tool() -> None:
         patch("computer_use.agent.open_web_destination_tool") as open_web,
     ):
         open_web.return_value = Mock()
-        result = try_run_agent_action("open YouTube")
+        # Without observation, should return None to trigger screen capture and locator fast path
+        assert try_run_agent_action("open YouTube", observation=None) is None
+        
+        # With observation (fallback), should route to browser tool
+        result = try_run_agent_action("open YouTube", observation={})
 
     assert result is open_web.return_value
     open_web.assert_called_once_with("YouTube")

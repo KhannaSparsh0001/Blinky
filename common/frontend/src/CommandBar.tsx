@@ -1,7 +1,7 @@
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ArrowUp, Bot, Loader2, Minus, Sparkles, X, Settings, Check, Mic, Volume2, Globe, Square } from 'lucide-react';
-import { AnchorHTMLAttributes, FormEvent, useEffect, useRef, useState } from 'react';
+import { AnchorHTMLAttributes, FormEvent, useEffect, useRef, useState, cloneElement, isValidElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { runAutopilotLoop, extractTextToType, shouldPressEnterAfterTyping, isScrollAction, getScrollDirection } from './lib/autopilot';
 import {
@@ -163,11 +163,31 @@ export function CommandBar() {
 
   // TTS Streaming state
   const speechBufferRef = useRef<string>('');
-  const ttsTextQueueRef = useRef<{ text: string, isHidden?: boolean }[]>([]);
+  const ttsTextQueueRef = useRef<{ text: string, isHidden?: boolean, startWordIdx?: number, wordsCount?: number }[]>([]);
   const ttsAudioQueueRef = useRef<string[]>([]);
   const isFetchingTtsRef = useRef<boolean>(false);
   const isPlayingTtsRef = useRef<boolean>(false);
   const hasStreamedTtsRef = useRef<boolean>(false);
+
+  const [activeWordIndex, setActiveWordIndex] = useState<number>(-1);
+  const wordTimersRef = useRef<number[]>([]);
+  const spokenWordsAccumulatorRef = useRef<number>(0);
+
+  const pushToTtsQueue = (text: string, isHidden?: boolean) => {
+    const cleanSentence = text.trim();
+    if (!cleanSentence) return;
+
+    const wordsCount = cleanSentence.split(/\s+/).filter(Boolean).length;
+    const startWordIdx = spokenWordsAccumulatorRef.current;
+    spokenWordsAccumulatorRef.current += wordsCount;
+
+    ttsTextQueueRef.current.push({
+      text: cleanSentence,
+      isHidden,
+      startWordIdx,
+      wordsCount
+    });
+  };
 
   const rememberCompletedStep = (targetText?: string, instruction?: string) => {
     const cleanTarget = targetText?.trim();
@@ -197,6 +217,12 @@ export function CommandBar() {
       ttsStreamRef.current.disconnect();
       ttsStreamRef.current = null;
     }
+
+    // Clear word highlight timers
+    wordTimersRef.current.forEach((timerId) => clearTimeout(timerId));
+    wordTimersRef.current = [];
+    setActiveWordIndex(-1);
+    spokenWordsAccumulatorRef.current = 0;
 
     ttsTextQueueRef.current = [];
     ttsAudioQueueRef.current = [];
@@ -285,7 +311,7 @@ export function CommandBar() {
           const sentence = match[1].trim();
           speechBufferRef.current = speechBufferRef.current.substring(match[0].length);
           if (sentence) {
-            ttsTextQueueRef.current.push({ text: sentence });
+            pushToTtsQueue(sentence);
             void processTtsFetchQueueRef.current();
           }
         }
@@ -390,7 +416,13 @@ export function CommandBar() {
         if (res.ok) {
           const data = await res.json();
           const base64Audio = data.audios[0];
-          ttsAudioQueueRef.current.push(JSON.stringify({ text: item.text, audio: base64Audio, isHidden: item.isHidden }));
+          ttsAudioQueueRef.current.push(JSON.stringify({
+            text: item.text,
+            audio: base64Audio,
+            isHidden: item.isHidden,
+            startWordIdx: item.startWordIdx,
+            wordsCount: item.wordsCount
+          }));
           void processTtsPlayQueue();
         } else {
           console.error('TTS Fetch failed with status:', res.status);
@@ -416,7 +448,7 @@ export function CommandBar() {
       const payloadStr = ttsAudioQueueRef.current.shift();
       if (!payloadStr) continue;
       
-      const { text, audio: base64Audio, isHidden } = JSON.parse(payloadStr);
+      const { text, audio: base64Audio, isHidden, startWordIdx } = JSON.parse(payloadStr);
 
       try {
         if (!audioCtxRef.current) {
@@ -468,6 +500,22 @@ export function CommandBar() {
           nextPlayTimeRef.current = startTime + audioBuffer.duration;
           
           const delayMs = Math.max(0, (startTime - ctx.currentTime) * 1000);
+          
+          const sentenceWords = (text || '').split(/\s+/).filter(Boolean);
+          const sentenceStartIdx = startWordIdx ?? 0;
+
+          if (!isHidden && sentenceWords.length > 0) {
+            const wordDurationMs = (audioBuffer.duration * 1000) / sentenceWords.length;
+            sentenceWords.forEach((word: string, wordIdx: number) => {
+              const delay = delayMs + wordIdx * wordDurationMs;
+              const timerId = window.setTimeout(() => {
+                setActiveWordIndex(sentenceStartIdx + wordIdx);
+                wordTimersRef.current = wordTimersRef.current.filter((id) => id !== timerId);
+              }, delay);
+              wordTimersRef.current.push(timerId);
+            });
+          }
+
           if (text && !isHidden) {
             setTimeout(() => {
               setSpokenStatus((prev) => {
@@ -514,7 +562,7 @@ export function CommandBar() {
       .filter(Boolean);
 
     for (const sentence of sentences) {
-      ttsTextQueueRef.current.push({ text: sentence });
+      pushToTtsQueue(sentence);
     }
     setIsTtsActive(true);
     setSpokenStatus('Thinking...');
@@ -848,13 +896,13 @@ export function CommandBar() {
           void speakText(result.summary, currentGuideSteps, { includeSteps: !showGuideCompletionSummary });
         } else {
           if (speechBufferRef.current.trim()) {
-            ttsTextQueueRef.current.push({ text: speechBufferRef.current.trim() });
+            pushToTtsQueue(speechBufferRef.current.trim());
             speechBufferRef.current = '';
           }
           
           if (currentGuideSteps.length > 0) {
             const stepText = currentGuideSteps.map((s, i) => `Step ${i + 1}. ${s.instruction}`).join('. ');
-            ttsTextQueueRef.current.push({ text: `Steps: ${stepText}`, isHidden: true });
+            pushToTtsQueue(`Steps: ${stepText}`, true);
           }
 
           void processTtsFetchQueueRef.current();
@@ -1113,8 +1161,87 @@ export function CommandBar() {
       void audioCtxRef.current.resume();
     }
 
-    void executeTutor(trimmed, true);
+    void executeTutor(trimmed, false);
   }
+
+  let renderWordIndex = 0;
+
+  const highlightText = (node: any): any => {
+    if (typeof node === 'string') {
+      const words = node.split(/(\s+)/); // keep whitespace
+      return words.map((word, idx) => {
+        if (!word.trim()) {
+          return word;
+        }
+
+        const currentIdx = renderWordIndex;
+        renderWordIndex++;
+
+        const isCurrent = isTtsActive && currentIdx === activeWordIndex;
+        const isSpoken = !isTtsActive || currentIdx < activeWordIndex;
+
+        return (
+          <span
+            key={currentIdx}
+            className={`word-node ${isCurrent ? 'active-speaking-word' : isSpoken ? 'spoken-word' : 'unspoken-word'}`}
+          >
+            {word}
+          </span>
+        );
+      });
+    }
+
+    if (Array.isArray(node)) {
+      return node.map((child, idx) => <span key={idx}>{highlightText(child)}</span>);
+    }
+
+    if (node && isValidElement(node)) {
+      const children = (node.props as any).children;
+      if (children) {
+        return cloneElement(node, {
+          children: highlightText(children)
+        } as any);
+      }
+    }
+
+    return node;
+  };
+
+  const markdownComponents = {
+    p: ({ children }: any) => {
+      return <p>{highlightText(children)}</p>;
+    },
+    li: ({ children }: any) => {
+      return <li>{highlightText(children)}</li>;
+    },
+    strong: ({ children }: any) => {
+      return <strong>{highlightText(children)}</strong>;
+    },
+    em: ({ children }: any) => {
+      return <em>{highlightText(children)}</em>;
+    },
+    a: (props: any) => {
+      return <ExternalMarkdownLink {...props} children={highlightText(props.children)} />;
+    },
+    h1: ({ children }: any) => {
+      return <h1>{highlightText(children)}</h1>;
+    },
+    h2: ({ children }: any) => {
+      return <h2>{highlightText(children)}</h2>;
+    },
+    h3: ({ children }: any) => {
+      return <h3>{highlightText(children)}</h3>;
+    },
+    h4: ({ children }: any) => {
+      return <h4>{highlightText(children)}</h4>;
+    },
+    h5: ({ children }: any) => {
+      return <h5>{highlightText(children)}</h5>;
+    },
+    h6: ({ children }: any) => {
+      return <h6>{highlightText(children)}</h6>;
+    },
+  };
 
   async function startDrag() {
     await getCurrentWindow().startDragging();
@@ -1278,70 +1405,90 @@ export function CommandBar() {
                 }
               }}
             />
-            <button
-              type="button"
-              className={`command-websearch-btn ${webSearchEnabled ? 'active' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                const nextEnabled = !webSearchEnabled;
-                setWebSearchEnabled(nextEnabled);
-                if (nextEnabled) {
-                  setAgentModeEnabled(false);
-                }
-              }}
-              disabled={isRunning || isTranscribing}
-              title="Toggle Web Search"
-            >
-              <Globe size={16} />
-            </button>
-            <button
-              type="button"
-              className={`command-agent-btn ${agentModeEnabled ? 'active' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                const nextEnabled = !agentModeEnabled;
-                setAgentModeEnabled(nextEnabled);
-                if (nextEnabled) {
-                  setWebSearchEnabled(false);
-                }
-              }}
-              disabled={isRunning || isTranscribing}
-              title="Toggle Agent Automation"
-            >
-              <Bot size={16} />
-            </button>
-            <button
-              type="button"
-              className={`command-mic-btn ${isRecording ? 'recording' : ''} ${isTranscribing ? 'loading' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleRecording();
-              }}
-              disabled={isRunning || isTranscribing}
-              title={isRecording ? "Stop recording" : "Record voice command"}
-            >
-              {isTranscribing ? (
-                <Loader2 className="spin" size={16} />
-              ) : isRecording ? (
-                <span className="mic-record-indicator" />
-              ) : (
-                <Mic size={16} />
-              )}
-            </button>
-            <button
-              className={`command-send ${isRunning ? 'stopping' : ''}`}
-              type={isRunning ? 'button' : 'submit'}
-              disabled={isTranscribing || (!isRunning && question.trim().length === 0)}
-              onClick={(event) => {
-                if (!isRunning) return;
-                event.preventDefault();
-                event.stopPropagation();
-                stopCurrentRun();
-              }}
-              title={isRunning ? 'Stop thinking' : 'Send'}
-            >
-              {isRunning ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}
-            </button>
+            <div className="command-input-actions">
+              <div className="command-input-actions-left">
+                <button
+                  type="button"
+                  className={`command-websearch-btn ${webSearchEnabled ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextEnabled = !webSearchEnabled;
+                    setWebSearchEnabled(nextEnabled);
+                    if (nextEnabled) {
+                      setAgentModeEnabled(false);
+                    }
+                  }}
+                  disabled={isRunning || isTranscribing}
+                  title="Toggle Web Search"
+                >
+                  <Globe size={16} />
+                </button>
+                <button
+                  type="button"
+                  className={`command-agent-btn ${agentModeEnabled ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextEnabled = !agentModeEnabled;
+                    setAgentModeEnabled(nextEnabled);
+                    if (nextEnabled) {
+                      setWebSearchEnabled(false);
+                    }
+                  }}
+                  disabled={isRunning || isTranscribing}
+                  title="Toggle Agent Automation"
+                >
+                  <Bot size={16} />
+                </button>
+              </div>
+              <div className="command-input-actions-right">
+                <button
+                  type="button"
+                  className={`command-mic-btn ${isRecording ? 'recording' : ''} ${isTranscribing ? 'loading' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleRecording();
+                  }}
+                  disabled={isRunning || isTranscribing}
+                  title={isRecording ? "Stop recording" : "Record voice command"}
+                >
+                  {isTranscribing ? (
+                    <Loader2 className="spin" size={16} />
+                  ) : isRecording ? (
+                    <span className="mic-record-indicator" />
+                  ) : (
+                    <Mic size={16} />
+                  )}
+                </button>
+                {status && status !== defaultStatus && sarvamApiKey && (
+                  <button
+                    type="button"
+                    className={`command-readaloud-btn ${isSpeaking ? 'speaking' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      speakResponse();
+                    }}
+                    disabled={isTranscribing}
+                    title={isSpeaking ? "Stop reading aloud" : "Read aloud response"}
+                  >
+                    <Volume2 size={16} />
+                  </button>
+                )}
+                <button
+                  className={`command-send ${isRunning ? 'stopping' : ''}`}
+                  type={isRunning ? 'button' : 'submit'}
+                  disabled={isTranscribing || (!isRunning && question.trim().length === 0)}
+                  onClick={(event) => {
+                    if (!isRunning) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    stopCurrentRun();
+                  }}
+                  title={isRunning ? 'Stop thinking' : 'Send'}
+                >
+                  {isRunning ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}
+                </button>
+              </div>
+            </div>
           </div>
 
           {(webSearchEnabled || agentModeEnabled) && isRunning && (
@@ -1361,7 +1508,7 @@ export function CommandBar() {
                   <Sparkles size={14} className="summary-sparkle" />
                   <div className="command-summary-text-container">
                     <span className="command-status">
-                      <ReactMarkdown components={{ a: ExternalMarkdownLink }}>{linkCitationMarkers(isTtsActive ? spokenStatus : status)}</ReactMarkdown>
+                      <ReactMarkdown components={markdownComponents as any}>{linkCitationMarkers(status)}</ReactMarkdown>
                     </span>
                     {steps.length > 0 && sarvamApiKey && (
                       <button
