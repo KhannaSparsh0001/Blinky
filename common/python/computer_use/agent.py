@@ -102,12 +102,13 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
         app = cleanup_app_name(match.group("app"))
         if app and app not in {"help", "settings", "menu"}:
             if is_web_destination(app):
-                return open_web_destination_tool(app)
+                if observation is not None:
+                    return open_web_destination_tool(app)
+                return None
             if not is_in_app_action(app) and looks_like_app_name(app):
                 return open_app_tool(app)
 
     return None
-
 
 
 def cleanup_app_name(value: str) -> str:

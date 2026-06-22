@@ -707,8 +707,14 @@ class GuidanceFlowTests(unittest.TestCase):
         self.assertNotIn("agent_action", result)
 
     def test_agent_mode_can_execute_open_app_tool_before_screen_capture(self) -> None:
+        preflight_response = {
+            "intent": "OPEN_APP",
+            "needs_screen": False,
+            "extracted_params": {"app_name": "Spotify"},
+        }
         action = ToolResult(True, "open_app", "Opened Spotify.", {"app_name": "Spotify"})
         with (
+            patch("main.ask_text_model", return_value=preflight_response),
             patch("main.try_run_agent_action", return_value=action),
             patch("main.capture_screen", side_effect=AssertionError("app launch should not require screen capture")),
             patch("main.get_active_window", return_value={"title": "Spotify", "process": "Spotify.exe", "supported": False}),
@@ -730,6 +736,13 @@ class GuidanceFlowTests(unittest.TestCase):
             "Opened YouTube.",
             {"destination": "YouTube", "url": "https://www.youtube.com/"},
         )
+        screenshot = SimpleNamespace(
+            path="screenshots/test.jpg",
+            width=1728,
+            height=1080,
+            screen_width=2560,
+            screen_height=1600,
+        )
 
         with (
             patch("main.ask_text_model", return_value=preflight_response),
@@ -738,10 +751,9 @@ class GuidanceFlowTests(unittest.TestCase):
                 side_effect=AssertionError("web destination should not open as a desktop app"),
             ),
             patch("main.try_run_agent_action", return_value=action),
-            patch(
-                "main.capture_screen",
-                side_effect=AssertionError("web destination agent action should not require screen capture"),
-            ),
+            patch("main.capture_screen", return_value=screenshot),
+            patch("main.get_visible_ui_text", return_value=[]),
+            patch("main.extract_visible_text", return_value=[]),
             patch(
                 "main.get_active_window",
                 return_value={"title": "Microsoft Edge", "process": "msedge.exe", "supported": True},
@@ -817,6 +829,8 @@ class GuidanceFlowTests(unittest.TestCase):
     def test_click_target_extraction_removes_generic_words(self) -> None:
         self.assertEqual(extract_click_target("click YouTube"), "YouTube")
         self.assertEqual(extract_click_target("click the YouTube button"), "YouTube")
+        self.assertEqual(extract_click_target("open YouTube"), "YouTube")
+        self.assertEqual(extract_click_target("open the YouTube tab"), "YouTube")
         self.assertIsNone(extract_click_target("how to install code runner extension"))
 
     def test_click_question_uses_local_uia_match_without_ai(self) -> None:
