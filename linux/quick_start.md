@@ -44,9 +44,39 @@ export GROQ_API_KEY=your_api_key_here
 git clone git@github.com:KingSahil/Blinky.git && cd blinky
 # Install Node dependencies
 bun install
-# Install Python requirements (creates a .venv folder)
-bun run linux:setup:python   # runs ./scripts/setup-python.sh
+# Install Python requirements (creates a .venv folder in root)
+bun run linux:setup:python   # runs ./linux/scripts/setup-python.sh
 ```
+
+### Additional Linux Requirements
+
+#### 1. Audio Support (GStreamer)
+To prevent WebKit audio context initialization failures, install the GStreamer good plugins:
+* **Arch Linux**:
+  ```bash
+  sudo pacman -S gst-plugins-good
+  ```
+* **Ubuntu/Debian**:
+  ```bash
+  sudo apt-get install gstreamer1.0-plugins-good
+  ```
+
+#### 2. OCR Language Data (Tesseract)
+Although `tesseract` is a system requirement, some Linux distributions (like Arch) package the language data separately.
+* **Option A (System install)**:
+  ```bash
+  sudo pacman -S tesseract-data-eng  # Arch Linux
+  ```
+* **Option B (Local user install - no sudo needed)**:
+  Download the dataset directly to your workspace:
+  ```bash
+  mkdir -p common/tessdata
+  curl -L -o common/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+  ```
+  Then, add the following line to your `.env` file in the project root:
+  ```env
+  TESSDATA_PREFIX=/absolute/path/to/Blinky/common/tessdata/
+  ```
 
 ## Verify Model Availability
 
@@ -60,20 +90,21 @@ bun run linux:check:groq
 ## Run the Application
 
 ```bash
-# Then start Blinky
-bun run dev   # Starts the dev server (http://localhost:3000)
+# Start Blinky
+bun run dev   # Starts Vite + Tauri (http://localhost:5173 / WebSocket server on 9001)
 ```
 
 ```bash
-# Run SearXNG via Docker Compose
-docker compose up -d searxng
+# Run SearXNG via Docker Compose from the root folder
+docker compose -f common/docker-compose.yml up -d
 ```
 
 ## Troubleshooting
 
 - **Wayland display errors**: Install `xwayland` (`sudo apt install xwayland`) and restart your session.
-- **Ollama not reachable**: Ensure the daemon is running (`ps aux | grep ollama`). Use `./scripts/check-ollama.sh` for a quick health check.
-- **Groq API failures**: Verify `GROQ_API_KEY` and network connectivity. Run `./scripts/groq-check.sh` for detailed diagnostics.
+- **OCR/Tesseract fails**: Ensure either `tesseract-data-eng` is installed system-wide or `TESSDATA_PREFIX` is properly configured in `.env`.
+- **Ollama not reachable**: Ensure the daemon is running (`ps aux | grep ollama`). Use `./linux/scripts/check-ollama.sh` for a quick health check.
+- **Groq API failures**: Verify `GROQ_API_KEY` and network connectivity. Run `./linux/scripts/groq-check.sh` for detailed diagnostics.
 - On Wayland, if you encounter issues with Electron‑based tools, prepend `export ELECTRON_ENABLE_LOGGING=1` before the command.
 
 Happy hacking! 🎉

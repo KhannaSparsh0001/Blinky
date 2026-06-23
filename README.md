@@ -40,7 +40,7 @@
 
 <br>
 
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 </div>
@@ -211,36 +211,65 @@ Install the following software:
 - Rust Stable
 - Python 3.11+
 - Ollama
+- Docker & Docker Compose (optional, for local search)
+- Tesseract OCR (on Linux, for text extraction)
+- GStreamer Good Plugins (on Linux, for audio support)
 
 ---
 
-### 1️⃣ Pull the AI Model
-```powershell
+### 1️⃣ Pull the AI Model (Optional - if using local inference)
+```bash
 ollama pull gemma4:e4b
 ```
 
 ---
 
 ### 2️⃣ Install Dependencies
+#### Windows
 ```powershell
 bun install
 bun run setup:python
 bun run check:ollama
 ```
 
+#### Linux
+```bash
+bun install
+bun run linux:setup:python
+```
+> [!NOTE]
+> On Arch Linux, you should also install the GStreamer good plugins for audio support:
+> ```bash
+> sudo pacman -S gst-plugins-good
+> ```
+
 ---
 
-### 3️⃣ Start Blinky
-```powershell
+### 3️⃣ Setup OCR (Tesseract) on Linux
+If you do not have root access or want to bypass installing system language data:
+1. Create a local folder and download the English model:
+   ```bash
+   mkdir -p common/tessdata
+   curl -L -o common/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+   ```
+2. Add the variable to your `.env` file:
+   ```env
+   TESSDATA_PREFIX=/absolute/path/to/Blinky/common/tessdata/
+   ```
+
+---
+
+### 4️⃣ Start Blinky
+```bash
 bun run dev
 ```
 
 ### Optional: Start Local Web Search
-For globe/web intelligence backed by SearXNG:
-```powershell
-docker compose up -d searxng
+For web intelligence backed by SearXNG, run from the root directory:
+```bash
+docker compose -f common/docker-compose.yml up -d
 ```
-SearXNG is exposed at `http://localhost:8888`.
+SearXNG will be exposed at `http://localhost:8888`.
 
 ### ⌨️ Open Blinky
 - **Main Hotkey**: `CTRL + SHIFT + SPACE`

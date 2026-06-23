@@ -1,16 +1,13 @@
 #!/bin/bash
 
-# Check if .venv folder exists; if not, create it
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment in .venv..."
     python3 -m venv .venv
-    
-    # Upgrade pip and install requirements using the direct path
-    ./.venv/bin/python -m pip install --upgrade pip
-    ./.venv/bin/python -m pip install -r linux_requirements.txt
-else
-    echo "Virtual environment already exists."
 fi
+
+# Upgrade pip and install requirements using the direct path
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r linux/requirements.txt
 
 # Activate the virtual environment so it stays active in your current terminal
 if [ -f ".venv/bin/activate" ]; then

@@ -27,28 +27,7 @@ interface HighlightFrame {
 export function Overlay() {
   const [result, setResult] = useState<TutorResult | null>(null);
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(() => new Set());
-  const [yOffset, setYOffset] = useState(0);
-
-  useEffect(() => {
-    const isLinux = !navigator.userAgent.includes('Windows') && !navigator.userAgent.includes('Macintosh');
-    if (isLinux) {
-      const fetchOffset = async () => {
-        try {
-          const appWindow = getCurrentWindow();
-          const position = await appWindow.outerPosition();
-          const scaleFactor = await appWindow.scaleFactor();
-          if (scaleFactor > 0) {
-            setYOffset(position.y / scaleFactor);
-          }
-        } catch (err) {
-          console.error('Failed to resolve dynamic y-offset:', err);
-        }
-      };
-      void fetchOffset();
-      const timer = window.setTimeout(fetchOffset, 200);
-      return () => window.clearTimeout(timer);
-    }
-  }, []);
+  const [offsets, setOffsets] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     const unlisten = listen<TutorResult>('blinky://guidance', (event) => {
@@ -60,6 +39,24 @@ export function Overlay() {
       unlisten.then((dispose) => dispose());
     };
   }, []);
+
+  useEffect(() => {
+    if (!result) return;
+    const updateOffsets = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        const pos = await appWindow.outerPosition();
+        const factor = await appWindow.scaleFactor();
+        setOffsets({
+          x: pos.x / factor,
+          y: pos.y / factor,
+        });
+      } catch (err) {
+        console.error('Failed to get window offsets:', err);
+      }
+    };
+    void updateOffsets();
+  }, [result]);
 
   const isWindows = navigator.userAgent.includes('Windows');
   const viewportWidth = window.innerWidth;
@@ -102,13 +99,10 @@ export function Overlay() {
           const paddingX = useIconFrame ? 4 : 20; 
           const paddingY = useIconFrame ? 4 : 8;  
 
-          const rawLeft = Math.round(match.x * scaleX) - Math.round(paddingX / 2);
-          let rawTop = Math.round(match.y * scaleY) - Math.round(paddingY / 2);
+          const rawLeft = Math.round(match.x * scaleX) - Math.round(paddingX / 2) - offsets.x;
+          let rawTop = Math.round(match.y * scaleY) - Math.round(paddingY / 2) - offsets.y;
 
-          const isLinux = !navigator.userAgent.includes('Windows') && !navigator.userAgent.includes('Macintosh');
-          if (isLinux) {
-            rawTop -= yOffset;
-          }
+
           const rawWidth = Math.max(8, Math.round(match.width * scaleX)) + paddingX;
           const rawHeight = Math.max(8, Math.round(match.height * scaleY)) + paddingY;
 
@@ -181,7 +175,7 @@ export function Overlay() {
         })
         .filter((frame): frame is HighlightFrame => Boolean(frame)) || []
     );
-  }, [result, scaleX, scaleY, yOffset, viewportWidth, viewportHeight]);
+  }, [result, scaleX, scaleY, viewportWidth, viewportHeight, offsets]);
 
   useEffect(() => {
     const unlisten = listen<GlobalClick>('blinky://global-click', (event) => {

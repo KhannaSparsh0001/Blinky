@@ -21,30 +21,18 @@ pub fn type_text_impl(_text: &str, _press_enter: bool) -> Result<(), String> {
 pub fn configure_overlay_passthrough(window: &WebviewWindow) {
     let _ = window.set_ignore_cursor_events(true);
 
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let scale_factor = monitor.scale_factor();
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
 
-        let is_gnome = std::env::var("XDG_CURRENT_DESKTOP")
-            .map(|val| val.to_uppercase().contains("GNOME"))
-            .unwrap_or(false);
-
-        let bar_height = if is_gnome {
-            (32.0 * scale_factor) as i32
-        } else {
-            0
-        };
-
+    if let Some(monitor) = monitor {
         let size = monitor.size();
-        let physical_width = size.width;
-        let physical_height = size.height.saturating_sub(bar_height as u32);
-
-        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: physical_width,
-            height: physical_height,
-        }));
+        let _ = window.set_size(tauri::Size::Physical(*size));
         let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: 0,
-            y: bar_height,
+            y: 0,
         }));
     }
 }
