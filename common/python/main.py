@@ -222,13 +222,15 @@ def run(
     elif previous_question and is_followup_continuation_question(question):
         is_continuation = True
 
-    # Auto-enable modes based on classified intent
+    # Auto-enable or disable modes based on classified intent
     if intent == "WEB_SEARCH":
         LOGGER.info("Automatically enabling web search mode for classified intent: WEB_SEARCH")
         web_search_enabled = True
     elif intent in {"COMPUTER_USE", "OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
         LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
         agent_mode = True
+    else:
+        agent_mode = False
 
     if web_search_enabled:
         return run_web_intelligence(question, conversation_history, started, warnings)
