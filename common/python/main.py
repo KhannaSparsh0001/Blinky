@@ -155,9 +155,14 @@ def run(
     conversation_history: list[dict] | None = None,
     web_search_enabled: bool = False,
     agent_mode: bool = False,
+    ignored_rects: list[dict] | None = None,
 ) -> dict:
     started = time.perf_counter()
     warnings: list[str] = []
+
+    if ignored_rects:
+        from utils.window import set_ignored_overlay_rects
+        set_ignored_overlay_rects(ignored_rects)
 
     if web_search_enabled:
         return run_web_intelligence(question, conversation_history, started, warnings)
@@ -1104,10 +1109,11 @@ def main() -> None:
         conversation_history = normalize_conversation_history(payload.get("conversation_history"))
         web_search_enabled = bool(payload.get("web_search_enabled", False))
         agent_mode = bool(payload.get("agent_mode", False))
+        ignored_rects = payload.get("ignored_rects")
         if not question:
             raise ValueError("Question is required.")
 
-        result = run(question, previous_question, progress, conversation_history, web_search_enabled, agent_mode)
+        result = run(question, previous_question, progress, conversation_history, web_search_enabled, agent_mode, ignored_rects)
         print(json.dumps(result, ensure_ascii=True))
     except Exception as exc:
         LOGGER.exception("Worker failed")

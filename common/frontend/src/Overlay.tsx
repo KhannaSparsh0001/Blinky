@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useMemo, useState } from 'react';
 import { getHighlightSteps } from './lib/guidance';
 import type { TutorResult } from './lib/types';
+import { logDebugMessage } from './lib/tauri';
 
 interface GlobalClick {
   x: number;
@@ -68,6 +69,24 @@ export function Overlay() {
   const physicalScaleY = (viewportHeight * pixelRatio) / screenshotHeight;
   const scaleX = physicalScaleX / pixelRatio;
   const scaleY = physicalScaleY / pixelRatio;
+
+  useEffect(() => {
+    if (!result) return;
+    void logDebugMessage(JSON.stringify({
+      type: 'overlay_render',
+      viewportWidth,
+      viewportHeight,
+      devicePixelRatio: window.devicePixelRatio,
+      pixelRatio,
+      screenshotWidth,
+      screenshotHeight,
+      scaleX,
+      scaleY,
+      offsets,
+      steps: result?.steps,
+    }, null, 2));
+  }, [result, scaleX, scaleY, viewportWidth, viewportHeight, offsets]);
+
   const frames = useMemo<HighlightFrame[]>(() => {
     return (
       getHighlightSteps(result?.steps || [])
@@ -160,6 +179,21 @@ export function Overlay() {
             viewportWidth,
             viewportHeight,
           );
+
+          void logDebugMessage(JSON.stringify({
+            type: 'frame_math',
+            target: step.target_text,
+            matchX: match.x,
+            matchY: match.y,
+            scaleX,
+            scaleY,
+            offsets,
+            rawLeft,
+            rawTop,
+            displayLeft,
+            displayTop,
+            clamped,
+          }));
 
           return {
             key,

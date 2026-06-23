@@ -128,6 +128,16 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn log_debug_message(message: String) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let _ = std::fs::create_dir_all("tmp");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("tmp/overlay_debug.log") {
+        let _ = writeln!(file, "{}", message);
+    }
+}
+
+#[tauri::command]
 fn show_command_bar(app: AppHandle) -> Result<(), String> {
     show_command_window(&app);
     Ok(())
@@ -298,6 +308,18 @@ fn run_python_worker(
         .spawn()
         .map_err(|err| format!("Failed to start Python worker: {err}"))?;
 
+    let mut command_rect = serde_json::Value::Null;
+    if let Some(ref w) = command_window {
+        if let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) {
+            command_rect = serde_json::json!({
+                "x": pos.x,
+                "y": pos.y,
+                "width": size.width,
+                "height": size.height,
+            });
+        }
+    }
+
     let payload = serde_json::json!({
         "question": question,
         "previous_question": previous_question,
@@ -305,6 +327,7 @@ fn run_python_worker(
         "conversation_history": conversation_history.unwrap_or(&serde_json::Value::Null),
         "web_search_enabled": web_search_enabled,
         "agent_mode": agent_mode,
+        "ignored_rects": if command_rect.is_null() { vec![] } else { vec![command_rect] },
     });
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -546,7 +569,8 @@ pub fn run() {
             resize_command_window,
             resize_and_move_command_window,
             get_settings,
-            save_settings
+            save_settings,
+            log_debug_message
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

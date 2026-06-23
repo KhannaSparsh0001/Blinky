@@ -48,9 +48,33 @@ def is_ignored_overlay_window(process_name: str, title: str) -> bool:
     return name_lower in IGNORED_OVERLAY_PROCESSES or any(hint in title_lower for hint in IGNORED_OVERLAY_TITLE_HINTS)
 
 
+_local_ignored_rects: list[dict[str, int]] = []
+
+
+def set_ignored_overlay_rects(rects: list[dict]) -> None:
+    global _local_ignored_rects
+    _local_ignored_rects = []
+    if not rects:
+        return
+    for r in rects:
+        if not isinstance(r, dict):
+            continue
+        x = r.get("x")
+        y = r.get("y")
+        w = r.get("width")
+        h = r.get("height")
+        if x is not None and y is not None and w is not None and h is not None:
+            _local_ignored_rects.append({
+                "x": int(x),
+                "y": int(y),
+                "width": int(w),
+                "height": int(h),
+            })
+
+
 def get_ignored_overlay_rects() -> list[dict[str, int]]:
     if os.name != "nt":
-        return []
+        return _local_ignored_rects
 
     rects: list[dict[str, int]] = []
     try:

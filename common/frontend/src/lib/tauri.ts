@@ -80,3 +80,7 @@ export async function typeText(text: string, pressEnter: boolean): Promise<void>
   return invoke('type_text', { text, pressEnter });
 }
 
+export async function logDebugMessage(message: string): Promise<void> {
+  return invoke('log_debug_message', { message });
+}
+

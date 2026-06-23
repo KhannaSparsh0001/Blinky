@@ -20,6 +20,7 @@ pub fn type_text_impl(_text: &str, _press_enter: bool) -> Result<(), String> {
 
 pub fn configure_overlay_passthrough(window: &WebviewWindow) {
     let _ = window.set_ignore_cursor_events(true);
+    let _ = window.set_fullscreen(true);
 
     let monitor = window
         .current_monitor()
