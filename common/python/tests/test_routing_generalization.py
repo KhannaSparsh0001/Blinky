@@ -8,6 +8,11 @@ import shutil
 import agent_router
 from utils.generalizer import generalize_tool, read_registry_safe, write_registry_safe
 
+@pytest.fixture(autouse=True)
+def mock_plan_browser_action():
+    with patch("agent_router.plan_browser_action", return_value={"match": False}) as m:
+        yield m
+
 @pytest.fixture
 def temp_registry(tmp_path):
     registry_file = tmp_path / "registry.json"

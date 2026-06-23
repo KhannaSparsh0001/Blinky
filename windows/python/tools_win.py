@@ -13,8 +13,7 @@ LOGGER = get_logger("blinky.computer_use")
 
 from computer_use.tools import (
     ToolResult, normalize_app_name, display_app_name, SAFE_PROCESS_ALIASES,
-    APP_PROTOCOLS, KNOWN_EXECUTABLE_PATHS, find_windows_search_result,
-    click_item_center,
+    APP_PROTOCOLS, KNOWN_EXECUTABLE_PATHS,
 )
 
 
@@ -45,7 +44,8 @@ def open_app_tool_impl(app_name: str) -> ToolResult:
         except Exception as exc:
             LOGGER.warning("Known path launch failed for %s via %s: %s", app, path, exc)
 
-    start_app = find_start_app_impl(app)
+    from computer_use.tools import find_start_app
+    start_app = find_start_app(app)
     if start_app:
         app_id = str(start_app.get("AppID", "")).strip()
         name = str(start_app.get("Name", app)).strip() or app
@@ -65,7 +65,8 @@ def open_app_tool_impl(app_name: str) -> ToolResult:
         except Exception as exc:
             LOGGER.warning("Process alias launch failed for %s: %s", app, exc)
 
-    search_result = open_app_via_windows_search_impl(app)
+    from computer_use.tools import open_app_via_windows_search
+    search_result = open_app_via_windows_search(app)
     if search_result.success:
         return search_result
 
@@ -83,7 +84,8 @@ def open_app_via_windows_search_impl(app_name: str) -> ToolResult:
         time.sleep(0.4)
         send_keys(app_name, with_spaces=True)
         time.sleep(0.8)
-        match = find_windows_search_result_impl(app_name)
+        from computer_use.tools import find_windows_search_result, click_item_center
+        match = find_windows_search_result(app_name)
         if match:
             click_item_center(match)
             time.sleep(1.0)

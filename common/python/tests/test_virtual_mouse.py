@@ -4,6 +4,15 @@ from unittest.mock import MagicMock, Mock, call, patch
 
 from computer_use.tools import ToolResult, VirtualMouse, mouse_tool
 
+import sys
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Linux-only tests for VirtualMouse uinput device",
+)
+
+
 
 def _reset_vm():
     if VirtualMouse._instance is not None:
