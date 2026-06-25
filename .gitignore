@@ -38,3 +38,4 @@ desktop.ini
 *.sln
 *.swp
 .wwebjs_auth
+data/users/blinky-default-session/summary-memory.json
