@@ -650,6 +650,73 @@ fn start_ydotoold() {
     });
 }
 
+fn start_wake_word_detector(app: &AppHandle) {
+    let root = match project_root(app) {
+        Ok(root) => root,
+        Err(err) => {
+            eprintln!("Warning: Wake word detector skipped because project root was not found: {err}");
+            return;
+        }
+    };
+    let script = root.join("python").join("wake_word.py");
+    if !script.exists() {
+        eprintln!(
+            "Warning: Wake word script was not found: {}",
+            script.display()
+        );
+        return;
+    }
+
+    let model_path = root.join("python").join("hey_blinky.onnx");
+
+    let mut command = Command::new(python_executable(&root));
+    command
+        .arg(script)
+        .arg("--model")
+        .arg(model_path)
+        .current_dir(&root)
+        .env("PYTHONWARNINGS", "ignore")
+        .envs(read_env_file(&root))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(0x08000000);
+    }
+
+    match command.spawn() {
+        Ok(mut child) => {
+            let stdout = child.stdout.take().expect("Failed to open stdout");
+            let app_handle = app.clone();
+            
+            thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    match line {
+                        Ok(text) => {
+                            if text.trim() == "WAKE_WORD_DETECTED" {
+                                if let Some(command_window) = app_handle.get_webview_window("command") {
+                                    let _ = command_window.emit("blinky://wake-word-detected", ());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading wake word detector output: {}", e);
+                            break;
+                        }
+                    }
+                }
+                let _ = child.wait();
+            });
+        }
+        Err(err) => {
+            eprintln!("Warning: Failed to start wake word detector: {err}");
+        }
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -685,6 +752,7 @@ pub fn run() {
             setup_tray(app)?;
             start_ui_observer(&app.handle());
             start_whatsapp_backend(&app.handle());
+            start_wake_word_detector(&app.handle());
 
             #[cfg(target_os = "linux")]
             {

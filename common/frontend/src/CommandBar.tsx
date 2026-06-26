@@ -1205,6 +1205,23 @@ export function CommandBar() {
   }, [sarvamApiKey]);
 
   useEffect(() => {
+    const unlisten = listen('blinky://wake-word-detected', () => {
+      if (!mediaRecorderRef.current) {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        } else if (audioCtxRef.current.state === 'suspended') {
+          void audioCtxRef.current.resume();
+        }
+        stopSpeaking();
+        void startRecording();
+      }
+    });
+    return () => {
+      unlisten.then((dispose) => dispose());
+    };
+  }, [startRecording, stopSpeaking]);
+
+  useEffect(() => {
     const unlisten = listen<TargetClickedPayload>('blinky://target-clicked', (event) => {
       const query = lastQueryRef.current.trim();
       if (!query || isRunning) return;
