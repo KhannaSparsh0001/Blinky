@@ -582,7 +582,7 @@ def play_spotify_track_tool(song_name: str) -> ToolResult:
                 {"song_name": song_name},
             )
 
-        launch_result = open_spotify_uri(track_uri)
+        launch_result = open_spotify_uri(track_uri, song_name=song_name)
         if not launch_result.success:
             return ToolResult(
                 False,
@@ -611,7 +611,7 @@ def play_spotify_track_tool(song_name: str) -> ToolResult:
         )
 
 
-def open_spotify_uri(track_uri: str) -> ToolResult:
+def open_spotify_uri(track_uri: str, song_name: str | None = None) -> ToolResult:
     if os.name == "nt":
         try:
             os.startfile(track_uri)
@@ -622,60 +622,138 @@ def open_spotify_uri(track_uri: str) -> ToolResult:
             # Bring Spotify window to foreground/focus so that the keypress goes to Spotify
             app = None
             try:
-                import win32gui
-                import win32con
+                import psutil
                 from pywinauto import Application
 
-                focused = False
-                # Try class name first
-                try:
-                    app = Application().connect(class_name="SpotifyMainWindow")
-                    app.top_window().set_focus()
-                    focused = True
-                except Exception:
-                    pass
+                # Find PID of spotify.exe (most reliable connection method)
+                spotify_pids = []
+                for proc in psutil.process_iter(['pid', 'name']):
+                    if proc.info['name'] and proc.info['name'].lower() == "spotify.exe":
+                        spotify_pids.append(proc.info['pid'])
 
-                # Try title search if class name connection failed
-                if not focused:
+                for pid in spotify_pids:
                     try:
-                        app = Application().connect(title_re=".*Spotify.*")
+                        app = Application(backend="uia").connect(process=pid)
+                        app.top_window().set_focus()
+                        break
+                    except Exception:
+                        pass
+            except Exception as e:
+                LOGGER.warning("Could not connect to Spotify by PID: %s", e)
+
+            # Fallback to class name/title/EnumWindows connection if PID method failed
+            if not app:
+                try:
+                    import win32gui
+                    import win32con
+                    from pywinauto import Application
+
+                    focused = False
+                    # Try class name first
+                    try:
+                        app = Application(backend="uia").connect(class_name="SpotifyMainWindow")
                         app.top_window().set_focus()
                         focused = True
                     except Exception:
                         pass
 
-                # EnumWindows fallback
-                if not focused:
-                    hwnds = []
-                    def check_spotify_hwnd(h, extra):
-                        if win32gui.IsWindowVisible(h):
-                            t = win32gui.GetWindowText(h).lower()
-                            c = win32gui.GetClassName(h)
-                            if "spotify" in t or c == "SpotifyMainWindow":
-                                extra.append(h)
-                        return True
-                    win32gui.EnumWindows(check_spotify_hwnd, hwnds)
-                    if hwnds:
-                        hwnd = hwnds[0]
-                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                        win32gui.SetForegroundWindow(hwnd)
-            except Exception as fe:
-                LOGGER.warning("Could not focus Spotify window: %s", fe)
+                    # Try title search if class name connection failed
+                    if not focused:
+                        try:
+                            app = Application(backend="uia").connect(title_re=".*Spotify.*")
+                            app.top_window().set_focus()
+                            focused = True
+                        except Exception:
+                            pass
 
-            # Single click at (40% width, 50% height) of Spotify window to select/focus the track row
+                    # EnumWindows fallback
+                    if not focused:
+                        hwnds = []
+                        def check_spotify_hwnd(h, extra):
+                            if win32gui.IsWindowVisible(h):
+                                t = win32gui.GetWindowText(h).lower()
+                                c = win32gui.GetClassName(h)
+                                if "spotify" in t or c == "SpotifyMainWindow":
+                                    extra.append(h)
+                            return True
+                        win32gui.EnumWindows(check_spotify_hwnd, hwnds)
+                        if hwnds:
+                            hwnd = hwnds[0]
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.SetForegroundWindow(hwnd)
+                except Exception as fe:
+                    LOGGER.warning("Could not focus Spotify window: %s", fe)
+
+            # Try dynamic track-element UIA search
             clicked = False
-            if app:
+            if app and song_name:
+                try:
+                    from difflib import SequenceMatcher
+                    cleaned_song = clean_song_query(song_name).lower().strip()
+                    LOGGER.info("Searching for UIA elements matching '%s'...", cleaned_song)
+
+                    window = app.top_window()
+                    rect = window.rectangle()
+                    w = rect.width()
+                    h = rect.height()
+
+                    descendants = window.descendants()
+                    matches = []
+                    for d in descendants:
+                        try:
+                            text = d.window_text()
+                            if text:
+                                t_low = text.lower().strip()
+                                if cleaned_song in t_low or t_low in cleaned_song or SequenceMatcher(None, cleaned_song, t_low).ratio() > 0.8:
+                                    matches.append(d)
+                        except Exception:
+                            pass
+
+                    # Filter elements to find the actual track row in the list
+                    track_element = None
+                    for m in matches:
+                        try:
+                            r = m.rectangle()
+                            # Track rows are in the main scrollable pane:
+                            # 1. Height should be between 25 and 85 pixels
+                            # 2. Top should be between 300 and window bottom - 100
+                            # 3. Left should be to the right of the library sidebar (280px) and before the right sidebar
+                            if 25 <= r.height() <= 85 and 300 <= r.top <= (rect.top + h - 100) and (rect.left + 280) <= r.left <= (rect.left + w * 0.8):
+                                track_element = m
+                                break
+                        except Exception:
+                            pass
+
+                    if track_element:
+                        r = track_element.rectangle()
+                        click_x = r.left + r.width() // 2
+                        click_y = r.top + r.height() // 2
+                        LOGGER.info("UIA Dynamic Match: Found track element at absolute screen coordinates (%d, %d)", click_x, click_y)
+
+                        import win32api
+                        import win32con
+                        win32api.SetCursorPos((click_x, click_y))
+                        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                        time.sleep(0.05)
+                        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                        clicked = True
+                        time.sleep(0.4)
+                except Exception as ce:
+                    LOGGER.warning("Could not perform dynamic UIA track click: %s", ce)
+
+            # Fallback to relative percentage clicking if dynamic match was not found/clicked
+            if not clicked and app:
                 try:
                     rect = app.top_window().rectangle()
                     w = rect.width()
                     h = rect.height()
                     click_x = int(w * 0.4)
-                    click_y = int(h * 0.5)
+                    click_y = int(h * 0.53)
                     app.top_window().click_input(double=False, coords=(click_x, click_y))
                     clicked = True
                     time.sleep(0.4)
                 except Exception as ce:
-                    LOGGER.warning("Could not click Spotify window: %s", ce)
+                    LOGGER.warning("Could not click Spotify window via fallback: %s", ce)
 
             send_keys("{ENTER}")
             return ToolResult(
