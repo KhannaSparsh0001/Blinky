@@ -24,6 +24,13 @@ import { usePCWebSocket, ConnectionStatus } from './usePCWebSocket';
 
 const STORAGE_KEY = '@blinky_pc_ip';
 
+let VolumeManager: any = null;
+try {
+  VolumeManager = require('react-native-volume-manager').VolumeManager;
+} catch (e) {
+  console.log('react-native-volume-manager not available in this environment');
+}
+
 const getExpoHostIp = (): string | null => {
   const hostUri =
     Constants.expoConfig?.hostUri ||
@@ -41,6 +48,7 @@ const getExpoHostIp = (): string | null => {
 export default function App() {
   const [ipAddress, setIpAddress] = useState('');
   const { status, errorMsg, latestResponse, connect, disconnect, sendCommand, sendQuery } = usePCWebSocket();
+  const isConnected = status === 'connected';
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
 
   const [queryText, setQueryText] = useState('');
@@ -122,6 +130,52 @@ export default function App() {
     }
     loadIp();
   }, []);
+
+  // Listen to physical volume keys when connected
+  useEffect(() => {
+    if (!isConnected || !VolumeManager) return;
+
+    try {
+      // Disable system volume UI on phone when app is active
+      VolumeManager.showNativeVolumeUI({ enabled: false });
+
+      let lastVolume: number | null = null;
+
+      // Get initial volume
+      VolumeManager.getVolume().then((val: any) => {
+        const vol = typeof val === 'object' ? val.volume : val;
+        lastVolume = vol;
+      }).catch(() => {});
+
+      const volumeListener = VolumeManager.addVolumeListener((result: any) => {
+        const currentVolume = result.volume;
+        if (lastVolume !== null) {
+          if (currentVolume > lastVolume) {
+            sendCommand('volume_up');
+          } else if (currentVolume < lastVolume) {
+            sendCommand('volume_down');
+          }
+        }
+        lastVolume = currentVolume;
+
+        // Hack to keep volume off the edges (100% or 0%) so listener always fires on future button presses
+        if (currentVolume >= 0.95) {
+          VolumeManager.setVolume(0.9);
+          lastVolume = 0.9;
+        } else if (currentVolume <= 0.05) {
+          VolumeManager.setVolume(0.1);
+          lastVolume = 0.1;
+        }
+      });
+
+      return () => {
+        volumeListener.remove();
+        VolumeManager.showNativeVolumeUI({ enabled: true });
+      };
+    } catch (err) {
+      console.warn('Failed to initialize volume manager listener:', err);
+    }
+  }, [isConnected, sendCommand]);
 
   // Validate IP address format (simple pattern check)
   const validateIp = (ip: string): boolean => {
@@ -211,7 +265,6 @@ export default function App() {
     }
   };
 
-  const isConnected = status === 'connected';
   const statusDetails = getStatusDetails(status);
 
   return (
