@@ -625,6 +625,29 @@ async def handle_request(line):
             if direct_result is not None:
                 send_response(request_id, "success", data={"response": direct_result.message})
                 return
+
+            if intent == "DESKTOP_AUTOMATION":
+                send_response(request_id, "processing", data={"message": "Inspecting PC screen..."})
+                import main
+                from utils.screen_annotator import annotate_screenshot
+                
+                tutor_result = await asyncio.to_thread(main.run, query)
+                screenshot_path = tutor_result.get("screenshot", {}).get("path")
+                steps = tutor_result.get("steps", [])
+                
+                screenshot_b64 = None
+                if screenshot_path and steps:
+                    screenshot_b64 = await asyncio.to_thread(annotate_screenshot, screenshot_path, steps)
+                
+                payload = {
+                    "response": tutor_result.get("summary", ""),
+                    "steps": steps,
+                }
+                if screenshot_b64:
+                    payload["screenshot_b64"] = screenshot_b64
+                    
+                send_response(request_id, "success", data=payload)
+                return
     except Exception as ex:
         import logging
         logging.getLogger("blinky.agent_router").warning(f"Error during local desktop routing check: {ex}")

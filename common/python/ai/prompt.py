@@ -102,7 +102,8 @@ def build_prompt(
     progress: dict | None = None,
     latest_update: str | None = None,
     conversation_history: list[dict] | None = None,
-) -> str:
+    return_ref_items: bool = False,
+) -> str | tuple[str, list[dict]]:
     # Filter out any OCR items that belong to Blinky itself (the host tutor app)
     # to prevent Blinky from referencing or recommending clicks inside its own UI.
     blinky_ignored_terms = {
@@ -157,7 +158,7 @@ def build_prompt(
     if history_context_str:
         student_query_context = f"{student_query_context}\n\nRecent conversation:\n{history_context_str}"
 
-    return f"""
+    prompt_text = f"""
 You are Blinky, a free offline AI desktop tutor for students.
 
 {student_query_context}
@@ -228,6 +229,9 @@ Format B (For purely informational queries, screen summaries, explaining concept
   "steps": []
 }}
 """.strip()
+    if return_ref_items:
+        return prompt_text, ref_items
+    return prompt_text
 
 
 def _string_list(progress: dict | None, key: str) -> list[str]:

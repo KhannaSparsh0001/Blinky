@@ -403,7 +403,7 @@ def run(
             return build_agent_tool_result(agent_result.to_dict(), started, warnings, observation)
 
     prompt_started = time.perf_counter()
-    prompt = build_prompt(
+    prompt, ref_items = build_prompt(
         question=effective_question,
         active_app=active_app,
         ocr_items=visible_items,
@@ -411,13 +411,14 @@ def run(
         progress=progress,
         latest_update=latest_update,
         conversation_history=conversation_history,
+        return_ref_items=True,
     )
     log_stage_timing("prompt_build", prompt_started)
     model_started = time.perf_counter()
     ai_result = ask_model(prompt=prompt, screenshot_path=screenshot.path)
     log_stage_timing("model", model_started)
     LOGGER.info("AI Result: %s", json.dumps(ai_result, ensure_ascii=True))
-    steps = attach_matches(ai_result.get("steps", []), visible_items)
+    steps = attach_matches(ai_result.get("steps", []), ref_items)
     steps = skip_completed_navigation_steps(steps)
 
     # Fallback: if the AI returned a type/search instruction with empty target_text,
