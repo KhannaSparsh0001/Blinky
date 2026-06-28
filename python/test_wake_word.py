@@ -38,14 +38,17 @@ def test_audio_devices():
         print(f"Default Device Max Input Channels: {device_info['max_input_channels']}")
         print(f"Default Device Default Samplerate: {device_info['default_samplerate']}")
         
-        print("\nTesting 16kHz mono recording stream for 3 seconds...")
+        native_sr = int(device_info['default_samplerate'])
+        native_channels = int(device_info['max_input_channels'])
+        native_blocksize = int(native_sr * 0.08)
+        print(f"\nTesting {native_sr}Hz {native_channels}-channel recording stream for 3 seconds...")
         audio_data = []
         def callback(indata, frames, time_info, status):
             if status:
                 print(f"Stream status: {status}")
-            audio_data.append(indata.copy())
+            audio_data.append(indata[:, 0].copy())
             
-        with sd.InputStream(samplerate=16000, blocksize=1280, channels=1, dtype='float32', callback=callback):
+        with sd.InputStream(samplerate=native_sr, blocksize=native_blocksize, channels=native_channels, dtype='float32', callback=callback):
             time.sleep(3)
             
         if not audio_data:
@@ -106,9 +109,27 @@ def test_live_detection(duration=30, threshold=0.25):
     model_path = os.path.join(script_dir, "hey_blinky.onnx")
     oww_model = Model(wakeword_models=[model_path])
     
+    import math
+    import scipy.signal
+
+    device_info = sd.query_devices(sd.default.device[0], 'input')
+    native_sr = int(device_info['default_samplerate'])
+    native_channels = int(device_info['max_input_channels'])
+    
+    target_sr = 16000
+    gcd = math.gcd(target_sr, native_sr)
+    up = target_sr // gcd
+    down = native_sr // gcd
+    native_blocksize = int(native_sr * 0.08)
+
     audio_queue = []
     def callback(indata, frames, time_info, status):
-        audio_data = (indata[:, 0] * 32767).astype(np.int16)
+        raw_channel = indata[:, 0]
+        if native_sr != 16000:
+            resampled = scipy.signal.resample_poly(raw_channel, up, down)
+        else:
+            resampled = raw_channel
+        audio_data = (resampled * 32767).astype(np.int16)
         audio_queue.append(audio_data)
         
     print(f"Listening for 'Hey Blinky' for {duration} seconds... (Speak now to see real-time scores, Threshold: {threshold})")
@@ -117,7 +138,7 @@ def test_live_detection(duration=30, threshold=0.25):
     
     start_time = time.time()
     try:
-        with sd.InputStream(samplerate=16000, blocksize=1280, channels=1, dtype='float32', callback=callback):
+        with sd.InputStream(samplerate=native_sr, blocksize=native_blocksize, channels=native_channels, dtype='float32', callback=callback):
             while time.time() - start_time < duration:
                 if len(audio_queue) > 0:
                     chunk = audio_queue.pop(0)

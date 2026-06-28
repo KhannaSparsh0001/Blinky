@@ -65,26 +65,56 @@ def start_wake_word_detector(model_name="hey_blinky.onnx", threshold=0.25):
         else:
             owwModel = Model(wakeword_models=[model_name])
             
-        print("Model loaded successfully. Listening for wake word...", file=sys.stderr)
+        print(f"Model loaded successfully. Listening for wake word... (Model: {os.path.basename(model_name)}, Threshold: {threshold})", file=sys.stderr, flush=True)
+        print(f"{'Time':<8} | {'Audio RMS':<12} | {'Wake Word Score':<18} | {'Status'}", file=sys.stderr, flush=True)
+        print("-" * 75, file=sys.stderr, flush=True)
 
         audio_queue = []
+
+        # OpenWakeWord expects 16kHz, 16-bit PCM audio.
+        # Windows mic arrays distort heavily if PortAudio forces resampling/downmixing.
+        # Therefore, we capture at native samplerate and native channel count, then resample in Python.
+        import math
+        import scipy.signal
+
+        device_info = sd.query_devices(sd.default.device[0], 'input')
+        native_sr = int(device_info['default_samplerate'])
+        native_channels = int(device_info['max_input_channels'])
+        
+        target_sr = 16000
+        gcd = math.gcd(target_sr, native_sr)
+        up = target_sr // gcd
+        down = native_sr // gcd
+        
+        # 80ms blocksize at native samplerate
+        native_blocksize = int(native_sr * 0.08)
 
         def audio_callback(indata, frames, time_info, status):
             if status:
                 print(status, file=sys.stderr)
             if is_paused:
                 return
-            # The indata is float32 between -1 and 1. OpenWakeWord expects int16.
-            audio_data = (indata[:, 0] * 32767).astype(np.int16)
+            
+            # Take primary microphone channel directly to avoid Windows downmix phase cancellation
+            raw_channel = indata[:, 0]
+            
+            # Resample to 16kHz using high-quality polyphase filtering
+            if native_sr != 16000:
+                resampled = scipy.signal.resample_poly(raw_channel, up, down)
+            else:
+                resampled = raw_channel
+                
+            audio_data = (resampled * 32767).astype(np.int16)
             audio_queue.append(audio_data)
-            # Prevent queue accumulation/latency lag during heavy LLM activity
-            if len(audio_queue) > 5:
-                del audio_queue[:-5]
+            # Avoid dropping small numbers of frames so OpenWakeWord's ring buffer stays contiguous.
+            # Only reset if severe backlog accumulates (e.g. >30 frames / 2.4s lag).
+            if len(audio_queue) > 30:
+                audio_queue.clear()
 
-        # OpenWakeWord expects 16kHz, 1-channel, 16-bit PCM audio
-        stream = sd.InputStream(samplerate=16000, blocksize=1280, channels=1, dtype='float32', callback=audio_callback)
+        stream = sd.InputStream(samplerate=native_sr, blocksize=native_blocksize, channels=native_channels, dtype='float32', callback=audio_callback)
         
-        last_debug_time = time.time()
+        start_time = time.time()
+        last_debug_time = start_time
 
         with stream:
             while True:
@@ -97,28 +127,29 @@ def start_wake_word_detector(model_name="hey_blinky.onnx", threshold=0.25):
                 if len(audio_queue) > 0:
                     audio_chunk = audio_queue.pop(0)
                     
-                    # Gate 1: Calculate Root Mean Square (RMS) energy to check if there is actual sound/speech
+                    # Calculate Root Mean Square (RMS) energy for noise/speech diagnostics
                     rms = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
                     
-                    # Run prediction if rms > 50.0 (lowered threshold to ensure speech is caught)
-                    score = 0.0
-                    if rms > 50.0:
-                        prediction = owwModel.predict(audio_chunk)
-                        
-                        for mdl, s in prediction.items():
-                            score = s
-                            if s > threshold:
-                                print(f"[WakeWord] DETECTED! Score: {s:.4f} | RMS: {rms:.1f}", file=sys.stderr, flush=True)
-                                print("WAKE_WORD_DETECTED", flush=True)
-                                owwModel.reset()
-                                audio_queue.clear()
-                                time.sleep(2)
-                                break
+                    # Always feed audio to openwakeword to maintain internal ring buffer continuity
+                    prediction = owwModel.predict(audio_chunk)
+                    score = list(prediction.values())[0] if prediction else 0.0
                     
-                    # Print live debugging messages to sys.stderr every 1 second
+                    if score > threshold:
+                        elapsed = int(time.time() - start_time)
+                        status_text = f"!!! WAKE_WORD_DETECTED (>{threshold}) !!!"
+                        print(f"{elapsed:>5}s  | {rms:>10.1f}   | {score:>16.4f}   | {status_text}", file=sys.stderr, flush=True)
+                        print("WAKE_WORD_DETECTED", flush=True)
+                        owwModel.reset()
+                        audio_queue.clear()
+                        time.sleep(2)
+                        continue
+                    
+                    # Print live debugging messages to sys.stderr every 1 second in beautiful descriptive table format
                     now = time.time()
                     if now - last_debug_time >= 1.0:
-                        print(f"[WakeWord Debug] Mic RMS: {rms:.1f} | Score: {score:.4f} (Threshold: {threshold}) | Queue Backlog: {len(audio_queue)}", file=sys.stderr, flush=True)
+                        elapsed = int(now - start_time)
+                        status_text = "Hearing speech..." if rms > 200 else ("Background noise" if rms > 50 else "Listening (silence)...")
+                        print(f"{elapsed:>5}s  | {rms:>10.1f}   | {score:>16.4f}   | {status_text} (Threshold: {threshold})", file=sys.stderr, flush=True)
                         last_debug_time = now
                     
                     # Yield CPU briefly so Ollama and Tauri threads are not starved
