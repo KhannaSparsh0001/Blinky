@@ -193,7 +193,17 @@ def run(
     if web_search_enabled:
         return run_web_intelligence(question, conversation_history, started, warnings)
 
+    if agent_mode:
+        direct_result = try_run_agent_action(question)
+        if direct_result is not None:
+            # If the tool is a media control/shortcut or was successful, return it immediately without falling back to preflight
+            if direct_result.success or direct_result.tool in {"seek_spotify", "shortcut", "play_spotify", "play_youtube"}:
+                return build_agent_tool_result(direct_result.to_dict(), started, warnings)
+
+
+
     locator_target = extract_locator_target(question)
+
     skip_preflight = should_skip_preflight_for_local_fast_path(question)
 
     # RULE: agent_mode NEVER forces screen context — it goes through preflight
@@ -259,16 +269,8 @@ def run(
             from computer_use.tools import shortcut_tool
             direct_agent_result = shortcut_tool("media_play_pause")
         elif intent == "MEDIA_PLAYBACK":
-            song = extracted_params.get("song_name")
-            platform = str(extracted_params.get("platform", "spotify")).lower().strip()
-            if song:
-                question_lower = question.lower()
-                if platform == "youtube" or "youtube" in question_lower or "you tube" in question_lower:
-                    from computer_use.tools import play_youtube_video_tool
-                    direct_agent_result = play_youtube_video_tool(song)
-                else:
-                    from computer_use.tools import play_spotify_track_tool
-                    direct_agent_result = play_spotify_track_tool(song)
+            from computer_use.agent import handle_media_playback_action
+            direct_agent_result = handle_media_playback_action(extracted_params, question)
         elif intent == "OPEN_APP":
             app = extracted_params.get("app_name")
             if app:

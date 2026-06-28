@@ -216,7 +216,7 @@ class AgentRouterOpenUrlRequestTests(unittest.IsolatedAsyncioTestCase):
             await handle_request('{"requestId":"abc","query":"play latest mythpat video in youtube"}')
 
         mock_open.assert_called_once_with("https://www.youtube.com/watch?v=mocked_id")
-        mock_send.assert_any_call("abc", "success", data={"response": "Playing latest video on YouTube."})
+        mock_send.assert_any_call("abc", "success", data={"response": "Playing 'latest mythpat video' on YouTube."})
 
     async def test_youtube_video_phrase_bypasses_tool_router(self):
         from unittest.mock import AsyncMock
@@ -278,7 +278,7 @@ class AgentRouterOpenUrlRequestTests(unittest.IsolatedAsyncioTestCase):
         ):
             await handle_request('{"requestId":"abc","query":"play blinding lights on spotify"}')
 
-        mock_classify.assert_called_once()
+        mock_classify.assert_not_called()
         mock_play.assert_called_once_with("blinding lights")
         mock_send.assert_any_call("abc", "success", data={"response": "Playing 'blinding lights' in Spotify."})
 
@@ -295,12 +295,12 @@ class AgentRouterOpenUrlRequestTests(unittest.IsolatedAsyncioTestCase):
         mock_result = ToolResult(True, "open_app", "Opened spotify.", {})
         with (
             patch("main.classify_request", return_value=preflight_payload) as mock_classify,
-            patch("computer_use.tools.open_app_tool", return_value=mock_result) as mock_open,
+            patch("computer_use.agent.open_app_tool", return_value=mock_result) as mock_open,
             patch("agent_router.send_response") as mock_send,
         ):
             await handle_request('{"requestId":"abc","query":"open spotify"}')
 
-        mock_classify.assert_called_once()
+        mock_classify.assert_not_called()
         mock_open.assert_called_once_with("spotify")
         mock_send.assert_any_call("abc", "success", data={"response": "Opened spotify."})
 

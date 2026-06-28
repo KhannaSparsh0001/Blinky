@@ -625,40 +625,69 @@ def open_spotify_uri(track_uri: str, song_name: str | None = None) -> ToolResult
     if os.name == "nt":
         try:
             import time
+            import win32gui
+            import win32con
 
             _emit_tool_status("Opening Spotify track...")
 
-            # Pause any currently playing track first using the existing shortcut tool.
-            shortcut_tool("media_play_pause")
-            time.sleep(0.05)  # 50ms — let Spotify register the pause
+            # Detect if Spotify is currently playing by checking the window title.
+            # When paused, the title is typically "Spotify", "Spotify Premium", etc.
+            # When playing, the title is "Artist - Song".
+            is_playing = False
+            import win32process
+            import psutil
+
+            spotify_pids = set()
+            try:
+                for proc in psutil.process_iter(['pid', 'name']):
+                    if proc.info['name'] and proc.info['name'].lower() == "spotify.exe":
+                        spotify_pids.add(proc.info['pid'])
+            except Exception:
+                pass
+
+            hwnds: list[int] = []
+            def _find_spotify(h: int, extra: list) -> bool:
+                if win32gui.IsWindowVisible(h):
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(h)
+                        if pid in spotify_pids:
+                            if win32gui.GetWindowText(h).strip():
+                                extra.append(h)
+                    except Exception:
+                        pass
+                return True
+
+            try:
+                win32gui.EnumWindows(_find_spotify, hwnds)
+            except Exception as e:
+                LOGGER.warning("Could not enumerate windows: %s", e)
+            if hwnds:
+                spotify_hwnd = hwnds[0]
+                title_text = win32gui.GetWindowText(spotify_hwnd).lower().strip()
+                if title_text and title_text not in ("spotify", "spotify premium", "spotify free", "spotify player"):
+                    is_playing = True
+                    LOGGER.info("Spotify is actively playing a song (title='%s'). Pausing first...", title_text)
+
+            # Only pause if a song is actively playing.
+            # This prevents toggling pause to play if Spotify was already paused.
+            if is_playing:
+                shortcut_tool("media_play_pause")
+                time.sleep(0.05)  # 50ms — let Spotify register the pause
 
             # On Windows, os.startfile with a spotify:track: URI triggers the
             # Spotify protocol handler which immediately starts playback.
             os.startfile(track_uri)
 
             # Bring Spotify window to foreground (best-effort, fast).
-            # Only uses win32gui EnumWindows — no pywinauto, no UIA overhead.
             time.sleep(0.3)
-            try:
-                import win32gui
-
-                hwnds: list[int] = []
-                def _find_spotify(h: int, extra: list) -> bool:
-                    if win32gui.IsWindowVisible(h):
-                        cls = win32gui.GetClassName(h)
-                        title = win32gui.GetWindowText(h).lower()
-                        if cls == "SpotifyMainWindow" or "spotify" in title:
-                            extra.append(h)
-                    return True
-
-                win32gui.EnumWindows(_find_spotify, hwnds)
-                if hwnds:
+            if hwnds:
+                try:
                     hwnd = hwnds[0]
                     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                     win32gui.SetForegroundWindow(hwnd)
                     LOGGER.info("Brought Spotify window to foreground (hwnd=%d)", hwnd)
-            except Exception as fe:
-                LOGGER.debug("Could not bring Spotify window to foreground: %s", fe)
+                except Exception as fe:
+                    LOGGER.debug("Could not bring Spotify window to foreground: %s", fe)
 
             return ToolResult(
                 True,
@@ -709,6 +738,102 @@ def open_spotify_uri(track_uri: str, song_name: str | None = None) -> ToolResult
         "No supported Spotify URI opener found for this OS.",
         {"track_uri": track_uri},
     )
+
+
+def seek_spotify_tool(seconds: int, forward: bool) -> ToolResult:
+    if os.name != "nt":
+        return ToolResult(
+            False,
+            "seek_spotify",
+            "Seeking is currently supported on Windows only.",
+            {"seconds": seconds, "forward": forward},
+        )
+
+    try:
+        import win32gui
+        import win32con
+        import time
+        from pywinauto.keyboard import send_keys
+
+        # Find Spotify window by process name (spotify.exe)
+        import win32process
+        import psutil
+
+        spotify_pids = set()
+        try:
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'] and proc.info['name'].lower() == "spotify.exe":
+                    spotify_pids.add(proc.info['pid'])
+        except Exception:
+            pass
+
+        hwnds = []
+        def _find_spotify(h: int, extra: list) -> bool:
+            if win32gui.IsWindowVisible(h):
+                try:
+                    # Only match windows owned by spotify.exe process
+                    _, pid = win32process.GetWindowThreadProcessId(h)
+                    if pid in spotify_pids:
+                        # Require a non-empty window title to isolate the main window
+                        if win32gui.GetWindowText(h).strip():
+                            extra.append(h)
+                except Exception:
+                    pass
+            return True
+
+        try:
+            win32gui.EnumWindows(_find_spotify, hwnds)
+        except Exception as e:
+            LOGGER.warning("Could not enumerate windows: %s", e)
+        if not hwnds:
+            return ToolResult(
+                False,
+                "seek_spotify",
+                "Spotify window not found. Make sure Spotify is open.",
+                {"seconds": seconds, "forward": forward},
+            )
+
+        spotify_hwnd = hwnds[0]
+        prev_hwnd = win32gui.GetForegroundWindow()
+
+        # Bring Spotify to foreground
+        win32gui.ShowWindow(spotify_hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(spotify_hwnd)
+        time.sleep(0.1)  # small pause to ensure focus is registered
+
+        # Calculate number of keypresses (each shift+right/left is 5 seconds)
+        presses = max(1, int(round(seconds / 5.0)))
+        key_str = "+{RIGHT}" if forward else "+{LEFT}"
+
+        _emit_tool_status(f"Seeking {'forward' if forward else 'backward'} by {seconds} seconds...")
+
+        for _ in range(presses):
+            send_keys(key_str)
+            time.sleep(0.05)
+
+        # Restore previous focused window
+        if prev_hwnd and prev_hwnd != spotify_hwnd:
+            try:
+                win32gui.SetForegroundWindow(prev_hwnd)
+            except Exception:
+                pass
+
+        direction = "forward" if forward else "backward"
+        return ToolResult(
+            True,
+            "seek_spotify",
+            f"Sought {direction} by {seconds} seconds in Spotify.",
+            {"seconds": seconds, "forward": forward, "presses": presses},
+        )
+    except Exception as e:
+        LOGGER.exception("Error in seek_spotify_tool")
+        return ToolResult(
+            False,
+            "seek_spotify",
+            f"Failed to seek: {str(e)}",
+            {"seconds": seconds, "forward": forward},
+        )
+
 
 
 def open_spotify_uri_linux(track_uri: str) -> ToolResult:

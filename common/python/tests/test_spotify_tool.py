@@ -65,7 +65,7 @@ async def test_play_spotify_via_searxng_success(mock_search_category, mock_start
     assert result.success is True
     assert result.details["track_uri"] == "spotify:track:6qYkmqFsXbj8CQjAdbYz07"
     mock_startfile.assert_called_once_with("spotify:track:6qYkmqFsXbj8CQjAdbYz07")
-    mock_search_category.assert_called_once()
+    assert mock_search_category.call_count == 2
 
 @pytest.mark.asyncio
 @patch("computer_use.tools.os.name", "nt")
@@ -148,3 +148,74 @@ def test_agent_routes_stop_spotify():
         
         result_resume = try_run_agent_action("resume playback")
         assert result_resume is mock_shortcut.return_value
+
+def test_agent_routes_seek_controls():
+    with patch("computer_use.tools.seek_spotify_tool") as mock_seek:
+        mock_seek.return_value = MagicMock()
+        
+        # Test seek forward with seconds
+        result = try_run_agent_action("skip 15 seconds forward")
+        assert result is mock_seek.return_value
+        mock_seek.assert_called_with(15, forward=True)
+        
+        # Test seek forward with minutes conversion (1 minute -> 60s)
+        result_min = try_run_agent_action("skip 1 minute in song")
+        assert result_min is mock_seek.return_value
+        mock_seek.assert_called_with(60, forward=True)
+        
+        # Test seek backward with minutes conversion (2 mins -> 120s)
+        result_mins_back = try_run_agent_action("go back 2 mins in song")
+        assert result_mins_back is mock_seek.return_value
+        mock_seek.assert_called_with(120, forward=False)
+        
+        # Test seek forward default seconds (10s)
+        result_default = try_run_agent_action("fast forward")
+        assert result_default is mock_seek.return_value
+        mock_seek.assert_called_with(10, forward=True)
+        
+        # Test seek backward default seconds (10s)
+        result_rewind = try_run_agent_action("rewind")
+        assert result_rewind is mock_seek.return_value
+        mock_seek.assert_called_with(10, forward=False)
+
+
+def test_agent_routes_track_skips():
+    with patch("computer_use.agent.shortcut_tool") as mock_shortcut:
+        mock_shortcut.return_value = MagicMock()
+        
+        result_next = try_run_agent_action("next song")
+        assert result_next is mock_shortcut.return_value
+        mock_shortcut.assert_called_with("media_next")
+        
+        result_prev = try_run_agent_action("prev track")
+        assert result_prev is mock_shortcut.return_value
+        mock_shortcut.assert_called_with("media_prev")
+
+
+def test_handle_media_playback_action():
+    from computer_use.agent import handle_media_playback_action
+    
+    with patch("computer_use.tools.seek_spotify_tool") as mock_seek, \
+         patch("computer_use.agent.shortcut_tool") as mock_shortcut, \
+         patch("computer_use.tools.play_spotify_track_tool") as mock_play:
+         
+        mock_seek.return_value = MagicMock()
+        mock_shortcut.return_value = MagicMock()
+        mock_play.return_value = MagicMock()
+        
+        # Test seek forward
+        handle_media_playback_action({"media_action": "seek", "seek_seconds": 60}, "skip 1 minute")
+        mock_seek.assert_called_with(60, forward=True)
+        
+        # Test seek backward
+        handle_media_playback_action({"media_action": "seek", "seek_seconds": -15}, "go back 15s")
+        mock_seek.assert_called_with(15, forward=False)
+        
+        # Test pause
+        handle_media_playback_action({"media_action": "pause"}, "pause music")
+        mock_shortcut.assert_called_with("media_play_pause")
+        
+        # Test play song
+        handle_media_playback_action({"media_action": "play", "song_name": "blinding lights"}, "play blinding lights")
+        mock_play.assert_called_with("blinding lights")
+

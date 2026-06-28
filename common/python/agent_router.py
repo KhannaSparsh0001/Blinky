@@ -566,8 +566,25 @@ async def handle_request(line):
         from main import classify_request, _has_computer_use_action
         from computer_use import is_web_destination, looks_like_app_name, try_run_agent_action, is_in_app_action
         from computer_use.tools import play_spotify_track_tool, play_youtube_video_tool, open_app_tool, shortcut_tool
-        
+
+        # Run direct regex action checks FIRST before LLM classification to ensure instant execution
+        # and prevent misclassification of seek/skip commands as music/playback tracks.
+        direct_result = try_run_agent_action(query)
+
+        if direct_result is not None:
+            if direct_result.success or direct_result.tool in {"seek_spotify", "shortcut", "play_spotify", "play_youtube"}:
+                if direct_result.success:
+                    send_response(request_id, "success", data={"response": direct_result.message})
+                else:
+                    send_response(request_id, "error", error={"code": "MEDIA_ACTION_FAILED", "message": direct_result.message, "details": ""})
+                return
+
+        # If regex matched but failed (and is not media-related), clear it to let it fall back
+        direct_result = None
+
+
         preflight = classify_request(query, None, [], None, agent_mode=True)
+
         if preflight:
             intent = preflight.get("intent", "DESKTOP_AUTOMATION")
             extracted_params = preflight.get("extracted_params", {}) or {}
@@ -582,16 +599,8 @@ async def handle_request(line):
                 send_response(request_id, "processing", data={"message": "Toggling media playback..."})
                 direct_result = shortcut_tool("media_play_pause")
             elif intent == "MEDIA_PLAYBACK":
-                song = extracted_params.get("song_name")
-                pform = str(extracted_params.get("platform", "spotify")).lower().strip()
-                if song:
-                    query_lower = query.lower()
-                    if pform == "youtube" or "youtube" in query_lower or "you tube" in query_lower:
-                        send_response(request_id, "processing", data={"message": f"Playing '{song}' on YouTube..."})
-                        direct_result = play_youtube_video_tool(song)
-                    else:
-                        send_response(request_id, "processing", data={"message": f"Playing '{song}' on Spotify..."})
-                        direct_result = play_spotify_track_tool(song)
+                from computer_use.agent import handle_media_playback_action
+                direct_result = handle_media_playback_action(extracted_params, query)
             elif intent == "OPEN_APP":
                 app = extracted_params.get("app_name")
                 if app and not (is_web_destination(app) or is_in_app_action(app) or not looks_like_app_name(app)):
