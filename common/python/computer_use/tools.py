@@ -570,9 +570,11 @@ def play_spotify_track_tool(song_name: str) -> ToolResult:
             finally:
                 loop.close()
 
+        _emit_tool_status(f"Searching for '{song_name}' on Spotify...")
         thread = threading.Thread(target=run_in_thread)
         thread.start()
         track_uri = future.result()
+
 
         if not track_uri:
             return ToolResult(
@@ -591,6 +593,7 @@ def play_spotify_track_tool(song_name: str) -> ToolResult:
                 {
                     "song_name": song_name,
                     "track_uri": track_uri,
+                    
                     **launch_result.details,
                 },
             )
@@ -611,156 +614,57 @@ def play_spotify_track_tool(song_name: str) -> ToolResult:
         )
 
 
+def _emit_tool_status(message: str) -> None:
+    """Emit a processing status line to stdout for the Rust/frontend to pick up."""
+    import sys, json
+    out = sys.__stdout__ if hasattr(sys, "__stdout__") else sys.stdout
+    print(json.dumps({"type": "status", "phase": "agent", "message": message}), flush=True, file=out)
+
+
 def open_spotify_uri(track_uri: str, song_name: str | None = None) -> ToolResult:
     if os.name == "nt":
         try:
-            os.startfile(track_uri)
             import time
-            from pywinauto.keyboard import send_keys
-            time.sleep(1.2)
 
-            # Bring Spotify window to foreground/focus so that the keypress goes to Spotify
-            app = None
+            _emit_tool_status("Opening Spotify track...")
+
+            # Pause any currently playing track first using the existing shortcut tool.
+            shortcut_tool("media_play_pause")
+            time.sleep(0.05)  # 50ms — let Spotify register the pause
+
+            # On Windows, os.startfile with a spotify:track: URI triggers the
+            # Spotify protocol handler which immediately starts playback.
+            os.startfile(track_uri)
+
+            # Bring Spotify window to foreground (best-effort, fast).
+            # Only uses win32gui EnumWindows — no pywinauto, no UIA overhead.
+            time.sleep(0.3)
             try:
-                import psutil
-                from pywinauto import Application
+                import win32gui
 
-                # Find PID of spotify.exe (most reliable connection method)
-                spotify_pids = []
-                for proc in psutil.process_iter(['pid', 'name']):
-                    if proc.info['name'] and proc.info['name'].lower() == "spotify.exe":
-                        spotify_pids.append(proc.info['pid'])
+                hwnds: list[int] = []
+                def _find_spotify(h: int, extra: list) -> bool:
+                    if win32gui.IsWindowVisible(h):
+                        cls = win32gui.GetClassName(h)
+                        title = win32gui.GetWindowText(h).lower()
+                        if cls == "SpotifyMainWindow" or "spotify" in title:
+                            extra.append(h)
+                    return True
 
-                for pid in spotify_pids:
-                    try:
-                        app = Application(backend="uia").connect(process=pid)
-                        app.top_window().set_focus()
-                        break
-                    except Exception:
-                        pass
-            except Exception as e:
-                LOGGER.warning("Could not connect to Spotify by PID: %s", e)
+                win32gui.EnumWindows(_find_spotify, hwnds)
+                if hwnds:
+                    hwnd = hwnds[0]
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.SetForegroundWindow(hwnd)
+                    LOGGER.info("Brought Spotify window to foreground (hwnd=%d)", hwnd)
+            except Exception as fe:
+                LOGGER.debug("Could not bring Spotify window to foreground: %s", fe)
 
-            # Fallback to class name/title/EnumWindows connection if PID method failed
-            if not app:
-                try:
-                    import win32gui
-                    import win32con
-                    from pywinauto import Application
-
-                    focused = False
-                    # Try class name first
-                    try:
-                        app = Application(backend="uia").connect(class_name="SpotifyMainWindow")
-                        app.top_window().set_focus()
-                        focused = True
-                    except Exception:
-                        pass
-
-                    # Try title search if class name connection failed
-                    if not focused:
-                        try:
-                            app = Application(backend="uia").connect(title_re=".*Spotify.*")
-                            app.top_window().set_focus()
-                            focused = True
-                        except Exception:
-                            pass
-
-                    # EnumWindows fallback
-                    if not focused:
-                        hwnds = []
-                        def check_spotify_hwnd(h, extra):
-                            if win32gui.IsWindowVisible(h):
-                                t = win32gui.GetWindowText(h).lower()
-                                c = win32gui.GetClassName(h)
-                                if "spotify" in t or c == "SpotifyMainWindow":
-                                    extra.append(h)
-                            return True
-                        win32gui.EnumWindows(check_spotify_hwnd, hwnds)
-                        if hwnds:
-                            hwnd = hwnds[0]
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            win32gui.SetForegroundWindow(hwnd)
-                except Exception as fe:
-                    LOGGER.warning("Could not focus Spotify window: %s", fe)
-
-            # Try dynamic track-element UIA search
-            clicked = False
-            if app and song_name:
-                try:
-                    from difflib import SequenceMatcher
-                    cleaned_song = clean_song_query(song_name).lower().strip()
-                    LOGGER.info("Searching for UIA elements matching '%s'...", cleaned_song)
-
-                    window = app.top_window()
-                    rect = window.rectangle()
-                    w = rect.width()
-                    h = rect.height()
-
-                    descendants = window.descendants()
-                    matches = []
-                    for d in descendants:
-                        try:
-                            text = d.window_text()
-                            if text:
-                                t_low = text.lower().strip()
-                                if cleaned_song in t_low or t_low in cleaned_song or SequenceMatcher(None, cleaned_song, t_low).ratio() > 0.8:
-                                    matches.append(d)
-                        except Exception:
-                            pass
-
-                    # Filter elements to find the actual track row in the list
-                    track_element = None
-                    for m in matches:
-                        try:
-                            r = m.rectangle()
-                            # Track rows are in the main scrollable pane:
-                            # 1. Height should be between 25 and 85 pixels
-                            # 2. Top should be between 300 and window bottom - 100
-                            # 3. Left should be to the right of the library sidebar (280px) and before the right sidebar
-                            if 25 <= r.height() <= 85 and 300 <= r.top <= (rect.top + h - 100) and (rect.left + 280) <= r.left <= (rect.left + w * 0.8):
-                                track_element = m
-                                break
-                        except Exception:
-                            pass
-
-                    if track_element:
-                        r = track_element.rectangle()
-                        click_x = r.left + r.width() // 2
-                        click_y = r.top + r.height() // 2
-                        LOGGER.info("UIA Dynamic Match: Found track element at absolute screen coordinates (%d, %d)", click_x, click_y)
-
-                        import win32api
-                        import win32con
-                        win32api.SetCursorPos((click_x, click_y))
-                        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                        time.sleep(0.05)
-                        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                        clicked = True
-                        time.sleep(0.4)
-                except Exception as ce:
-                    LOGGER.warning("Could not perform dynamic UIA track click: %s", ce)
-
-            # Fallback to relative percentage clicking if dynamic match was not found/clicked
-            if not clicked and app:
-                try:
-                    rect = app.top_window().rectangle()
-                    w = rect.width()
-                    h = rect.height()
-                    click_x = int(w * 0.4)
-                    click_y = int(h * 0.53)
-                    app.top_window().click_input(double=False, coords=(click_x, click_y))
-                    clicked = True
-                    time.sleep(0.4)
-                except Exception as ce:
-                    LOGGER.warning("Could not click Spotify window via fallback: %s", ce)
-
-            send_keys("{ENTER}")
             return ToolResult(
                 True,
                 "open_spotify_uri",
-                "Opened Spotify URI and started playback.",
-                {"method": "os.startfile", "clicked": clicked},
+                "Opened Spotify URI. Playback started via URI handler.",
+                {"method": "os.startfile"},
             )
         except Exception as exc:
             return ToolResult(
@@ -769,6 +673,9 @@ def open_spotify_uri(track_uri: str, song_name: str | None = None) -> ToolResult
                 str(exc),
                 {"method": "os.startfile", "error": str(exc)},
             )
+
+
+
 
     if platform.system() == "Linux":
         linux_result = open_spotify_uri_linux(track_uri)
@@ -916,6 +823,7 @@ def clean_song_query(query: str) -> str:
 
 
 async def resolve_spotify_track_uri(song_name: str) -> str | None:
+    import asyncio
     import urllib.parse
 
     from wil.http_fetcher import fetch_html
@@ -929,24 +837,39 @@ async def resolve_spotify_track_uri(song_name: str) -> str | None:
         f"{cleaned_query} spotify track",
     ]
 
+    def _extract_track_id(results: list) -> str | None:
+        for r in results:
+            url = r.get("url", "")
+            if "open.spotify.com/track/" in url:
+                m = re.search(r"track/([a-zA-Z0-9]+)", url)
+                if m:
+                    return f"spotify:track:{m.group(1)}"
+        return None
+
+    # Run both SearXNG queries in parallel for speed
     try:
         client = SearXNGClient()
-        for q in queries:
-            results = await client.search_category(q, category="general", limit=5)
-            for r in results:
-                url = r.get("url", "")
-                if "open.spotify.com/track/" in url:
-                    match = re.search(r"track/([a-zA-Z0-9]+)", url)
-                    if match:
-                        return f"spotify:track:{match.group(1)}"
+        all_results = await asyncio.gather(
+            client.search_category(queries[0], category="general", limit=5),
+            client.search_category(queries[1], category="general", limit=5),
+            return_exceptions=True,
+        )
+        for batch in all_results:
+            if isinstance(batch, Exception):
+                continue
+            track_id = _extract_track_id(batch)
+            if track_id:
+                return track_id
     except Exception as e:
         LOGGER.warning(f"SearXNG Spotify search failed: {e}")
 
+    # DDG fallback — still sequential but only reached if SearXNG fails entirely
     for q in queries:
         try:
             query_encoded = urllib.parse.quote(q)
             url = f"https://html.duckduckgo.com/html/?q={query_encoded}"
             html = await fetch_html(url)
+
             if html:
                 unquoted_html = urllib.parse.unquote(html)
                 matches = re.findall(
