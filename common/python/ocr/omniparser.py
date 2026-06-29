@@ -262,19 +262,10 @@ class OmniParserProvider(OcrProvider):
 
         # Run standard OCR on the local image to populate element texts
         try:
-            # Re-use WinRT or Pytesseract OCR locally to augment text to these detected bounding boxes
-            ocr_provider = None
-            if os.name == "nt":
-                try:
-                    from winrt_ocr import WinRtOcrProvider
-                    ocr_provider = WinRtOcrProvider()
-                except Exception:
-                    pass
-            if not ocr_provider:
-                from ocr import PytesseractOcrProvider
-                ocr_provider = PytesseractOcrProvider()
-                if not ocr_provider.available:
-                    ocr_provider = None
+            from ocr import get_ocr_provider
+            ocr_provider = get_ocr_provider()
+            if ocr_provider == self:
+                ocr_provider = None
 
             if ocr_provider:
                 ocr_items = ocr_provider.extract_text(image_path)

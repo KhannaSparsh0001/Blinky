@@ -15,10 +15,14 @@ INTERACTIVE_CONTROL_TYPES = {
     "listitem",
     "treeitem",
     "custom",
+    "icon",
+    "link",
+    "clickable",
+    "control",
 }
 
 INPUT_CONTROL_TYPES = {"edit", "textbox", "combobox"}
-UNLABELED_LABEL_TYPES = {"button", "image", "hyperlink", "tabitem", "menuitem"}
+UNLABELED_LABEL_TYPES = {"button", "image", "hyperlink", "tabitem", "menuitem", "icon", "clickable", "control"}
 
 
 def assign_screen_element_refs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -42,7 +46,7 @@ def assign_screen_element_refs(items: list[dict[str, Any]]) -> list[dict[str, An
         )
         normalized["input"] = bool(normalized.get("input") or control_norm in INPUT_CONTROL_TYPES)
 
-        if not str(normalized.get("text", "")).strip() and source == "uia" and control_norm in UNLABELED_LABEL_TYPES:
+        if not str(normalized.get("text", "")).strip() and control_norm in UNLABELED_LABEL_TYPES:
             label_type = control_type or "Control"
             key = label_type.lower()
             unlabeled_counts[key] = unlabeled_counts.get(key, 0) + 1

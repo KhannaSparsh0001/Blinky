@@ -555,6 +555,11 @@ def get_or_build_visible_ui_map(active_app: dict, screenshot, target_pid: int | 
 
     visible_items = UI_MAP_CACHE.get_or_build(signature, build_items)
     visible_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
+    try:
+        from utils.screen_annotator import save_parsed_ui_screenshot
+        save_parsed_ui_screenshot(screenshot.path, visible_items)
+    except Exception:
+        pass
     return visible_items
 
 
@@ -801,6 +806,11 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
 
     visible_items = assign_screen_element_refs(merge_visible_items(ocr_items, uia_items))
     visible_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
+    try:
+        from utils.screen_annotator import save_parsed_ui_screenshot
+        save_parsed_ui_screenshot(screenshot.path, visible_items)
+    except Exception:
+        pass
     match_result = find_best_match_with_score(target, locator_match_items(question, visible_items), instruction)
     if match_result:
         if should_accept_locator_match(question, match_result):

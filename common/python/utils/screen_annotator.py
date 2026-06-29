@@ -96,3 +96,80 @@ def annotate_screenshot(screenshot_path: str, steps: list[dict]) -> str | None:
         from utils.logging import get_logger
         get_logger("blinky.screen_annotator").error(f"Error annotating screenshot: {e}")
         return None
+
+
+def save_parsed_ui_screenshot(screenshot_path: str, ref_items: list[dict]) -> str | None:
+    """
+    Draw bounding boxes and references (@e1, @e2, etc.) for all parsed UI elements
+    onto the screenshot, and save it to the 'screenshots_parsed' folder.
+    """
+    if not os.path.exists(screenshot_path):
+        return None
+
+    try:
+        from pathlib import Path
+        image = Image.open(screenshot_path)
+        draw = ImageDraw.Draw(image)
+        
+        # Load a nice font if possible
+        font = None
+        try:
+            font_path = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "segoeui.ttf")
+            if os.path.exists(font_path):
+                font = ImageFont.truetype(font_path, 14)
+        except Exception:
+            pass
+
+        for item in ref_items:
+            x = item.get("x")
+            y = item.get("y")
+            w = item.get("width")
+            h = item.get("height")
+            ref = item.get("ref", "")
+            source = item.get("source", "")
+            
+            if x is None or y is None or w is None or h is None or not ref:
+                continue
+
+            # Neon Green/Lime for UIA, Cyan/DeepSkyBlue for OmniParser/OCR
+            color = "#39FF14" if source == "uia" else "#00E5FF"
+            
+            # Draw bounding box
+            draw.rectangle(
+                [x, y, x + w, y + h],
+                outline=color,
+                width=2
+            )
+
+            # Draw a small text badge with the @ref name (e.g. "@e25")
+            text = f"{ref}:{item.get('control_type', 'Control')}"
+            text_w = 70
+            try:
+                if font:
+                    text_w = font.getlength(text)
+            except Exception:
+                pass
+            
+            # Background rect for badge
+            badge_y = max(0, y - 18)
+            draw.rectangle(
+                [x, badge_y, x + text_w + 4, y],
+                fill=color
+            )
+            # Text label
+            draw.text((x + 2, badge_y + 1), text, fill="black", font=font)
+
+        # Create screenshots_parsed folder in the parent directory of screenshots
+        screenshot_path_obj = Path(screenshot_path)
+        parent_dir = screenshot_path_obj.parent.parent
+        output_dir = parent_dir / "screenshots_parsed"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_path = output_dir / screenshot_path_obj.name
+        image.save(output_path, format="JPEG", quality=85)
+        return str(output_path)
+
+    except Exception as e:
+        from utils.logging import get_logger
+        get_logger("blinky.screen_annotator").error(f"Error saving parsed UI screenshot: {e}")
+        return None
