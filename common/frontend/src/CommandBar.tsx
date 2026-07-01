@@ -4,7 +4,7 @@ import { ArrowUp, Bot, Loader2, Minus, Sparkles, X, Settings, Check, Mic, Volume
 import { AnchorHTMLAttributes, FormEvent, useEffect, useRef, useState, cloneElement, isValidElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import QRCode from 'qrcode';
-import { runAutopilotLoop, extractTextToType, shouldPressEnterAfterTyping, isScrollAction, getScrollDirection } from './lib/autopilot';
+import { runAutopilotLoop, extractTextToType, shouldPressEnterAfterTyping, isScrollAction, getScrollDirection, isClickInstruction } from './lib/autopilot';
 import {
   getCurrentGuideSteps,
   getDisplaySteps,
@@ -1028,6 +1028,27 @@ export function CommandBar() {
         }
       } else {
         result = await runTutor(queryText, previousQuestion, currentProgress(), conversationHistory, webSearchEnabled);
+
+        // Auto-trigger autopilot click for locator fast path results with click instructions
+        const clickStep = result.steps?.find((s) => s.instruction && s.match);
+        if (clickStep && isClickInstruction(clickStep.instruction)) {
+          const autopilot = await runAutopilotLoop({
+            maxAttempts: 1,
+            observeAfterAction: false,
+            observe: async () => result,
+            act: async (point, step) => {
+              setStatus(`Clicking (${point.x}, ${point.y})...`);
+              await clickScreenPoint(point.x, point.y);
+            },
+          });
+          if (autopilot.stopReason === 'complete' || autopilot.attempts > 0) {
+            result = {
+              ...result,
+              summary: `Clicked ${clickStep.target_text || 'the target'}.`,
+              steps: [],
+            };
+          }
+        }
       }
       if (cancelledRunIdsRef.current.has(runId)) {
         return;
