@@ -21,6 +21,10 @@ SUPPORTED_PROCESSES = {
     "antigravity-ide.exe",
     "antigravity ide",
     "antigravity-ide",
+    "systemsettings.exe",
+    "systemsettings",
+    "settings.exe",
+    "settings",
 }
 
 IGNORED_OVERLAY_PROCESSES = {
