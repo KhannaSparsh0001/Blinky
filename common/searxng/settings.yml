@@ -7,3 +7,25 @@ search:
   formats:
     - html
     - json
+engines:
+  - name: google
+    disabled: true
+  - name: brave
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: bing
+    disabled: true
+  - name: mojeek
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: google news
+    disabled: true
+  - name: brave.news
+    disabled: true
+  - name: bing news
+    disabled: false
+
