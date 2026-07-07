@@ -795,6 +795,7 @@ export function CommandBar() {
       return;
     }
     void pauseWakeWord();
+    void showOverlay();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -835,6 +836,7 @@ export function CommandBar() {
           glowContainerRef.current.style.setProperty('--vad-opacity', (0.1 + normalizedVolume * 0.9).toString());
           glowContainerRef.current.style.setProperty('--glow-scale', (1 + normalizedVolume * 0.2).toString());
           glowContainerRef.current.style.setProperty('--glow-speed', `${4 - normalizedVolume * 2.5}s`);
+          void emit('blinky://vad-update', { volume: normalizedVolume });
         }
 
         if (rms > SPEECH_THRESHOLD) {
@@ -898,6 +900,7 @@ export function CommandBar() {
       if (glowContainerRef.current) {
         glowContainerRef.current.style.setProperty('--vad-opacity', '0');
       }
+      void emit('blinky://vad-update', { volume: 0 });
     }
   };
 

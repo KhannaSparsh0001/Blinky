@@ -1,6 +1,6 @@
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHighlightSteps } from './lib/guidance';
 import type { TutorResult } from './lib/types';
 import { logDebugMessage } from './lib/tauri';
@@ -29,6 +29,23 @@ export function Overlay() {
   const [result, setResult] = useState<TutorResult | null>(null);
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(() => new Set());
   const [offsets, setOffsets] = useState({ x: 0, y: 0 });
+
+  const glowContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const unlisten = listen<{ volume: number }>('blinky://vad-update', (event) => {
+      if (glowContainerRef.current) {
+        const volume = event.payload.volume;
+        glowContainerRef.current.style.setProperty('--vad-opacity', volume > 0 ? (0.2 + volume * 0.8).toString() : '0');
+        glowContainerRef.current.style.setProperty('--glow-scale', (1 + volume * 0.2).toString());
+        glowContainerRef.current.style.setProperty('--glow-speed', `${4 - volume * 2.5}s`);
+      }
+    });
+
+    return () => {
+      unlisten.then((dispose) => dispose());
+    };
+  }, []);
 
   useEffect(() => {
     let timeoutId: any = null;
@@ -252,6 +269,9 @@ export function Overlay() {
 
   return (
     <main className="overlay-root">
+      <div className="fullscreen-edge-lighting-container" ref={glowContainerRef}>
+        <div className="fullscreen-edge-lighting-gradient" />
+      </div>
       {frames.map((frame) => {
         if (dismissedKeys.has(frame.key)) return null;
         return (
