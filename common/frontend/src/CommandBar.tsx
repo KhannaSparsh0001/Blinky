@@ -775,14 +775,10 @@ export function CommandBar() {
         const rms = Math.sqrt(sum / dataArray.length);
         const normalizedVolume = Math.min(1, rms * 8); // Multiplier tunes glow sensitivity to TTS
 
-        glowContainerRef.current.style.setProperty('--vad-opacity', (0.1 + normalizedVolume * 0.9).toString());
-        glowContainerRef.current.style.setProperty('--glow-scale', (1 + normalizedVolume * 0.2).toString());
-        glowContainerRef.current.style.setProperty('--glow-speed', `${4 - normalizedVolume * 2.5}s`);
         void emit('blinky://vad-update', { volume: normalizedVolume });
         
         rafId = requestAnimationFrame(loop);
-      } else if (!isSpeaking && !isRecording && glowContainerRef.current) {
-        glowContainerRef.current.style.setProperty('--vad-opacity', '0');
+      } else if (!isSpeaking && !isRecording) {
         void emit('blinky://vad-update', { volume: 0 });
       }
     };
@@ -887,13 +883,8 @@ export function CommandBar() {
         }
         const rms = Math.sqrt(sum / inputData.length);
 
-        if (glowContainerRef.current) {
-          const normalizedVolume = Math.min(1, rms * 15);
-          glowContainerRef.current.style.setProperty('--vad-opacity', (0.1 + normalizedVolume * 0.9).toString());
-          glowContainerRef.current.style.setProperty('--glow-scale', (1 + normalizedVolume * 0.2).toString());
-          glowContainerRef.current.style.setProperty('--glow-speed', `${4 - normalizedVolume * 2.5}s`);
-          void emit('blinky://vad-update', { volume: normalizedVolume });
-        }
+        const normalizedVolume = Math.min(1, rms * 15);
+        void emit('blinky://vad-update', { volume: normalizedVolume });
 
         if (rms > SPEECH_THRESHOLD) {
           if (!hasSpoken) {
@@ -960,9 +951,6 @@ export function CommandBar() {
       mediaRecorderRef.current = null;
       setIsRecording(false);
 
-      if (glowContainerRef.current) {
-        glowContainerRef.current.style.setProperty('--vad-opacity', '0');
-      }
       void emit('blinky://vad-update', { volume: 0 });
     }
   };
@@ -1575,9 +1563,6 @@ export function CommandBar() {
 
   return (
     <main className="command-window">
-      <div className="siri-edge-lighting-container" ref={glowContainerRef}>
-        <div className="siri-edge-lighting-gradient" />
-      </div>
       <form
         ref={formRef}
         className="command-popup command-mini"
