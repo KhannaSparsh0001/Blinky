@@ -42,6 +42,7 @@ impl AgentDaemon {
             "BLINKY_OLLAMA_MODEL",
             "BLINKY_GROQ_URL",
             "BLINKY_GROQ_MODEL",
+            "BLINKY_SEARXNG_URL",
         ] {
             if let Ok(val) = std::env::var(var) {
                 cmd.env(var, val);

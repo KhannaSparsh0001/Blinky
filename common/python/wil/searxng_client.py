@@ -17,7 +17,7 @@ USER_AGENTS = [
 
 class SearXNGClient:
     def __init__(self, base_url: str = None):
-        self.base_url = base_url or "http://localhost:8888"
+        self.base_url = base_url or "http://127.0.0.1:8888"
 
     def _get_headers(self) -> Dict[str, str]:
         return {

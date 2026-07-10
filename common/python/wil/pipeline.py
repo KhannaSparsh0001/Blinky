@@ -1,6 +1,7 @@
 import logging
+import os
 import re
-from typing import Dict, Any, List, Callable
+from typing import Dict, Any, List, Callable, Optional
 import httpx
 from wil.planner import QueryPlanner
 from wil.searxng_client import SearXNGClient
@@ -11,11 +12,26 @@ from wil.reasoner import Reasoner
 
 LOGGER = logging.getLogger("blinky.pipeline")
 
+# Public SearXNG instances used as fallback when local Docker is not running.
+# Selected from https://searx.space — 100% search success, fast median, 99%+ uptime.
+_PUBLIC_SEARXNG_INSTANCES = [
+    "https://etsi.me",           # 100% search success, ~0.6s median, 99.9% uptime/year
+    "https://grep.vim.wtf",      # 100% search success, ~1.0s median, 99.7% uptime/year
+    "https://baresearch.org",    # 80% search success,  ~1.4s median, 99.9% uptime/year
+    "https://failsearx.culturanerd.it", # 100% search success, ~1.7s median, 99.5% uptime/year
+]
+
 SOURCE_SECTION_RE = re.compile(r"\n+\s*(?:Sources|References):\s*\n[\s\S]*$", re.IGNORECASE)
 
 class WILPipeline:
     def __init__(self, base_url: str = None):
-        self.searxng_url = base_url or "http://localhost:8888"
+        # Priority: explicit arg → env var → local Docker → None (auto-discover)
+        self.searxng_url = (
+            base_url
+            or os.environ.get("BLINKY_SEARXNG_URL")
+            or "http://127.0.0.1:8888"
+        )
+        self._active_url: Optional[str] = None  # resolved after first health-check
         self.planner = QueryPlanner()
         self.client = SearXNGClient(self.searxng_url)
         self.retriever = Retriever(self.client)
@@ -61,13 +77,40 @@ class WILPipeline:
         answer = SOURCE_SECTION_RE.sub("", response.strip()).strip()
         return f"{answer}\n\nSources:\n" + "\n".join(links)
 
-    async def check_searxng_online(self) -> bool:
+    async def _probe_url(self, url: str, timeout: float = 3.0) -> bool:
+        """Return True if url responds with any HTTP status (container is alive)."""
         try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                resp = await client.get(self.searxng_url)
-                return resp.status_code in [200, 404, 403, 503] # any response implies container is alive
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url)
+                return resp.status_code in [200, 404, 403, 503]
         except Exception:
             return False
+
+    async def check_searxng_online(self) -> bool:
+        """Check if SearXNG is reachable. Tries local first, then public fallbacks."""
+        # Re-use previously discovered working URL
+        if self._active_url:
+            if await self._probe_url(self._active_url):
+                return True
+            self._active_url = None  # stale, re-discover
+
+        # Try the configured primary URL (local Docker)
+        if await self._probe_url(self.searxng_url, timeout=1.5):
+            self._active_url = self.searxng_url
+            LOGGER.info(f"SearXNG online at primary: {self.searxng_url}")
+            self.client.base_url = self._active_url
+            return True
+
+        # Try public fallback instances
+        for instance in _PUBLIC_SEARXNG_INSTANCES:
+            if await self._probe_url(instance, timeout=4.0):
+                self._active_url = instance
+                LOGGER.info(f"SearXNG primary offline, using public fallback: {instance}")
+                self.client.base_url = instance
+                return True
+
+        LOGGER.warning("SearXNG unavailable: local and all public fallbacks unreachable.")
+        return False
 
     async def run(
         self,
