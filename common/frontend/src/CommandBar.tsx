@@ -290,7 +290,7 @@ export function CommandBar() {
           width: 180,
           margin: 2,
           color: {
-            dark: '#111827',
+            dark: '#140f13',
             light: '#ffffff'
           }
         },
@@ -1729,7 +1729,7 @@ export function CommandBar() {
             </div>
 
             <div className="dropdown-section dropdown-about">
-              <span>Theme: <strong>Neon Cyber</strong></span>
+              <span>Theme: <strong>Ember</strong></span>
               <span>About: <strong>v1.0.0</strong></span>
             </div>
           </div>

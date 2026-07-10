@@ -338,6 +338,8 @@ pub fn configure_overlay_passthrough(window: &WebviewWindow) {
         WS_EX_TRANSPARENT,
     };
 
+    let _ = window.set_fullscreen(false);
+
     let monitor = window
         .current_monitor()
         .ok()

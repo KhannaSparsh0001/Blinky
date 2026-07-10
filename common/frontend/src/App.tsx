@@ -227,7 +227,7 @@ export function App() {
           width: 180,
           margin: 2,
           color: {
-            dark: '#090D16',
+            dark: '#140f13',
             light: '#ffffff'
           }
         },
