@@ -5,6 +5,7 @@ import Groq from 'groq-sdk';
 import axios from 'axios';
 import { readFile, writeFile, unlink, mkdir, appendFile, rm } from 'fs/promises';
 import { join, dirname } from 'path';
+import { existsSync } from 'fs';
 import systemPrompt from './generated-prompt.cjs';
 
 const { Client, LocalAuth } = pkg;
@@ -17,6 +18,29 @@ const SUPPORTED_VISION_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/p
 const SHOW_TERMINAL_QR = (process.env.SHOW_TERMINAL_QR || 'false').toLowerCase() === 'true';
 
 // ── Pure utility helpers ──────────────────────────────────────────────────────
+function getEdgeOrChromePath() {
+    if (process.platform !== 'win32') return undefined;
+    const programFiles = process.env.PROGRAMFILES || 'C:\\Program Files';
+    const programFilesX86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)';
+    const localAppData = process.env.LOCALAPPDATA;
+
+    const candidates = [
+        join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+        join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+        localAppData ? join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe') : null,
+        join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        localAppData ? join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe') : null,
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function isRetriableAuthCleanupError(err) {
@@ -622,8 +646,8 @@ export class WaUserSession {
         this.cleanupChromiumSingletonFiles().finally(() =>
             this.client.initialize().catch(err => {
                 const detail = isTargetClosedError(err)
-                    ? `${err.message} — Chromium navigated during WhatsApp boot`
-                    : err.message;
+                    ? `${err.stack || err.message} — Chromium navigated during WhatsApp boot`
+                    : (err.stack || err.message);
                 this.emit('error', `[${source}] initialize() failed: ${detail} — retrying in 10 s...`);
                 this.scheduleRestart(source, 10_000);
             })
@@ -667,7 +691,7 @@ export class WaUserSession {
         const c = new Client({
             authStrategy: new LocalAuth({ clientId: this.sessionId }),
             puppeteer: {
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || getEdgeOrChromePath() || undefined,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',

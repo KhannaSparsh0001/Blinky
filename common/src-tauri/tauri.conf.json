@@ -5,7 +5,7 @@
   "identifier": "app.blinky.tutor",
   "build": {
     "beforeDevCommand": "vite --config common/frontend/vite.config.ts",
-    "beforeBuildCommand": "bun common/scripts/prepare-python-runtime.mjs && vite build --config common/frontend/vite.config.ts",
+    "beforeBuildCommand": "bun common/scripts/prepare-python-runtime.mjs && bun common/scripts/prepare-whatsapp-backend.mjs && vite build --config common/frontend/vite.config.ts",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../frontend/dist"
   },
