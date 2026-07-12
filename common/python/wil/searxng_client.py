@@ -30,10 +30,24 @@ class SearXNGClient:
             "Accept": "application/json",
         }
 
-    async def _probe_url(self, url: str, timeout: float = 2.5) -> bool:
+    async def _probe_local(self, url: str, timeout: float = 4.0) -> bool:
+        """Lightweight ping for local instances — just checks the server is up and responding.
+        Does NOT require search results since engines may still be warming up after a fresh start."""
+        try:
+            root_url = url.rstrip('/')
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                # Try the JSON search endpoint — a 200 back (even with 0 results) means the server is alive
+                resp = await client.get(f"{root_url}/search", params={"q": "test", "format": "json"})
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    async def _probe_public(self, url: str, timeout: float = 4.0) -> bool:
+        """Strict probe for public instances — requires actual non-Wikipedia web results.
+        Public instances that only serve Wikipedia are often misconfigured or rate-limiting."""
         try:
             search_url = f"{url.rstrip('/')}/search"
-            params = {"q": "test", "format": "json"}
+            params = {"q": "python programming", "format": "json"}
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(search_url, params=params)
                 if resp.status_code != 200:
@@ -41,7 +55,7 @@ class SearXNGClient:
                 data = resp.json()
                 results = data.get("results", [])
                 web_results = [
-                    r for r in results 
+                    r for r in results
                     if not any(w in r.get("url", "") for w in ["wikipedia.org", "wikidata.org", "wikimedia.org"])
                 ]
                 return len(web_results) > 0
@@ -59,35 +73,40 @@ class SearXNGClient:
                 self.base_url = SearXNGClient._cached_resolved_url
                 return self.base_url
 
-            # Check configured URL
-            if await self._probe_url(self.configured_url, timeout=1.5):
+            # Check configured local URL (lenient — just needs to respond)
+            if await self._probe_local(self.configured_url):
                 SearXNGClient._cached_resolved_url = self.configured_url
                 self.base_url = self.configured_url
+                LOGGER.info(f"Using local SearXNG at {self.configured_url}")
                 return self.base_url
 
-            # Try loopback swap alternative
+            # Try loopback swap alternative (also lenient)
             local_alt = None
             if "127.0.0.1" in self.configured_url:
                 local_alt = self.configured_url.replace("127.0.0.1", "localhost")
             elif "localhost" in self.configured_url:
                 local_alt = self.configured_url.replace("localhost", "127.0.0.1")
 
-            if local_alt and await self._probe_url(local_alt, timeout=1.5):
+            if local_alt and await self._probe_local(local_alt):
                 SearXNGClient._cached_resolved_url = local_alt
                 self.base_url = local_alt
+                LOGGER.info(f"Using local SearXNG at {local_alt}")
                 return self.base_url
 
-            # Try public fallbacks
+            # Try public fallbacks (strict — must return real results)
+            LOGGER.warning("Local SearXNG not reachable, trying public fallbacks...")
             try:
                 from wil.pipeline import _PUBLIC_SEARXNG_INSTANCES
                 for instance in _PUBLIC_SEARXNG_INSTANCES:
-                    if await self._probe_url(instance, timeout=3.0):
+                    if await self._probe_public(instance):
                         SearXNGClient._cached_resolved_url = instance
                         self.base_url = instance
+                        LOGGER.info(f"Using public SearXNG fallback: {instance}")
                         return self.base_url
             except Exception:
                 pass
 
+            LOGGER.warning("SearXNG unavailable: local and all public fallbacks unreachable.")
             self.base_url = self.configured_url
             return self.base_url
 

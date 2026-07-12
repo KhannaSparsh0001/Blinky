@@ -80,19 +80,29 @@ class WILPipeline:
         answer = SOURCE_SECTION_RE.sub("", response.strip()).strip()
         return f"{answer}\n\nSources:\n" + "\n".join(links)
 
-    async def _probe_url(self, url: str, timeout: float = 3.0) -> bool:
-        """Return True if SearXNG responds with active search results."""
+    async def _probe_local(self, url: str, timeout: float = 4.0) -> bool:
+        """Lenient ping for local instances — just checks the server responds HTTP 200.
+        Does NOT require search results since engines warm up after container start."""
         try:
             search_url = f"{url.rstrip('/')}/search"
-            params = {"q": "test", "format": "json"}
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.get(search_url, params=params)
+                resp = await client.get(search_url, params={"q": "test", "format": "json"})
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    async def _probe_public(self, url: str, timeout: float = 4.0) -> bool:
+        """Strict probe for public instances — requires actual non-Wikipedia web results."""
+        try:
+            search_url = f"{url.rstrip('/')}/search"
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(search_url, params={"q": "python programming", "format": "json"})
                 if resp.status_code != 200:
                     return False
                 data = resp.json()
                 results = data.get("results", [])
                 web_results = [
-                    r for r in results 
+                    r for r in results
                     if not any(w in r.get("url", "") for w in ["wikipedia.org", "wikidata.org", "wikimedia.org"])
                 ]
                 return len(web_results) > 0
@@ -103,12 +113,12 @@ class WILPipeline:
         """Check if SearXNG is reachable. Tries local first (both 127.0.0.1 and localhost), then public fallbacks."""
         # Re-use previously discovered working URL
         if self._active_url:
-            if await self._probe_url(self._active_url):
+            if await self._probe_local(self._active_url):
                 return True
             self._active_url = None  # stale, re-discover
 
-        # Try the configured primary URL (local Docker)
-        if await self._probe_url(self.searxng_url, timeout=1.5):
+        # Try the configured primary URL (local Docker) — lenient check
+        if await self._probe_local(self.searxng_url):
             self._active_url = self.searxng_url
             LOGGER.info(f"SearXNG online at primary: {self.searxng_url}")
             self.client.base_url = self._active_url
@@ -121,15 +131,16 @@ class WILPipeline:
         elif "localhost" in self.searxng_url:
             local_alt = self.searxng_url.replace("localhost", "127.0.0.1")
 
-        if local_alt and await self._probe_url(local_alt, timeout=1.5):
+        if local_alt and await self._probe_local(local_alt):
             self._active_url = local_alt
             LOGGER.info(f"SearXNG online at local alternative: {local_alt}")
             self.client.base_url = self._active_url
             return True
 
-        # Try public fallback instances
+        # Try public fallback instances — strict check (must return real results)
+        LOGGER.warning("Local SearXNG not reachable, trying public fallbacks...")
         for instance in _PUBLIC_SEARXNG_INSTANCES:
-            if await self._probe_url(instance, timeout=4.0):
+            if await self._probe_public(instance):
                 self._active_url = instance
                 LOGGER.info(f"SearXNG primary offline, using public fallback: {instance}")
                 self.client.base_url = instance
