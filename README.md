@@ -115,6 +115,7 @@ Blinky serves students, developers, and general users learning to navigate deskt
 | **Browser Automation**               | Playwright + Microsoft Edge                        |
 | **Local Web Search**                 | SearXNG + Docker Compose                           |
 | **Overlay System**                   | Transparent Tauri Window                           |
+| **Hosting & Prototyping**           | Base44 App Hosting (blinky.base44.app)             |
 | **Voice Input**                      | Sarvam AI `saaras:v3` (STT)                        |
 | **Voice Output**                     | Sarvam AI `bulbul:v3` (TTS)                        |
 | **Agent Actions**                    | `computer_use/` — app launch, Spotify, shortcuts   |
@@ -133,12 +134,17 @@ Select if your project participates in any track:
 
 - [x] **Expo Track** – Built using Expo  
 - [ ] **Neo4j Track** – Uses AuraDB as primary database  
-- [ ] **Base44 Track** – Prototype/Final Product built using Base44
-- [x] **Sarvam Track** - TTS & STT
+- [x] **Base44 Track** – Prototype/Final Product built using Base44  
+- [x] **Sarvam Track** – Built AI Applications with Sarvam (TTS & STT)  
 
 Provide a short note on how you used the partner technology:
 
-> Under `common/mobile/`, we built an **Expo-powered mobile companion app**. It connects directly to the desktop Tauri WebSocket server (port 9001), allowing users to send voice commands and monitor autopilot workflows directly from their phone.
+- **Expo Track**: Under `common/mobile/`, we built an **Expo-powered mobile companion app** (React Native). It connects directly to the desktop Tauri WebSocket server (port `9001`), allowing users to send voice commands and monitor autopilot workflows directly from their phone.
+- **Base44 Track**: We built and deployed our project's interactive landing page at [blinky.base44.app](https://blinky.base44.app) using **Base44** to present Blinky's workflow and serve as our primary web front.
+- **Sarvam Track**: We integrated the **Sarvam AI API** into the desktop agent's preflight classifier and UI/UX layer:
+  - **Speech-to-Text (STT)**: Using `saaras:v3` for real-time multilingual voice command dictation.
+  - **Text-to-Speech (TTS)**: Using `bulbul:v3` for natural Indian-accented voice guidance and audio read-aloud.
+  - **Voice Synchronization & Word Highlighting**: Fades out unspoken text, highlighting the active word dynamically as the voice readback plays in sync with the audio duration timeline.
 
 ---
 
@@ -188,10 +194,10 @@ For any app Blinky hasn't seen before, `app_context/registry.py` now **auto-gene
 
 ---
 
-## 📽 ... Demo & Deliverables
+## 📽️ Demo & Deliverables
 
 - **Demo Video Link (Mandatory):** _[Paste YouTube/Loom Link]_  
-- **Deployment Link (Recommended):** _[Paste Tauri Build Releases Link]_  
+- **Deployment Link (Recommended):** [blinky.base44.app](https://blinky.base44.app) (Landing Page & Releases)  
 - **Pitch Deck / PPT (Optional):** _[Paste Canva/Google Slides Link]_  
 
 ---
