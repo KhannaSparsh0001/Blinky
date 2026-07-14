@@ -91,36 +91,37 @@ If the request is not a browser task, return:
 
 
 async def run_browser_plan(plan: dict, controller=None) -> dict:
-    controller = controller or get_browser_controller()
+    import webbrowser
+    import asyncio
     action = plan["action"]
 
     if action == "site_search":
         site = plan["site"]
         query = plan["query"]
         url = f"https://www.google.com/search?q={quote_plus(f'site:{site} {query}')}"
-        result = await controller.open_url(url)
+        await asyncio.to_thread(webbrowser.open, url)
         return {
             "response": f"Opened web search for {query} on {site}.",
-            "url": result.get("url", url),
-            "title": result.get("title", ""),
+            "url": url,
+            "title": "",
         }
 
     if action == "web_search":
         query = plan["query"]
         url = f"https://www.google.com/search?q={quote_plus(query)}"
-        result = await controller.open_url(url)
+        await asyncio.to_thread(webbrowser.open, url)
         return {
             "response": f"Opened web search for {query}.",
-            "url": result.get("url", url),
-            "title": result.get("title", ""),
+            "url": url,
+            "title": "",
         }
 
     url = plan["url"]
-    result = await controller.open_url(url)
+    await asyncio.to_thread(webbrowser.open, url)
     return {
         "response": f"Opened {plan.get('label', url)}.",
-        "url": result.get("url", url),
-        "title": result.get("title", ""),
+        "url": url,
+        "title": "",
     }
 
 

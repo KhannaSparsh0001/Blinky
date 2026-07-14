@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,16 +11,18 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
-  SafeAreaView,
   StatusBar,
   ScrollView,
-  Image
+  Image,
+  Dimensions,
+  Modal
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Network from 'expo-network';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import { usePCWebSocket, ConnectionStatus } from './usePCWebSocket';
 
 const STORAGE_KEY = '@blinky_pc_ip';
@@ -64,7 +66,7 @@ const checkIpAddress = (ip: string, port = 9001, timeoutMs = 800): Promise<strin
       ws.onopen = () => {
         clearTimeout(timer);
         try {
-          ws.close();
+          ws?.close();
         } catch (e) {}
         resolve(ip);
       };
@@ -72,7 +74,7 @@ const checkIpAddress = (ip: string, port = 9001, timeoutMs = 800): Promise<strin
       ws.onerror = () => {
         clearTimeout(timer);
         try {
-          ws.close();
+          ws?.close();
         } catch (e) {}
         reject(new Error('Connection error'));
       };
@@ -92,15 +94,14 @@ const scanSubnet = async (
   onProgress?: (msg: string) => void
 ): Promise<string | null> => {
   const port = 9001;
-  const timeoutMs = 600; // 600ms is a sweet spot for local Wi-Fi pings
-  const concurrency = 35; // Parallel checks
+  const timeoutMs = 600;
+  const concurrency = 35;
   
   const ips: string[] = [];
   for (let i = 1; i <= 254; i++) {
     ips.push(`${subnet}.${i}`);
   }
 
-  // Scan in parallel batches
   for (let i = 0; i < ips.length; i += concurrency) {
     const batch = ips.slice(i, i + concurrency);
     if (onProgress) {
@@ -123,6 +124,20 @@ const scanSubnet = async (
   return null;
 };
 
+interface Message {
+  id: string;
+  sender: 'user' | 'blinky';
+  text: string;
+  timestamp: string;
+  progress?: {
+    percent: number;
+    statusText: string;
+    duration: number;
+  };
+  screenshot_b64?: string;
+  steps?: any[];
+}
+
 export default function App() {
   const [ipAddress, setIpAddress] = useState('');
   const { status, errorMsg, latestResponse, connect, disconnect, sendCommand, sendQuery } = usePCWebSocket();
@@ -132,123 +147,240 @@ export default function App() {
   const [discoveryProgress, setDiscoveryProgress] = useState<string | null>(null);
 
   const [queryText, setQueryText] = useState('');
+  const [runningQuery, setRunningQuery] = useState('');
   const [agentStatus, setAgentStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
-  const [agentProgressMsg, setAgentProgressMsg] = useState('');
-  const [agentResult, setAgentResult] = useState<any>(null);
-  const [agentError, setAgentError] = useState<string | null>(null);
-  const [confidence, setConfidence] = useState<number | null>(null);
-  const [reasoning, setReasoning] = useState<string | null>(null);
+  
+  // Custom message history state
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: 'welcome',
+      sender: 'blinky',
+      text: 'Hello! I am Blinky. Ask me to do anything on your PC.',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }
+  ]);
+  
+  const activeBlinkyMsgIdRef = useRef<string | null>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+
+  const handleCaptureScreenshot = () => {
+    setShowMenu(false);
+    if (!isConnected) {
+      Alert.alert('Error', 'Failed to capture screenshot. Check link to PC.');
+      return;
+    }
+    const query = 'Capture screenshot of current PC screen';
+    setRunningQuery(query);
+    setQueryText('');
+    setAgentStatus('processing');
+    setTimerSeconds(0);
+
+    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userMsgId = generateUuid();
+    const blinkyMsgId = generateUuid();
+
+    activeBlinkyMsgIdRef.current = blinkyMsgId;
+
+    setMessages(prev => [
+      ...prev,
+      {
+        id: userMsgId,
+        sender: 'user',
+        text: 'Capture screenshot of current PC screen',
+        timestamp: currentTime,
+      },
+      {
+        id: blinkyMsgId,
+        sender: 'blinky',
+        text: "I'm on it. Capturing PC screen...",
+        timestamp: currentTime,
+        progress: {
+          percent: 0,
+          statusText: 'Taking PC screenshot...',
+          duration: 0,
+        }
+      }
+    ]);
+
+    sendQuery(query, generateUuid());
+  };
+
+  // Voice command states
+  const [sarvamApiKey, setSarvamApiKey] = useState<string | null>(null);
+  const [voiceRecording, setVoiceRecording] = useState<Audio.Recording | null>(null);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+
+  // Request Sarvam key from PC when connected
+  useEffect(() => {
+    if (isConnected) {
+      sendCommand('get_sarvam_key' as any);
+    } else {
+      setSarvamApiKey(null);
+    }
+  }, [isConnected, sendCommand]);
+
+  // Live Timer logic
+  useEffect(() => {
+    let interval: any = null;
+    if (agentStatus === 'processing') {
+      interval = setInterval(() => {
+        setTimerSeconds(prev => {
+          const next = prev + 1;
+          // Live update timer duration & smooth real progress percentage on the active message
+          if (activeBlinkyMsgIdRef.current) {
+            const dynamicPercent = Math.min(94, Math.max(15, Math.floor(15 + (next * 8))));
+            setMessages(currentMessages =>
+              currentMessages.map(m => {
+                if (m.id === activeBlinkyMsgIdRef.current) {
+                  return {
+                    ...m,
+                    progress: {
+                      ...m.progress!,
+                      percent: dynamicPercent,
+                      duration: next,
+                    }
+                  };
+                }
+                return m;
+              })
+            );
+          }
+          return next;
+        });
+      }, 1000);
+    } else if (agentStatus === 'idle') {
+      setTimerSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [agentStatus]);
+
+  // Auto scroll to bottom when messages change
+  useEffect(() => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  }, [messages]);
 
   // Watch for incoming WebSocket responses from Python daemon
   useEffect(() => {
     if (latestResponse) {
+      if (latestResponse.type === 'sarvam_key') {
+        setSarvamApiKey(latestResponse.key);
+        return;
+      }
+
       const { status: respStatus, data, error } = latestResponse;
+      const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
       if (respStatus === 'processing') {
         setAgentStatus('processing');
-        if (data?.is_chunk) {
-          setAgentProgressMsg(prev => prev + (data?.message || ''));
-        } else {
-          setAgentProgressMsg(data?.message || 'Processing...');
-          if (data?.confidence !== undefined) {
-            setConfidence(data.confidence);
-          }
-          if (data?.reasoning !== undefined) {
-            setReasoning(data.reasoning);
-          }
+        
+        // Update active blinky message
+        if (activeBlinkyMsgIdRef.current) {
+          setMessages(prev => prev.map(m => {
+            if (m.id === activeBlinkyMsgIdRef.current) {
+              const prevMsg = m.progress?.statusText || '';
+              const newMsg = data?.is_chunk ? (prevMsg + (data?.message || '')) : (data?.message || 'Processing...');
+              const dynamicPercent = data?.confidence !== undefined && data.confidence > 0
+                ? data.confidence
+                : Math.min(94, Math.max(15, Math.floor(15 + (timerSeconds * 8))));
+              return {
+                ...m,
+                text: "I'm on it. Locating the request...",
+                progress: {
+                  percent: dynamicPercent,
+                  statusText: newMsg,
+                  duration: timerSeconds,
+                }
+              };
+            }
+            return m;
+          }));
         }
-        setAgentError(null);
       } else if (respStatus === 'success') {
-        setAgentStatus('success');
-        setAgentResult(data);
-        setAgentError(null);
+        setAgentStatus('idle');
+        
+        // Freeze active message at 100%
+        if (activeBlinkyMsgIdRef.current) {
+          setMessages(prev => prev.map(m => {
+            if (m.id === activeBlinkyMsgIdRef.current) {
+              return {
+                ...m,
+                progress: {
+                  percent: 100,
+                  statusText: 'Action completed.',
+                  duration: m.progress?.duration || timerSeconds,
+                }
+              };
+            }
+            return m;
+          }));
+        }
+        activeBlinkyMsgIdRef.current = null;
+
+        // Append final response bubble
+        setMessages(prev => [
+          ...prev,
+          {
+            id: generateUuid(),
+            sender: 'blinky',
+            text: data?.response || 'I completed the action on your screen.',
+            timestamp: currentTime,
+            screenshot_b64: data?.screenshot_b64,
+            steps: data?.steps,
+          }
+        ]);
       } else if (respStatus === 'error') {
         setAgentStatus('error');
-        setAgentError(error?.message || 'An unknown error occurred');
+        
+        // Mark active message as failed
+        if (activeBlinkyMsgIdRef.current) {
+          setMessages(prev => prev.map(m => {
+            if (m.id === activeBlinkyMsgIdRef.current) {
+              return {
+                ...m,
+                progress: {
+                  percent: m.progress?.percent || 0,
+                  statusText: error?.message || 'An error occurred during execution.',
+                  duration: m.progress?.duration || timerSeconds,
+                }
+              };
+            }
+            return m;
+          }));
+        }
+        activeBlinkyMsgIdRef.current = null;
+
+        setMessages(prev => [
+          ...prev,
+          {
+            id: generateUuid(),
+            sender: 'blinky',
+            text: error?.message || 'An unknown error occurred.',
+            timestamp: currentTime,
+          }
+        ]);
       }
     }
   }, [latestResponse]);
-
-  const generateUuid = () => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
-  };
-
-  const handleQuery = () => {
-    if (!queryText.trim()) {
-      Alert.alert('Empty query', 'Please enter a search/browsing query first.');
-      return;
-    }
-    
-    setAgentStatus('processing');
-    setAgentProgressMsg('');
-    setAgentResult(null);
-    setAgentError(null);
-    setConfidence(null);
-    setReasoning(null);
-
-    const success = sendQuery(queryText.trim(), generateUuid());
-    if (!success) {
-      setAgentStatus('error');
-      setAgentError('Failed to send query. Check PC connection.');
-    }
-  };
-
-
-  // Load saved IP address on launch, or prefill from the Expo dev server host.
-  useEffect(() => {
-    async function loadIp() {
-      try {
-        const savedIp = await AsyncStorage.getItem(STORAGE_KEY);
-        const detectedIp = getExpoHostIp();
-        const initialIp = savedIp || detectedIp || 'localhost';
-        setIpAddress(initialIp);
-        connect(initialIp);
-      } catch (e) {
-        console.error('Failed to load host IP address', e);
-        const fallback = getExpoHostIp() || 'localhost';
-        setIpAddress(fallback);
-        connect(fallback);
-      }
-    }
-    loadIp();
-  }, []);
-
-  // Quietly auto-discover and connect on start if connection fails and device is on Wi-Fi
-  useEffect(() => {
-    let active = true;
-    if (status === 'disconnected' || status === 'error') {
-      const timer = setTimeout(async () => {
-        if (!active) return;
-        try {
-          const deviceIp = await Network.getIpAddressAsync();
-          if (deviceIp && deviceIp !== '0.0.0.0' && deviceIp !== '127.0.0.1') {
-            console.log('Connection failed and Wi-Fi IP detected. Starting auto-discovery...');
-            handleAutoDiscover();
-          }
-        } catch (e) {
-          // No local network IP, ignore auto-discovery
-        }
-      }, 2500);
-      return () => {
-        active = false;
-        clearTimeout(timer);
-      };
-    }
-  }, [status]);
 
   // Listen to physical volume keys when connected
   useEffect(() => {
     if (!isConnected || !VolumeManager) return;
 
     try {
-      // Disable system volume UI on phone when app is active
       VolumeManager.showNativeVolumeUI({ enabled: false });
 
       let lastVolume: number | null = null;
 
-      // Get initial volume
       VolumeManager.getVolume().then((val: any) => {
         const vol = typeof val === 'object' ? val.volume : val;
         lastVolume = vol;
@@ -265,7 +397,6 @@ export default function App() {
         }
         lastVolume = currentVolume;
 
-        // Hack to keep volume off the edges (100% or 0%) so listener always fires on future button presses
         if (currentVolume >= 0.95) {
           VolumeManager.setVolume(0.9);
           lastVolume = 0.9;
@@ -284,15 +415,331 @@ export default function App() {
     }
   }, [isConnected, sendCommand]);
 
-  // Validate IP address format (simple pattern check)
+  const generateUuid = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
+  const handleQuery = () => {
+    if (!queryText.trim()) {
+      Alert.alert('Empty query', 'Please enter a search/browsing query first.');
+      return;
+    }
+    
+    const query = queryText.trim();
+    setRunningQuery(query);
+    setQueryText('');
+    setAgentStatus('processing');
+    setTimerSeconds(0);
+
+    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userMsgId = generateUuid();
+    const blinkyMsgId = generateUuid();
+    
+    // Save reference of the active Blinky card to update later
+    activeBlinkyMsgIdRef.current = blinkyMsgId;
+
+    setMessages(prev => [
+      ...prev,
+      {
+        id: userMsgId,
+        sender: 'user',
+        text: query,
+        timestamp: currentTime,
+      },
+      {
+        id: blinkyMsgId,
+        sender: 'blinky',
+        text: "I'm on it. Locating the request...",
+        timestamp: currentTime,
+        progress: {
+          percent: 0,
+          statusText: 'Analyzing query...',
+          duration: 0,
+        }
+      }
+    ]);
+
+    const success = sendQuery(query, generateUuid());
+    if (!success) {
+      setAgentStatus('error');
+      setMessages(prev => prev.map(m => {
+        if (m.id === blinkyMsgId) {
+          return {
+            ...m,
+            progress: {
+              percent: 0,
+              statusText: 'Failed to communicate with PC.',
+              duration: 0,
+            }
+          };
+        }
+        return m;
+      }));
+    }
+  };
+
+  // Voice recording handlers
+  const startVoiceRecording = async () => {
+    if (!isConnected) {
+      Alert.alert('Not Connected', 'Please establish a link to your PC first.');
+      return;
+    }
+    if (!sarvamApiKey) {
+      Alert.alert('Configuration Missing', 'Waiting for Sarvam STT Key from your PC...');
+      sendCommand('get_sarvam_key' as any);
+      return;
+    }
+
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Permission Denied', 'Microphone access is required for voice commands.');
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync({
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 64000,
+        },
+        ios: {
+          extension: '.wav',
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 64000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 64000,
+        }
+      });
+      setVoiceRecording(recording);
+      setIsVoiceRecording(true);
+    } catch (err) {
+      console.error('Failed to start voice recording', err);
+      Alert.alert('Error', 'Failed to start microphone recording.');
+    }
+  };
+
+  const stopVoiceRecording = async () => {
+    if (!voiceRecording) return;
+    setIsVoiceRecording(false);
+    setIsVoiceTranscribing(true);
+    try {
+      await voiceRecording.stopAndUnloadAsync();
+      const uri = voiceRecording.getURI();
+      setVoiceRecording(null);
+
+      if (!uri) {
+        throw new Error('No recording URI found');
+      }
+
+      const apiKeyToUse = sarvamApiKey;
+      if (!apiKeyToUse) {
+        throw new Error('Sarvam API key is not available');
+      }
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: uri,
+        type: Platform.OS === 'android' ? 'audio/x-m4a' : 'audio/wav',
+        name: Platform.OS === 'android' ? 'query.m4a' : 'query.wav',
+      } as any);
+      formData.append('model', 'saaras:v3');
+      formData.append('language_code', 'en-IN');
+
+      const res = await fetch('https://api.sarvam.ai/speech-to-text', {
+        method: 'POST',
+        headers: {
+          'api-subscription-key': apiKeyToUse,
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        let payload: any = {};
+        try { payload = await res.json(); } catch {}
+        throw new Error(payload.message || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const transcript = data.transcript?.trim() || '';
+
+      if (transcript) {
+        setQueryText(transcript);
+        setRunningQuery(transcript);
+        setAgentStatus('processing');
+        setTimerSeconds(0);
+
+        const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const userMsgId = generateUuid();
+        const blinkyMsgId = generateUuid();
+        
+        activeBlinkyMsgIdRef.current = blinkyMsgId;
+
+        setMessages(prev => [
+          ...prev,
+          {
+            id: userMsgId,
+            sender: 'user',
+            text: transcript,
+            timestamp: currentTime,
+          },
+          {
+            id: blinkyMsgId,
+            sender: 'blinky',
+            text: "I'm on it. Locating the request...",
+            timestamp: currentTime,
+            progress: {
+              percent: 0,
+              statusText: 'Analyzing speech...',
+              duration: 0,
+            }
+          }
+        ]);
+
+        const success = sendQuery(transcript, generateUuid());
+        if (!success) {
+          setAgentStatus('error');
+          setMessages(prev => prev.map(m => {
+            if (m.id === blinkyMsgId) {
+              return {
+                ...m,
+                progress: {
+                  percent: 0,
+                  statusText: 'Failed to communicate with PC.',
+                  duration: 0,
+                }
+              };
+            }
+            return m;
+          }));
+        }
+      } else {
+        Alert.alert('STT Result', 'Could not hear anything clearly.');
+      }
+    } catch (err: any) {
+      console.error('STT Voice error:', err);
+      Alert.alert('Speech Recognition Failed', err.message || 'Error transcribing voice.');
+    } finally {
+      setIsVoiceTranscribing(false);
+    }
+  };
+
+  const toggleVoiceRecording = () => {
+    if (isVoiceRecording) {
+      stopVoiceRecording();
+    } else {
+      startVoiceRecording();
+    }
+  };
+
+  const handleStopQuery = () => {
+    setAgentStatus('idle');
+    setRunningQuery('');
+    setQueryText('');
+    if (activeBlinkyMsgIdRef.current) {
+      setMessages(prev => prev.map(m => {
+        if (m.id === activeBlinkyMsgIdRef.current) {
+          return {
+            ...m,
+            progress: {
+              percent: m.progress?.percent || 0,
+              statusText: 'Stopped by user.',
+              duration: m.progress?.duration || timerSeconds,
+            }
+          };
+        }
+        return m;
+      }));
+    }
+    activeBlinkyMsgIdRef.current = null;
+  };
+
+  const formatTime = (totalSecs: number) => {
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(mins)}:${pad(secs)}`;
+  };
+
+  // Load saved IP address on launch
+  useEffect(() => {
+    async function loadIp() {
+      try {
+        const savedIp = await AsyncStorage.getItem(STORAGE_KEY);
+        const detectedIp = getExpoHostIp();
+        const initialIp = savedIp || detectedIp || 'localhost';
+        setIpAddress(initialIp);
+        connect(initialIp);
+      } catch (e) {
+        console.error('Failed to load host IP address', e);
+        const fallback = getExpoHostIp() || 'localhost';
+        setIpAddress(fallback);
+        connect(fallback);
+      }
+    }
+    loadIp();
+  }, []);
+
+  // Quietly auto-discover and connect on start
+  useEffect(() => {
+    let active = true;
+    if (status === 'disconnected' || status === 'error') {
+      const timer = setTimeout(async () => {
+        if (!active) return;
+        try {
+          const deviceIp = await Network.getIpAddressAsync();
+          if (deviceIp && deviceIp !== '0.0.0.0' && deviceIp !== '127.0.0.1') {
+            console.log('Auto-discovery scan started...');
+            handleAutoDiscoverQuietly();
+          }
+        } catch (e) {}
+      }, 2500);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }
+  }, [status]);
+
+  const handleAutoDiscoverQuietly = async () => {
+    try {
+      const ip = await Network.getIpAddressAsync();
+      if (!ip || ip === '0.0.0.0') return;
+      const ipParts = ip.split('.');
+      if (ipParts.length !== 4) return;
+      const subnet = `${ipParts[0]}.${ipParts[1]}.${ipParts[2]}`;
+      const foundIp = await scanSubnet(subnet);
+      if (foundIp) {
+        setIpAddress(foundIp);
+        await AsyncStorage.setItem(STORAGE_KEY, foundIp);
+        connect(foundIp);
+      }
+    } catch (err) {}
+  };
+
   const validateIp = (ip: string): boolean => {
     const trimmed = ip.trim();
     if (!trimmed) return false;
-    
-    // Check if it's a valid host (either domain name, localhost, or IPv4 address)
     const ipPattern = /^([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+(:\d+)?$/;
     const ipv4Pattern = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}(:\d+)?$/;
-    
     return ipPattern.test(trimmed) || ipv4Pattern.test(trimmed) || trimmed === 'localhost';
   };
 
@@ -301,13 +748,9 @@ export default function App() {
       Alert.alert('Invalid Address', 'Please enter a valid IP address or hostname.');
       return;
     }
-
     try {
       await AsyncStorage.setItem(STORAGE_KEY, ipAddress.trim());
-    } catch (e) {
-      console.error('Failed to save host IP address', e);
-    }
-
+    } catch (e) {}
     connect(ipAddress);
   };
 
@@ -317,42 +760,31 @@ export default function App() {
     try {
       const ip = await Network.getIpAddressAsync();
       if (!ip || ip === '0.0.0.0') {
-        Alert.alert('Discovery Failed', 'Could not get device IP address. Make sure Wi-Fi is enabled.');
-        setIsDiscovering(false);
-        setDiscoveryProgress(null);
+        Alert.alert('Discovery Failed', 'Could not get device IP address.');
         return;
       }
-
       const ipParts = ip.split('.');
-      if (ipParts.length !== 4) {
-        Alert.alert('Discovery Failed', `Unsupported network IP format: ${ip}`);
-        setIsDiscovering(false);
-        setDiscoveryProgress(null);
-        return;
-      }
-
       const subnet = `${ipParts[0]}.${ipParts[1]}.${ipParts[2]}`;
       const foundIp = await scanSubnet(subnet, (msg) => {
         setDiscoveryProgress(msg);
       });
-      
       if (foundIp) {
         setIpAddress(foundIp);
         await AsyncStorage.setItem(STORAGE_KEY, foundIp);
         connect(foundIp);
       } else {
-        Alert.alert('Blinky Not Found', 'Could not auto-detect Blinky on this network. Make sure the desktop app is running and connected to the same Wi-Fi.');
+        Alert.alert('Blinky Not Found', 'Make sure the desktop app is running and connected.');
       }
     } catch (err: any) {
-      console.error('Discovery error:', err);
-      Alert.alert('Error', `Discovery failed: ${err.message || err}`);
+      Alert.alert('Error', `Discovery failed: ${err.message}`);
     } finally {
       setIsDiscovering(false);
       setDiscoveryProgress(null);
     }
   };
 
-  const triggerCommand = (command: 'power_off' | 'restart' | 'sleep', label: string) => {
+  const triggerPowerCommand = (command: 'power_off' | 'restart' | 'sleep', label: string) => {
+    setShowMenu(false);
     Alert.alert(
       `Confirm Action`,
       `Are you sure you want to trigger "${label}" on your PC?`,
@@ -367,7 +799,7 @@ export default function App() {
               setActionFeedback(`Command "${label}" sent!`);
               setTimeout(() => setActionFeedback(null), 3000);
             } else {
-              Alert.alert('Error', 'Failed to send command. Are you connected?');
+              Alert.alert('Error', 'Failed to send command. Check link.');
             }
           },
         },
@@ -375,91 +807,88 @@ export default function App() {
     );
   };
 
-  const triggerVolumeCommand = (command: 'volume_up' | 'volume_down' | 'volume_mute') => {
-    sendCommand(command);
-  };
-
-  const getStatusDetails = (currentStatus: ConnectionStatus) => {
-    switch (currentStatus) {
-      case 'connected':
-        return {
-          colors: ['#10B981', '#059669'] as const,
-          label: 'CONNECTED',
-          icon: 'checkmark-circle-outline' as const,
-          borderColor: 'rgba(16, 185, 129, 0.4)'
-        };
-      case 'connecting':
-        return {
-          colors: ['#F59E0B', '#D97706'] as const,
-          label: 'CONNECTING',
-          icon: 'sync-outline' as const,
-          borderColor: 'rgba(245, 158, 11, 0.4)'
-        };
-      case 'error':
-        return {
-          colors: ['#EF4444', '#DC2626'] as const,
-          label: 'ERROR',
-          icon: 'alert-circle-outline' as const,
-          borderColor: 'rgba(239, 68, 68, 0.4)'
-        };
-      case 'disconnected':
-      default:
-        return {
-          colors: ['#4B5563', '#374151'] as const,
-          label: 'DISCONNECTED',
-          icon: 'ellipse-outline' as const,
-          borderColor: 'rgba(255, 255, 255, 0.08)'
-        };
+  const triggerQuickAction = (command: any, label: string) => {
+    setShowMenu(false);
+    const success = sendCommand(command);
+    if (success) {
+      setActionFeedback(`Command "${label}" sent!`);
+      setTimeout(() => setActionFeedback(null), 3000);
+    } else {
+      Alert.alert('Error', 'Failed to send command. Check link.');
     }
   };
 
-  const statusDetails = getStatusDetails(status);
-
   return (
-    <LinearGradient colors={['#0A051C', '#0F092A', '#06030F']} style={styles.container}>
+    <LinearGradient colors={['#070313', '#090710', '#05020B']} style={styles.container}>
       <StatusBar barStyle="light-content" />
-        <SafeAreaView style={styles.safeArea}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.keyboardView}
-          >
-            <ScrollView 
-              showsVerticalScrollIndicator={false} 
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-            >
-            {/* Header with Blinky Branding */}
-            <View style={styles.header}>
-              <View style={styles.logoBadge}>
-                <Ionicons name="desktop-outline" size={26} color="#3B82F6" />
-              </View>
+      <View style={styles.safeArea}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardView}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <Ionicons name="sparkles" size={24} color="#FF5A36" style={{ marginRight: 8 }} />
               <Text style={styles.title}>BLINKY</Text>
-              <Text style={styles.subtitle}>Remote PC Control Console</Text>
             </View>
-
-            {/* Connection Control Card (Glassmorphic) */}
-            <View style={[styles.card, { borderColor: statusDetails.borderColor }]}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>Local Link Setup</Text>
-                
-                <View style={styles.statusBadgeContainer}>
-                  <LinearGradient
-                    colors={statusDetails.colors}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.statusBadge}
-                  >
-                    {status === 'connecting' ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
-                    ) : (
-                      <Ionicons name={statusDetails.icon} size={14} color="#FFF" style={{ marginRight: 4 }} />
-                    )}
-                    <Text style={styles.statusText}>{statusDetails.label}</Text>
-                  </LinearGradient>
-                </View>
+            <View style={styles.headerRight}>
+              <View style={styles.statusRowHeader}>
+                <View style={[styles.statusDotHeader, { backgroundColor: isConnected ? '#FF5A36' : '#EF4444' }]} />
+                <Text style={styles.statusTextHeader}>{isConnected ? 'Connected' : 'Disconnected'}</Text>
               </View>
+              <TouchableOpacity onPress={() => setShowMenu(!showMenu)} style={styles.menuBtn}>
+                <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Three Dots Dropdown Overlay Menu */}
+          {showMenu && (
+            <View style={styles.dropdownMenu}>
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => { setShowMenu(false); setShowSettings(!showSettings); }}>
+                <Ionicons name="settings-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
+                <Text style={styles.dropdownText}>Local Link Setup</Text>
+              </TouchableOpacity>
               
+              <View style={styles.dropdownDivider} />
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerQuickAction('volume_mute', 'Mute')}>
+                <Ionicons name="volume-mute-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
+                <Text style={styles.dropdownText}>Mute Volume</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={handleCaptureScreenshot}>
+                <Ionicons name="crop-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
+                <Text style={styles.dropdownText}>Capture Screenshot</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerQuickAction('lock' as any, 'Lock')}>
+                <Ionicons name="lock-closed-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
+                <Text style={styles.dropdownText}>Lock Workstation</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerPowerCommand('sleep', 'Sleep')}>
+                <Ionicons name="moon-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
+                <Text style={styles.dropdownText}>Sleep Mode</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerPowerCommand('restart', 'Reboot')}>
+                <Ionicons name="refresh-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
+                <Text style={styles.dropdownText}>Reboot PC</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerPowerCommand('power_off', 'Shutdown')}>
+                <Ionicons name="power-outline" size={18} color="#EF4444" style={styles.dropdownIcon} />
+                <Text style={[styles.dropdownText, { color: '#EF4444' }]}>Shutdown PC</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Local Link Setup Box (Shows right below header when toggled) */}
+          {showSettings && (
+            <View style={styles.connectionCard}>
+              <Text style={styles.connectionTitle}>Local Link Setup</Text>
               <View style={styles.inputWrapper}>
                 <Ionicons name="link-outline" size={20} color="#6C6985" style={styles.inputIcon} />
                 <TextInput
@@ -474,7 +903,6 @@ export default function App() {
                   autoCorrect={false}
                 />
               </View>
-
               <View style={styles.actionRow}>
                 {status !== 'connected' && status !== 'connecting' ? (
                   <>
@@ -488,7 +916,6 @@ export default function App() {
                         <Text style={styles.btnText}>Establish Link</Text>
                       </LinearGradient>
                     </TouchableOpacity>
-                    
                     <TouchableOpacity style={styles.discoverBtn} onPress={handleAutoDiscover} activeOpacity={0.8} disabled={isDiscovering}>
                       <LinearGradient
                         colors={isDiscovering ? ['#4B5563', '#374151'] : ['#8B5CF6', '#6D28D9']}
@@ -496,10 +923,7 @@ export default function App() {
                         end={{ x: 1, y: 1 }}
                         style={styles.gradientBtn}
                       >
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <Ionicons name="scan-outline" size={16} color="#FFF" style={{ marginRight: 6 }} />
-                          <Text style={styles.btnText}>Auto Discover</Text>
-                        </View>
+                        <Text style={styles.btnText}>Scan Subnet</Text>
                       </LinearGradient>
                     </TouchableOpacity>
                   </>
@@ -511,285 +935,237 @@ export default function App() {
                   </TouchableOpacity>
                 )}
               </View>
-
               {discoveryProgress && (
                 <View style={styles.discoveryProgressContainer}>
                   <ActivityIndicator size="small" color="#8B5CF6" style={{ marginRight: 8 }} />
                   <Text style={styles.discoveryProgressText}>{discoveryProgress}</Text>
                 </View>
               )}
-
               {errorMsg && (
                 <View style={styles.errorContainer}>
-                  <Ionicons name="warning-outline" size={16} color="#EF4444" style={{ marginRight: 6 }} />
                   <Text style={styles.errorText}>{errorMsg}</Text>
                 </View>
               )}
             </View>
+          )}
 
-            {/* Blinky Browser Agent Card (Glassmorphic) */}
-            <View style={[styles.card, !isConnected && styles.cardDisabled]}>
-              <Text style={styles.cardTitle}>AI Browser Assistant</Text>
-              
-              <View style={styles.inputWrapper}>
-                <Ionicons name="sparkles-outline" size={20} color="#6C6985" style={styles.inputIcon} />
-                <TextInput
-                  style={[styles.input, !isConnected && styles.inputDisabled]}
-                  placeholder="Ask something"
-                  placeholderTextColor="#6C6985"
-                  value={queryText}
-                  onChangeText={setQueryText}
-                  editable={isConnected && agentStatus !== 'processing'}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
+          {actionFeedback && (
+            <View style={styles.feedbackBanner}>
+              <Text style={styles.feedbackBannerText}>{actionFeedback}</Text>
+            </View>
+          )}
 
-              <View style={styles.actionRow}>
-                <TouchableOpacity 
-                  style={[styles.connectBtn, (!isConnected || agentStatus === 'processing') && styles.btnDisabled]} 
-                  onPress={handleQuery} 
-                  disabled={!isConnected || agentStatus === 'processing'}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={isConnected && agentStatus !== 'processing' ? ['#10B981', '#059669'] : ['#4B5563', '#374151']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.gradientBtn}
-                  >
-                    <Text style={styles.btnText}>Ask Blinky</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-
-              {agentStatus === 'processing' && (
-                <View style={[styles.feedbackContainer, { flexDirection: 'column', alignItems: 'stretch' }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
-                    <Text style={styles.feedbackText}>{agentProgressMsg}</Text>
-                  </View>
-                  {confidence !== null && (
-                    <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(16, 185, 129, 0.2)', paddingTop: 6 }}>
-                      <Text style={{ color: '#8A86AA', fontSize: 12, textAlign: 'center' }}>
-                        Match Confidence: <Text style={{ color: '#10B981', fontWeight: 'bold' }}>{confidence}%</Text>
-                      </Text>
-                      {reasoning ? (
-                        <Text style={{ color: 'rgba(255, 255, 255, 0.6)', fontSize: 11, textAlign: 'center', marginTop: 2 }}>
-                          {reasoning}
-                        </Text>
-                      ) : null}
+          {/* Main Messaging Feed */}
+          <ScrollView
+            ref={scrollViewRef}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.chatScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {messages.map((message) => {
+              const isUser = message.sender === 'user';
+              return (
+                <View key={message.id} style={isUser ? styles.userMessageRow : styles.blinkyMessageRow}>
+                  {/* Blinky Avatar */}
+                  {!isUser && (
+                    <View style={styles.avatarContainer}>
+                      <Ionicons name="sparkles" size={14} color="#FF5A36" />
                     </View>
                   )}
-                </View>
-              )}
 
-              {agentStatus === 'error' && agentError && (
-                <View style={styles.errorContainer}>
-                  <Ionicons name="warning-outline" size={16} color="#EF4444" style={{ marginRight: 6 }} />
-                  <Text style={styles.errorText}>{agentError}</Text>
-                </View>
-              )}
+                  <View style={isUser ? styles.userMessageBubble : styles.blinkyMessageBubble}>
+                    {/* Bubble main text */}
+                    <Text style={styles.messageText}>{message.text}</Text>
 
-              {agentStatus === 'success' && agentResult && (
-                <View style={styles.resultContainer}>
-                  <View style={styles.resultHeader}>
-                    <Ionicons name="checkmark-circle" size={18} color="#10B981" style={{ marginRight: 6 }} />
-                    <Text style={styles.resultTitle}>Result Details</Text>
-                  </View>
-                  {agentResult.screenshot_b64 || (agentResult.steps && agentResult.steps.length > 0) ? (
-                    <View>
-                      {agentResult.response ? (
-                        <Text style={[styles.resultParagraph, { marginBottom: 8 }]}>{agentResult.response}</Text>
-                      ) : null}
+                    {/* Nested Active Progress Card inside Blinky's response bubble */}
+                    {!isUser && message.progress && (
+                      <View style={styles.nestedProgressCard}>
+                        {/* Progress slider line */}
+                        <View style={styles.progressBarWrapper}>
+                          <View style={styles.progressBarContainer}>
+                            <View 
+                              style={[
+                                styles.progressBarFill, 
+                                { width: `${message.progress.percent}%` }
+                              ]} 
+                            />
+                          </View>
+                          <Text style={styles.progressPercent}>{message.progress.percent}%</Text>
+                        </View>
 
-                      {agentResult.screenshot_b64 ? (
+                        {/* Status message */}
+                        <View style={styles.progressStatusRow}>
+                          <View style={styles.progressStatusDot} />
+                          <Text style={styles.progressStatusText} numberOfLines={2}>
+                            {message.progress.statusText}
+                          </Text>
+                        </View>
+
+                        {/* Stopwatch */}
+                        <View style={styles.progressTimerRow}>
+                          <Ionicons name="time-outline" size={14} color="#8A86AA" style={{ marginRight: 6 }} />
+                          <Text style={styles.progressTimerText}>{formatTime(message.progress.duration)}</Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Screenshot results inside the final success bubble */}
+                    {!isUser && message.screenshot_b64 && (
+                      <TouchableOpacity
+                        activeOpacity={0.88}
+                        onPress={() => setPreviewImageUri(`data:image/jpeg;base64,${message.screenshot_b64}`)}
+                        style={styles.screenshotTouchable}
+                      >
                         <Image
-                          source={{ uri: `data:image/jpeg;base64,${agentResult.screenshot_b64}` }}
-                          style={styles.screenshotImage}
+                          source={{ uri: `data:image/jpeg;base64,${message.screenshot_b64}` }}
+                          style={styles.bubbleScreenshot}
                         />
-                      ) : null}
+                        <View style={styles.enlargeBadge}>
+                          <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.enlargeBadgeText}>Tap to enlarge</Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
 
-                      {agentResult.steps && agentResult.steps.length > 0 ? (
-                        <View style={styles.stepsContainer}>
-                          {agentResult.steps.map((step: any, index: number) => (
-                            <View key={index} style={styles.stepItem}>
-                              <View style={styles.stepNumberBadge}>
-                                <Text style={styles.stepNumberText}>{step.step || index + 1}</Text>
-                              </View>
-                              <View style={styles.stepContent}>
-                                <Text style={styles.stepInstruction}>{step.instruction}</Text>
-                                {step.target_text ? (
-                                  <View style={styles.stepTargetBadge}>
-                                    <Text style={styles.stepTargetText}>{step.target_text}</Text>
-                                  </View>
-                                ) : null}
-                              </View>
+                    {/* Steps trace inside the final success bubble */}
+                    {!isUser && message.steps && message.steps.length > 0 && (
+                      <View style={styles.bubbleStepsContainer}>
+                        {message.steps.map((step: any, index: number) => (
+                          <View key={index} style={styles.bubbleStepItem}>
+                            <View style={styles.bubbleStepBadge}>
+                              <Text style={styles.bubbleStepBadgeText}>{step.step || index + 1}</Text>
                             </View>
-                          ))}
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : agentResult.response ? (
-                    <Text style={styles.resultParagraph}>{agentResult.response}</Text>
-                  ) : (
-                    Object.entries(agentResult).map(([key, value]) => {
-                      if (key === 'raw_metadata' && Array.isArray(value)) {
-                        return null;
-                      }
-                      const displayValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
-                      return (
-                        <View key={key} style={styles.resultRow}>
-                          <Text style={styles.resultKey}>{key.replace(/_/g, ' ').toUpperCase()}:</Text>
-                          <Text style={styles.resultValue}>{displayValue}</Text>
-                        </View>
-                      );
-                    })
-                  )}
+                            <View style={styles.bubbleStepContent}>
+                              <Text style={styles.bubbleStepText}>{step.instruction}</Text>
+                              {step.target_text && (
+                                <View style={styles.bubbleStepTargetBadge}>
+                                  <Text style={styles.bubbleStepTargetText}>{step.target_text}</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Timestamp aligned right under user or blinky message */}
+                  <View style={isUser ? styles.userMetaRow : styles.blinkyMetaRow}>
+                    <Text style={styles.metaTimestamp}>{message.timestamp}</Text>
+                    {isUser && (
+                      <View style={styles.checkmarksRow}>
+                        <Ionicons name="checkmark-done" size={14} color="#FF5A36" />
+                      </View>
+                    )}
+                  </View>
                 </View>
+              );
+            })}
+          </ScrollView>
+
+          {/* Bottom Chat Bar */}
+          <View style={[styles.chatInputBar, !isConnected && styles.chatInputBarDisabled]}>
+            {/* Voice Command Mic Circle Button */}
+            {isVoiceTranscribing ? (
+              <View style={styles.voiceSpinnerWrapper}>
+                <ActivityIndicator size="small" color="#FF5A36" />
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[
+                  styles.voiceMicBtn,
+                  isVoiceRecording && styles.voiceMicBtnRecording,
+                  !isConnected && styles.voiceMicBtnDisabled
+                ]}
+                onPress={toggleVoiceRecording}
+                disabled={!isConnected || isVoiceTranscribing}
+                activeOpacity={0.7}
+              >
+                <Ionicons 
+                  name={isVoiceRecording ? "mic" : "mic"} 
+                  size={20} 
+                  color={isVoiceRecording ? "#EF4444" : "#FF5A36"} 
+                />
+              </TouchableOpacity>
+            )}
+
+            <TextInput
+              style={styles.chatTextInput}
+              placeholder="Message Blinky"
+              placeholderTextColor="#6C6985"
+              value={queryText}
+              onChangeText={setQueryText}
+              editable={isConnected && agentStatus !== 'processing'}
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={handleQuery}
+            />
+
+            {/* Stop Action or Send Button */}
+            {agentStatus === 'processing' ? (
+              <TouchableOpacity 
+                style={styles.stopCircleBtn} 
+                onPress={handleStopQuery}
+                activeOpacity={0.7}
+              >
+                <View style={styles.stopSquare} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                style={[
+                  styles.chatSendBtn, 
+                  (!isConnected || !queryText.trim()) && styles.chatSendBtnDisabled
+                ]}
+                onPress={handleQuery}
+                disabled={!isConnected || !queryText.trim()}
+              >
+                <Ionicons name="arrow-up" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Fullscreen Image Preview Modal */}
+          <Modal
+            visible={!!previewImageUri}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setPreviewImageUri(null)}
+          >
+            <View style={styles.fullscreenModalContainer}>
+              <TouchableOpacity
+                style={styles.fullscreenCloseBtn}
+                onPress={() => setPreviewImageUri(null)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="close" size={26} color="#FFFFFF" />
+              </TouchableOpacity>
+
+              {previewImageUri && (
+                <ScrollView
+                  maximumZoomScale={5}
+                  minimumZoomScale={1}
+                  showsHorizontalScrollIndicator={false}
+                  showsVerticalScrollIndicator={false}
+                  centerContent={true}
+                  contentContainerStyle={styles.zoomScrollViewContent}
+                  style={styles.zoomScrollView}
+                >
+                  <TouchableWithoutFeedback onPress={() => setPreviewImageUri(null)}>
+                    <View style={styles.fullscreenImageWrapper}>
+                      <Image
+                        source={{ uri: previewImageUri }}
+                        style={styles.fullscreenImage}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  </TouchableWithoutFeedback>
+                </ScrollView>
               )}
             </View>
-
-            {/* PC Volume Control Card (Glassmorphic) */}
-            <View style={[styles.card, !isConnected && styles.cardDisabled]}>
-              <Text style={styles.cardTitle}>Audio & Volume</Text>
-              
-              <View style={styles.volumeRow}>
-                {/* Volume Down */}
-                <TouchableOpacity
-                  style={[styles.volumeBtn, !isConnected && styles.btnDisabled]}
-                  disabled={!isConnected}
-                  onPress={() => triggerVolumeCommand('volume_down')}
-                  activeOpacity={0.7}
-                >
-                  <LinearGradient
-                    colors={isConnected ? ['#1E293B', '#0F172A'] : ['#1F1D2B', '#1F1D2B']}
-                    style={styles.volumeBtnGradient}
-                  >
-                    <Ionicons name="volume-low-outline" size={24} color={isConnected ? '#3B82F6' : '#4B5563'} />
-                    <Text style={[styles.volumeBtnText, !isConnected && styles.textDisabled]}>Down</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-
-                {/* Mute */}
-                <TouchableOpacity
-                  style={[styles.volumeBtn, !isConnected && styles.btnDisabled]}
-                  disabled={!isConnected}
-                  onPress={() => triggerVolumeCommand('volume_mute')}
-                  activeOpacity={0.7}
-                >
-                  <LinearGradient
-                    colors={isConnected ? ['#1E293B', '#0F172A'] : ['#1F1D2B', '#1F1D2B']}
-                    style={styles.volumeBtnGradient}
-                  >
-                    <Ionicons name="volume-mute-outline" size={24} color={isConnected ? '#EF4444' : '#4B5563'} />
-                    <Text style={[styles.volumeBtnText, !isConnected && styles.textDisabled]}>Mute</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-
-                {/* Volume Up */}
-                <TouchableOpacity
-                  style={[styles.volumeBtn, !isConnected && styles.btnDisabled]}
-                  disabled={!isConnected}
-                  onPress={() => triggerVolumeCommand('volume_up')}
-                  activeOpacity={0.7}
-                >
-                  <LinearGradient
-                    colors={isConnected ? ['#1E293B', '#0F172A'] : ['#1F1D2B', '#1F1D2B']}
-                    style={styles.volumeBtnGradient}
-                  >
-                    <Ionicons name="volume-high-outline" size={24} color={isConnected ? '#10B981' : '#4B5563'} />
-                    <Text style={[styles.volumeBtnText, !isConnected && styles.textDisabled]}>Up</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* PC Controls Card (Glassmorphic) */}
-            <View style={[styles.card, !isConnected && styles.cardDisabled]}>
-              <Text style={styles.cardTitle}>Power Operations</Text>
-              
-              {actionFeedback && (
-                <View style={styles.feedbackContainer}>
-                  <Ionicons name="checkmark-circle" size={18} color="#10B981" style={{ marginRight: 6 }} />
-                  <Text style={styles.feedbackText}>{actionFeedback}</Text>
-                </View>
-              )}
-
-              <View style={styles.controlGrid}>
-                {/* Sleep Operation */}
-                <TouchableOpacity
-                  style={[styles.controlBtn, !isConnected && styles.btnDisabled]}
-                  disabled={!isConnected}
-                  onPress={() => triggerCommand('sleep', 'Sleep')}
-                  activeOpacity={0.75}
-                >
-                  <LinearGradient
-                    colors={isConnected ? ['#1E293B', '#0F172A'] : ['#1F1D2B', '#1F1D2B']}
-                    style={styles.controlGradient}
-                  >
-                    <View style={[styles.iconContainer, isConnected && { backgroundColor: 'rgba(59, 130, 246, 0.15)' }]}>
-                      <Ionicons name="moon" size={24} color={isConnected ? '#3B82F6' : '#4B5563'} />
-                    </View>
-                    <View style={styles.btnMeta}>
-                      <Text style={[styles.controlBtnTitle, !isConnected && styles.textDisabled]}>Suspend (Sleep)</Text>
-                      <Text style={styles.controlBtnDesc}>Place computer in low-power sleep mode</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={isConnected ? '#4B5563' : '#374151'} />
-                  </LinearGradient>
-                </TouchableOpacity>
-
-                {/* Restart Operation */}
-                <TouchableOpacity
-                  style={[styles.controlBtn, !isConnected && styles.btnDisabled]}
-                  disabled={!isConnected}
-                  onPress={() => triggerCommand('restart', 'Restart')}
-                  activeOpacity={0.75}
-                >
-                  <LinearGradient
-                    colors={isConnected ? ['#1E293B', '#0F172A'] : ['#1F1D2B', '#1F1D2B']}
-                    style={styles.controlGradient}
-                  >
-                    <View style={[styles.iconContainer, isConnected && { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
-                      <Ionicons name="sync" size={24} color={isConnected ? '#F59E0B' : '#4B5563'} />
-                    </View>
-                    <View style={styles.btnMeta}>
-                      <Text style={[styles.controlBtnTitle, !isConnected && styles.textDisabled]}>Reboot System</Text>
-                      <Text style={styles.controlBtnDesc}>Restart operating system immediately</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={isConnected ? '#4B5563' : '#374151'} />
-                  </LinearGradient>
-                </TouchableOpacity>
-
-                {/* Power Off Operation */}
-                <TouchableOpacity
-                  style={[styles.controlBtn, !isConnected && styles.btnDisabled]}
-                  disabled={!isConnected}
-                  onPress={() => triggerCommand('power_off', 'Shut Down')}
-                  activeOpacity={0.75}
-                >
-                  <LinearGradient
-                    colors={isConnected ? ['#1E293B', '#0F172A'] : ['#1F1D2B', '#1F1D2B']}
-                    style={styles.controlGradient}
-                  >
-                    <View style={[styles.iconContainer, isConnected && { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
-                      <Ionicons name="power" size={24} color={isConnected ? '#EF4444' : '#4B5563'} />
-                    </View>
-                    <View style={styles.btnMeta}>
-                      <Text style={[styles.controlBtnTitle, !isConnected && styles.textDisabled]}>Shutdown PC</Text>
-                      <Text style={styles.controlBtnDesc}>Power off target machine safely</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={isConnected ? '#4B5563' : '#374151'} />
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-            
-            <Text style={styles.footer}>Blinky Link Protocol v1.0.0</Text>
-            </ScrollView>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </LinearGradient>
+          </Modal>
+        </KeyboardAvoidingView>
+      </View>
+    </LinearGradient>
   );
 }
 
@@ -799,74 +1175,115 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 44,
   },
   keyboardView: {
     flex: 1,
   },
-  scrollContent: {
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    flexGrow: 1,
-    justifyContent: 'center',
-  },
   header: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  logoBadge: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.25)',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 6,
-    textShadowColor: 'rgba(59, 130, 246, 0.3)',
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 12,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#8A86AA',
-    marginTop: 6,
-    fontWeight: '600',
-    letterSpacing: 1.5,
-  },
-  card: {
-    backgroundColor: 'rgba(21, 17, 43, 0.65)',
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.4,
-    shadowRadius: 24,
-    elevation: 10,
-  },
-  cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
   },
-  cardDisabled: {
-    opacity: 0.5,
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  cardTitle: {
-    fontSize: 18,
+  title: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 4,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  statusRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  statusDotHeader: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  statusTextHeader: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  menuBtn: {
+    padding: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 52 : 96,
+    right: 20,
+    width: 220,
+    backgroundColor: '#16151A',
+    borderRadius: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    zIndex: 1000,
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  dropdownIcon: {
+    marginRight: 12,
+    width: 20,
+    textAlign: 'center',
+  },
+  dropdownText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  dropdownDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    marginVertical: 4,
+  },
+  connectionCard: {
+    backgroundColor: 'rgba(21, 17, 43, 0.65)',
+    borderRadius: 24,
+    padding: 20,
+    marginHorizontal: 20,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  connectionTitle: {
+    fontSize: 15,
     fontWeight: '800',
     color: '#FFFFFF',
-    letterSpacing: 0.3,
+    marginBottom: 16,
   },
   inputWrapper: {
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
@@ -882,10 +1299,10 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   input: {
-    height: 54,
+    height: 48,
     flex: 1,
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '500',
   },
   inputDisabled: {
@@ -906,19 +1323,18 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
   gradientBtn: {
-    height: 52,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
   btnText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.5,
   },
   disconnectBtn: {
     flex: 1,
-    height: 52,
+    height: 44,
     borderRadius: 16,
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
     justifyContent: 'center',
@@ -928,31 +1344,10 @@ const styles = StyleSheet.create({
   },
   disconnectBtnText: {
     color: '#EF4444',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  statusBadgeContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 10,
-    letterSpacing: 1,
   },
   errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
     borderColor: 'rgba(239, 68, 68, 0.18)',
     borderWidth: 1,
@@ -964,6 +1359,7 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontSize: 13,
     fontWeight: '600',
+    textAlign: 'center',
   },
   discoveryProgressContainer: {
     flexDirection: 'row',
@@ -981,205 +1377,342 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  feedbackContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+  feedbackBanner: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
     borderWidth: 1,
-    padding: 10,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  feedbackText: {
-    color: '#10B981',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  controlGrid: {
-    gap: 12,
-  },
-  controlBtn: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  btnDisabled: {
-    borderColor: 'transparent',
-  },
-  controlGradient: {
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  iconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  btnMeta: {
-    flex: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    paddingVertical: 8,
     paddingHorizontal: 16,
-  },
-  controlBtnTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  textDisabled: {
-    color: '#4B5563',
-  },
-  controlBtnDesc: {
-    color: 'rgba(255, 255, 255, 0.45)',
-    fontSize: 11,
-    marginTop: 3,
-  },
-  resultContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  resultHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
-    paddingBottom: 8,
-  },
-  resultTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#10B981',
-    letterSpacing: 0.5,
-  },
-  resultRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.03)',
-  },
-  resultKey: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8A86AA',
-    marginRight: 8,
-  },
-  resultValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    flex: 1,
-    textAlign: 'right',
-  },
-  resultParagraph: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    lineHeight: 22,
-    fontWeight: '500',
-  },
-  screenshotImage: {
-    width: '100%',
-    height: 220,
-    resizeMode: 'contain',
-    borderRadius: 12,
-    marginVertical: 12,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  stepsContainer: {
+    marginHorizontal: 20,
     marginTop: 10,
-  },
-  stepItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    padding: 12,
     borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  stepNumberBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#FF5722',
+  feedbackBannerText: {
+    color: '#10B981',
+    fontWeight: '700',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  chatScrollContent: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    flexGrow: 1,
+  },
+  userMessageRow: {
+    alignSelf: 'flex-end',
+    maxWidth: '80%',
+    marginBottom: 16,
+    alignItems: 'flex-end',
+  },
+  blinkyMessageRow: {
+    alignSelf: 'flex-start',
+    maxWidth: '85%',
+    marginBottom: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  avatarContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 90, 54, 0.4)',
+    backgroundColor: '#171324',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 8,
     marginTop: 2,
   },
-  stepNumberText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
+  userMessageBubble: {
+    backgroundColor: 'rgba(255, 90, 54, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 90, 54, 0.3)',
+    borderRadius: 20,
+    borderBottomRightRadius: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  stepContent: {
+  blinkyMessageBubble: {
     flex: 1,
+    backgroundColor: '#121115',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 20,
+    borderTopLeftRadius: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  stepInstruction: {
+  messageText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 14.5,
     lineHeight: 20,
     fontWeight: '500',
   },
-  stepTargetBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255, 87, 34, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 87, 34, 0.25)',
-  },
-  stepTargetText: {
-    color: '#FF7043',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  volumeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
+  nestedProgressCard: {
     marginTop: 12,
-  },
-  volumeBtn: {
-    flex: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.04)',
+    borderColor: 'rgba(255, 90, 54, 0.25)',
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
   },
-  volumeBtnGradient: {
-    paddingVertical: 14,
+  progressBarWrapper: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
+    marginBottom: 12,
   },
-  volumeBtnText: {
-    color: '#FFFFFF',
+  progressBarContainer: {
+    flex: 1,
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 1.5,
+    marginRight: 10,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#FF5A36',
+    borderRadius: 1.5,
+  },
+  progressPercent: {
+    color: '#8A86AA',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  progressStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF5A36',
+    marginRight: 8,
+  },
+  progressStatusText: {
+    color: 'rgba(255, 255, 255, 0.9)',
     fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  progressTimerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  progressTimerText: {
+    fontSize: 12,
+    color: '#8A86AA',
+    fontWeight: '600',
+  },
+  bubbleScreenshot: {
+    width: '100%',
+    height: 160,
+    resizeMode: 'contain',
+    borderRadius: 8,
+    backgroundColor: '#05020B',
+    marginTop: 10,
+  },
+  bubbleStepsContainer: {
+    marginTop: 10,
+  },
+  bubbleStepItem: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  bubbleStepBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FF5A36',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  bubbleStepBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  bubbleStepContent: {
+    flex: 1,
+  },
+  bubbleStepText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+  },
+  bubbleStepTargetBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 90, 54, 0.1)',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+    marginTop: 4,
+  },
+  bubbleStepTargetText: {
+    color: '#FF5A36',
+    fontSize: 9,
     fontWeight: '700',
   },
-  footer: {
+  userMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  blinkyMetaRow: {
+    width: '100%',
+    paddingLeft: 40,
+    marginTop: 6,
+  },
+  metaTimestamp: {
+    color: '#494660',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  checkmarksRow: {
+    marginLeft: 6,
+  },
+  footerText: {
     textAlign: 'center',
     color: '#494660',
     fontSize: 11,
-    marginTop: 18,
-    letterSpacing: 0.5,
+    marginVertical: 10,
+  },
+  chatInputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F0D15',
+    borderRadius: 30,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 90, 54, 0.35)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginHorizontal: 16,
+    marginBottom: Platform.OS === 'ios' ? 10 : 16,
+  },
+  chatInputBarDisabled: {
+    opacity: 0.5,
+  },
+  chatTextInput: {
+    flex: 1,
+    height: 40,
+    color: '#FFFFFF',
+    paddingHorizontal: 8,
+    fontSize: 15,
+  },
+  chatSendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF5A36',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatSendBtnDisabled: {
+    opacity: 0.5,
+  },
+  voiceSpinnerWrapper: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  voiceMicBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#171324',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 90, 54, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  voiceMicBtnRecording: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderColor: '#EF4444',
+  },
+  voiceMicBtnDisabled: {
+    opacity: 0.5,
+  },
+  stopCircleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stopSquare: {
+    width: 12,
+    height: 12,
+    backgroundColor: '#EF4444',
+    borderRadius: 2,
+  },
+  screenshotTouchable: {
+    position: 'relative',
+    marginTop: 10,
+  },
+  enlargeBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  enlargeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  fullscreenModalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 2, 11, 0.96)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenCloseBtn: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? (StatusBar.currentHeight || 20) + 12 : 50,
+    right: 20,
+    zIndex: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenImageWrapper: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenImage: {
+    width: '94%',
+    height: '84%',
+  },
+  zoomScrollView: {
+    width: '100%',
+    height: '100%',
+  },
+  zoomScrollViewContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
-

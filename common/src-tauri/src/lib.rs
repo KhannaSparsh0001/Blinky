@@ -844,8 +844,9 @@ pub fn run() {
                 start_ydotoold();
             }
 
+            let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                websocket::start_websocket_server().await;
+                websocket::start_websocket_server(app_handle).await;
             });
 
             #[cfg(target_os = "windows")]

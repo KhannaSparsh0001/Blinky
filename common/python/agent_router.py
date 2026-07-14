@@ -564,6 +564,65 @@ async def execute_single_tool_call(tool_call, registry, query, semaphore, reques
         
     return success, result_data, error_details
 
+async def run_main_py_subprocess(payload: dict, request_id: str) -> dict:
+    script_path = Path(__file__).resolve().parent / "main.py"
+    cmd = [sys.executable, str(script_path)]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Write payload to stdin
+        proc.stdin.write(json.dumps(payload).encode() + b"\n")
+        await proc.stdin.drain()
+        proc.stdin.close()
+        
+        final_result = {}
+        # Read stdout line by line
+        while True:
+            line_bytes = await proc.stdout.readline()
+            if not line_bytes:
+                break
+            line = line_bytes.decode().strip()
+            if not line:
+                continue
+            if line == "__BLINKY_CAPTURED__":
+                continue
+            try:
+                parsed = json.loads(line)
+                if isinstance(parsed, dict) and parsed.get("type") == "status":
+                    send_response(request_id, "processing", data={
+                        "message": parsed.get("message", "Processing..."),
+                        "confidence": parsed.get("confidence"),
+                        "reasoning": parsed.get("reasoning"),
+                    })
+                    continue
+                # If it's a dict and doesn't have a "type" or is the final result
+                if isinstance(parsed, dict) and "type" not in parsed:
+                    final_result = parsed
+            except Exception:
+                # If it's not valid JSON, it might be some random print/warning, accumulate or ignore
+                pass
+
+        stderr_bytes = await proc.stderr.read()
+        stderr_decoded = stderr_bytes.decode().strip()
+        if stderr_decoded:
+            import logging
+            logging.getLogger("blinky.agent_router").info(f"main.py stderr: {stderr_decoded}")
+
+        await proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(f"main.py failed with exit code {proc.returncode}. Stderr: {stderr_decoded}")
+            
+        return final_result
+    except Exception as e:
+        import logging
+        logging.getLogger("blinky.agent_router").error(f"Failed to run main.py subprocess: {e}")
+        raise
+
 async def handle_request(line):
     try:
         req = json.loads(line)
@@ -579,6 +638,26 @@ async def handle_request(line):
         return
 
     send_response(request_id, "processing", data={"message": "Analyzing query and routing..."})
+
+    # ── Instant PC Screenshot Handler ──
+    cleaned_query = query.lower().strip()
+    if any(k in cleaned_query for k in {"capture screenshot", "take screenshot", "get screenshot", "capture current pc screen", "capture screen", "pc screenshot"}):
+        send_response(request_id, "processing", data={"message": "Capturing PC screenshot..."})
+        try:
+            from capture import capture_screen
+            import base64
+            shot = await asyncio.to_thread(capture_screen)
+            with open(shot.path, "rb") as f:
+                b64_data = base64.b64encode(f.read()).decode("utf-8")
+            send_response(request_id, "success", data={
+                "response": "Here is your current PC screen.",
+                "screenshot_b64": b64_data,
+                "steps": []
+            })
+            return
+        except Exception as e:
+            send_response(request_id, "error", error={"code": "SCREENSHOT_FAILED", "message": "Failed to capture PC screen", "details": str(e)})
+            return
 
     # ── Check for Local Desktop Agent Actions (aligning mobile behavior with PC chatbar) ──
     try:
@@ -659,12 +738,26 @@ async def handle_request(line):
                 send_response(request_id, "success", data={"response": direct_result.message})
                 return
 
-            if intent == "DESKTOP_AUTOMATION":
+            def is_screen_query(q: str, i: str) -> bool:
+                if i in {"DESKTOP_AUTOMATION", "COMPUTER_USE"}:
+                    return True
+                lowered = q.lower().strip()
+                screen_keywords = {"highlight", "point", "where is", "where's", "show me", "locate", "click on", "select", "which button", "find"}
+                return any(k in lowered for k in screen_keywords)
+
+            if is_screen_query(query, intent):
                 send_response(request_id, "processing", data={"message": "Inspecting PC screen..."})
-                import main
                 from utils.screen_annotator import annotate_screenshot
                 
-                tutor_result = await asyncio.to_thread(main.run, query)
+                payload_in = {
+                    "question": query,
+                    "previous_question": None,
+                    "progress": {},
+                    "conversation_history": [],
+                    "web_search_enabled": False,
+                    "agent_mode": False,
+                }
+                tutor_result = await run_main_py_subprocess(payload_in, request_id)
                 screenshot_path = tutor_result.get("screenshot", {}).get("path")
                 steps = tutor_result.get("steps", [])
                 
@@ -675,6 +768,9 @@ async def handle_request(line):
                 payload = {
                     "response": tutor_result.get("summary", ""),
                     "steps": steps,
+                    "active_app": tutor_result.get("active_app", {"title": "", "process": "", "supported": False}),
+                    "ocr": tutor_result.get("ocr", {"count": 0, "items": []}),
+                    "screenshot": tutor_result.get("screenshot"),
                 }
                 if screenshot_b64:
                     payload["screenshot_b64"] = screenshot_b64
@@ -904,184 +1000,48 @@ Respond ONLY with valid JSON.
     if is_sufficient:
         raw_result = combined_result
     else:
-        # 2. Code Generation Phase (Fallback / Unmatched)
-        if routing_confidence_low:
-            msg = f"No confident match (Confidence: {confidence}%). Generating custom script..."
+        # Fallback / Unmatched: instead of generating a custom Playwright script, use web intelligence directly
+        if combined_result:
+            raw_result = combined_result
         else:
-            msg = f"Tool execution insufficient or unmatched ({sufficiency_reason}). Generating custom script..."
+            send_response(request_id, "processing", data={
+                "message": "No matching tools. Retrieving web intelligence...",
+                "confidence": confidence,
+                "reasoning": reasoning
+            })
             
-        send_response(request_id, "processing", data={
-            "message": msg,
-            "confidence": confidence,
-            "reasoning": reasoning
-        })
+            from wil.pipeline import WILPipeline
+            pipeline = WILPipeline()
 
-        generator_prompt = build_generator_prompt(query, combined_result, sufficiency_reason)
-        try:
-            provider = (os.getenv("BLINKY_AI_PROVIDER", "ollama").strip() or "ollama").lower()
-            if provider == "groq":
-                api_key = os.getenv("GROQ_API_KEY", "").strip()
-                model = os.getenv("BLINKY_GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip()
-                groq_url = os.getenv("BLINKY_GROQ_URL", "https://api.groq.com/openai/v1/chat/completions").strip()
-                resp = requests.post(
-                    groq_url,
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={
-                        "model": model,
-                        "temperature": 0.1,
-                        "max_tokens": 3000,
-                        "messages": [{"role": "user", "content": generator_prompt}],
-                    },
-                    timeout=90
-                )
-                resp.raise_for_status()
-                gen_text = resp.json()["choices"][0]["message"]["content"]
-            else:
-                ollama_url = os.getenv("BLINKY_OLLAMA_URL", "http://localhost:11434/api/generate").strip()
-                model = os.getenv("BLINKY_OLLAMA_MODEL", "gemma4:e4b").strip()
-                resp = requests.post(
-                    ollama_url,
-                    json={
-                        "model": model,
-                        "prompt": generator_prompt,
-                        "stream": False,
-                        "options": {"temperature": 0.1, "num_predict": 4000}
-                    },
-                    timeout=90
-                )
-                resp.raise_for_status()
-                gen_text = resp.json().get("response", "")
-        except Exception as e:
-            send_response(request_id, "error", error={"code": "LLM_GENERATION_ERROR", "message": "Failed to generate automation code", "details": str(e)})
-            return
+            def on_status(phase: str, status_data: dict) -> None:
+                msg = status_data.get("message", f"Web search stage: {phase}")
+                send_response(request_id, "processing", data={
+                    "message": msg,
+                    "confidence": confidence,
+                    "reasoning": reasoning
+                })
 
-        # Parse output fields using regex (robust parsing)
-        new_tool_name_match = re.search(r"TOOL_NAME:\s*([a-zA-Z0-9_-]+)", gen_text, re.IGNORECASE)
-        if new_tool_name_match:
-            new_tool_name = new_tool_name_match.group(1).strip()
-        else:
-            query_slug = re.sub(r"[^a-zA-Z0-9_]+", "_", query.lower()).strip("_")
-            new_tool_name = f"lookup_{query_slug}"[:50]
-            if not new_tool_name or new_tool_name == "lookup_":
-                new_tool_name = "custom_search_tool"
+            send_response(request_id, "processing", data={"message": "", "is_chunk": True})
 
-        new_desc_match = re.search(r"DESCRIPTION:\s*(.*)", gen_text, re.IGNORECASE)
-        new_description = new_desc_match.group(1).strip() if new_desc_match else f"Custom automation tool for: {query}"
-        
-        new_args_match = re.search(r"ARGUMENTS:\s*(.*)", gen_text, re.IGNORECASE)
-        if new_args_match:
-            raw_args_str = new_args_match.group(1).strip()
-            new_arguments = [a.strip() for a in raw_args_str.replace("[", "").replace("]", "").replace("'", "").replace('"', '').split(",") if a.strip()]
-        else:
-            new_arguments = ["query"]
+            def on_chunk(chunk: str) -> None:
+                send_response(request_id, "processing", data={"message": chunk, "is_chunk": True})
 
-        new_code = None
-        code_match = re.search(r"```python\s*(.*?)\s*```", gen_text, re.DOTALL)
-        if code_match:
-            new_code = code_match.group(1)
-        else:
-            code_match = re.search(r"```py\s*(.*?)\s*```", gen_text, re.DOTALL)
-            if code_match:
-                new_code = code_match.group(1)
-            else:
-                all_blocks = re.findall(r"```\s*(.*?)\s*```", gen_text, re.DOTALL)
-                for block in all_blocks:
-                    if "playwright" in block or "import" in block or "async" in block:
-                        new_code = block
-                        break
-                if not new_code and all_blocks:
-                    new_code = all_blocks[0]
-                
-                if not new_code:
-                    if "import playwright" in gen_text or "async def " in gen_text:
-                        start_idx = gen_text.find("import ")
-                        if start_idx == -1:
-                            start_idx = gen_text.find("async def ")
-                        if start_idx != -1:
-                            new_code = gen_text[start_idx:]
-
-        if not new_code or not new_code.strip():
-            send_response(request_id, "error", error={"code": "GENERATION_INVALID", "message": "AI generated empty tool or code block", "details": gen_text})
-            return
-
-        new_code = repair_generated_playwright_code(new_code.strip())
-        
-        # Unique staging filename: temp_candidate_{request_id}.py
-        temp_tool_name = f"temp_candidate_{request_id}"
-        temp_tool_filepath = Path(__file__).parent / "tools" / f"{temp_tool_name}.py"
-
-        # Diagnostic logging of generated code
-        from utils.logging import get_logger
-        logger = get_logger("blinky.router")
-        logger.info(f"Generated custom code for request {request_id}:\n{new_code}")
-
-        # Static Code Audit
-        is_safe, audit_msg = audit_code(new_code)
-        if not is_safe:
-            logger.warning(f"Safety audit rejected request {request_id}. Reason: {audit_msg}")
-            send_response(request_id, "error", error={"code": "SAFETY_AUDIT_REJECTED", "message": "Static safety audit rejected the generated script", "details": audit_msg})
-            return
-
-        temp_tool_filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(temp_tool_filepath, "w") as f:
-            f.write(new_code)
-
-        send_response(request_id, "processing", data={"message": "Verifying custom automation execution..."})
-
-        test_args = {}
-        for arg in new_arguments:
-            test_args[arg] = query
-
-        success, result_data, error_details = await execute_script(
-            temp_tool_filepath,
-            test_args,
-            timeout=GENERATED_TOOL_VERIFY_TIMEOUT,
-        )
-
-        if success:
-            # Move staging file to final file
-            new_tool_filepath = Path(__file__).parent / "tools" / f"{new_tool_name}.py"
             try:
-                if new_tool_filepath.exists():
-                    new_tool_filepath.unlink()
-                temp_tool_filepath.rename(new_tool_filepath)
-            except Exception:
-                with open(new_tool_filepath, "w") as f:
-                    f.write(new_code)
-                try:
-                    temp_tool_filepath.unlink()
-                except Exception:
-                    pass
-
-            registry[new_tool_name] = {
-                "name": new_tool_name,
-                "description": new_description,
-                "filepath": f"common/python/tools/{new_tool_name}.py",
-                "arguments": new_arguments
-            }
-            await save_registry_async(registry)
-            
-            # Combine partial tool results and custom tool results
-            if combined_result:
-                raw_result = {
-                    "partial_tool_results": combined_result,
-                    "custom_tool_results": result_data
-                }
-            else:
-                raw_result = result_data
-            new_tool_generated = True
-        else:
-            if temp_tool_filepath.exists():
-                try:
-                    temp_tool_filepath.unlink()
-                except Exception:
-                    pass
-            
-            # If fallback tool also failed and we have partial tools result, use them, otherwise return error
-            if combined_result:
-                raw_result = combined_result
-            else:
-                send_response(request_id, "error", error={"code": "VERIFICATION_FAILED", "message": "Generated tool failed verification run", "details": error_details})
+                pipeline_result = await pipeline.run(
+                    query=query,
+                    conversation_history=None,
+                    on_status=on_status,
+                    on_chunk=on_chunk
+                )
+                final_text = pipeline_result.get("synthesized_response", "")
+                send_response(request_id, "success", data={"response": final_text})
+                return
+            except Exception as e:
+                send_response(request_id, "error", error={
+                    "code": "WIL_PIPELINE_ERROR",
+                    "message": "Failed to retrieve web intelligence",
+                    "details": str(e)
+                })
                 return
 
     # 3. Real-time Text Streaming Synthesis Phase

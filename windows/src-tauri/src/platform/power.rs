@@ -20,3 +20,22 @@ pub fn execute_sleep() {
         eprintln!("Failed to execute Windows sleep: {:?}", e);
     }
 }
+
+pub fn execute_lock() {
+    if let Err(e) = Command::new("rundll32.exe")
+        .args(&["user32.dll,LockWorkStation"])
+        .spawn()
+    {
+        eprintln!("Failed to execute Windows lock: {:?}", e);
+    }
+}
+
+pub fn execute_screenshot() {
+    if let Err(e) = Command::new("snippingtool")
+        .arg("/clip")
+        .spawn()
+    {
+        eprintln!("Failed to execute Windows screenshot: {:?}", e);
+    }
+}
+

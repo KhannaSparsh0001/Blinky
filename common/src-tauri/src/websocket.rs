@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command as TokioCommand};
@@ -201,7 +201,7 @@ fn get_daemon_mutex() -> &'static Mutex<Option<AgentDaemon>> {
     DAEMON.get_or_init(|| Mutex::new(None))
 }
 
-pub async fn start_websocket_server() {
+pub async fn start_websocket_server(app: AppHandle) {
     let addr = "0.0.0.0:9001";
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -214,8 +214,9 @@ pub async fn start_websocket_server() {
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
         println!("New peer connection: {}", peer_addr);
+        let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = handle_connection(stream, peer_addr).await {
+            if let Err(e) = handle_connection(stream, peer_addr, app_clone).await {
                 eprintln!("Error handling connection from {}: {}", peer_addr, e);
             }
         });
@@ -245,10 +246,11 @@ pub async fn run_agent_query(app: &AppHandle, query: &str) -> Result<serde_json:
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     peer_addr: SocketAddr,
+    app: AppHandle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let path = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let path_clone = path.clone();
-    let mut ws_stream = tokio_tungstenite::accept_hdr_async(
+    let ws_stream = tokio_tungstenite::accept_hdr_async(
         stream,
         move |req: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
             if let Ok(mut p) = path_clone.lock() {
@@ -274,7 +276,10 @@ async fn handle_connection(
         return handle_sarvam_tts_proxy(ws_stream).await;
     }
 
-    while let Some(msg) = ws_stream.next().await {
+    let (ws_sender, mut ws_receiver) = ws_stream.split();
+    let ws_sender = std::sync::Arc::new(tokio::sync::Mutex::new(ws_sender));
+
+    while let Some(msg) = ws_receiver.next().await {
         let msg = msg?;
         if msg.is_text() || msg.is_binary() {
             let text = msg.to_text()?;
@@ -293,6 +298,21 @@ async fn handle_connection(
                 crate::platform::execute_volume_down();
             } else if trimmed == "volume_mute" || trimmed == "mute" {
                 crate::platform::execute_volume_mute();
+            } else if trimmed == "lock" {
+                crate::platform::execute_lock();
+            } else if trimmed == "screenshot" {
+                crate::platform::execute_screenshot();
+            } else if trimmed == "get_sarvam_key" {
+                let key = get_sarvam_api_key();
+                let resp = serde_json::json!({
+                    "type": "sarvam_key",
+                    "key": key
+                });
+                let _ = ws_sender.lock().await
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        resp.to_string().into(),
+                    ))
+                    .await;
             } else if trimmed.starts_with("query:") || trimmed.starts_with("{") {
                 let request_id = if trimmed.starts_with("query:") {
                     let parts: Vec<&str> = trimmed.splitn(3, ':').collect();
@@ -330,24 +350,28 @@ async fn handle_connection(
                     trimmed.to_string()
                 };
 
-                if let Err(e) = forward_query_to_daemon(&req_payload, &mut ws_stream).await {
-                    eprintln!("Error handling agent query: {:?}", e);
-                    let error_resp = serde_json::json!({
-                        "requestId": request_id,
-                        "status": "error",
-                        "data": {},
-                        "error": {
-                            "code": "DAEMON_ERROR",
-                            "message": "Failed to communicate with python sidecar daemon",
-                            "details": e.to_string()
-                        }
-                    });
-                    let _ = ws_stream
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            error_resp.to_string().into(),
-                        ))
-                        .await;
-                }
+                let sender_clone = ws_sender.clone();
+                let app_clone = app.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = forward_query_to_daemon(&req_payload, sender_clone.clone(), app_clone).await {
+                        eprintln!("Error handling agent query: {:?}", e);
+                        let error_resp = serde_json::json!({
+                            "requestId": request_id,
+                            "status": "error",
+                            "data": {},
+                            "error": {
+                                "code": "DAEMON_ERROR",
+                                "message": "Failed to communicate with python sidecar daemon",
+                                "details": e.to_string()
+                            }
+                        });
+                        let _ = sender_clone.lock().await
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                error_resp.to_string().into(),
+                            ))
+                            .await;
+                    }
+                });
             } else {
                 eprintln!("Unknown command: {}", text);
             }
@@ -358,7 +382,8 @@ async fn handle_connection(
 
 async fn forward_query_to_daemon(
     req_json: &str,
-    ws_stream: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ws_sender: std::sync::Arc<tokio::sync::Mutex<futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, tokio_tungstenite::tungstenite::Message>>>,
+    app: AppHandle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let daemon_mutex = get_daemon_mutex();
     let mut guard = daemon_mutex.lock().await;
@@ -410,7 +435,7 @@ async fn forward_query_to_daemon(
                     }
 
                     // Forward line to websocket
-                    if let Err(e) = ws_stream
+                    if let Err(e) = ws_sender.lock().await
                         .send(tokio_tungstenite::tungstenite::Message::Text(
                             line.clone().into(),
                         ))
@@ -425,10 +450,26 @@ async fn forward_query_to_daemon(
                         return Ok(());
                     }
 
-                    // Check for terminal state
+                    // Check for terminal state & emit overlay guidance
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
+                        emit_agent_progress(&app, &line);
                         if let Some(status) = parsed.get("status").and_then(|s| s.as_str()) {
-                            if status == "success" || status == "error" {
+                            if status == "success" {
+                                if let Some(data) = parsed.get("data") {
+                                    if let Some(steps) = data.get("steps") {
+                                        if let Some(overlay) = app.get_webview_window("overlay") {
+                                            let _ = overlay.emit("blinky://guidance", serde_json::json!({
+                                                "summary": data.get("response").unwrap_or(&serde_json::Value::String("".to_string())),
+                                                "steps": steps,
+                                                "active_app": data.get("active_app").unwrap_or(&serde_json::json!({ "title": "", "process": "", "supported": false })),
+                                                "ocr": data.get("ocr").unwrap_or(&serde_json::json!({ "count": 0, "items": [] })),
+                                                "screenshot": data.get("screenshot").unwrap_or(&serde_json::Value::Null),
+                                            }));
+                                        }
+                                    }
+                                }
+                                break;
+                            } else if status == "error" {
                                 break;
                             }
                         }
@@ -455,6 +496,7 @@ async fn forward_query_to_daemon(
 
     Err("Failed to execute query".into())
 }
+
 
 async fn forward_query_to_daemon_collect(
     req_json: &str,

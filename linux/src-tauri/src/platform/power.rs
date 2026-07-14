@@ -32,3 +32,16 @@ pub fn execute_volume_mute() {
     let _ = Command::new("amixer").args(&["sset", "Master", "toggle"]).spawn();
     let _ = Command::new("pactl").args(&["set-sink-mute", "@DEFAULT_SINK@", "toggle"]).spawn();
 }
+
+pub fn execute_lock() {
+    let _ = Command::new("xdg-screensaver").arg("lock").spawn();
+    let _ = Command::new("gnome-screensaver-command").arg("-l").spawn();
+    let _ = Command::new("loginctl").args(&["lock-session"]).spawn();
+}
+
+pub fn execute_screenshot() {
+    let _ = Command::new("gnome-screenshot").arg("-i").spawn();
+    let _ = Command::new("spectacle").spawn();
+    let _ = Command::new("xfce4-screenshooter").spawn();
+}
+

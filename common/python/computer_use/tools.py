@@ -116,6 +116,8 @@ APP_PROTOCOLS = {
     "spotify": "spotify:",
     "whatsapp": "whatsapp:",
     "whats app": "whatsapp:",
+    "settings": "ms-settings:",
+    "pc settings": "ms-settings:",
 }
 
 KNOWN_EXECUTABLE_PATHS = {

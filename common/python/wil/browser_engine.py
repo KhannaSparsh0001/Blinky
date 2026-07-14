@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from typing import Optional
-from playwright.async_api import async_playwright
 
 LOGGER = logging.getLogger("blinky.browser_engine")
 
@@ -14,6 +13,7 @@ async def fetch_dynamic_html(url: str, timeout_ms: int = 10000) -> Optional[str]
         LOGGER.info(f"Lock acquired. Launching Playwright browser for URL: {url}")
         browser = None
         try:
+            from playwright.async_api import async_playwright
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 context = await browser.new_context(
@@ -32,9 +32,12 @@ async def fetch_dynamic_html(url: str, timeout_ms: int = 10000) -> Optional[str]
                 content = await page.content()
                 return content
         except Exception as e:
-            LOGGER.error(f"Playwright browser engine failed to fetch {url}: {e}")
+            LOGGER.error(f"Playwright browser engine failed or not installed: {e}")
         finally:
             if browser:
-                await browser.close()
-                LOGGER.info("Playwright browser closed.")
+                try:
+                    await browser.close()
+                    LOGGER.info("Playwright browser closed.")
+                except Exception:
+                    pass
     return None
