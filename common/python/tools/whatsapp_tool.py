@@ -83,6 +83,50 @@ def run_chats(base_url):
     except Exception as e:
         return {"error": f"Failed to retrieve chats: {e}"}
 
+def score_match(query, candidate):
+    """Calculate similarity score between query and candidate chat name."""
+    stop_words = {"group", "of", "in", "the", "a", "and", "to", "chat", "for", "with", "community"}
+    
+    def clean_and_tokenize(text):
+        if not text:
+            return []
+        text = text.lower()
+        cleaned = "".join(c if c.isalnum() else " " for c in text)
+        return [w for w in cleaned.split() if w and w not in stop_words]
+
+    q_words = clean_and_tokenize(query)
+    c_words = clean_and_tokenize(candidate)
+    
+    if not q_words or not c_words:
+        return 0.0
+        
+    q_clean = " ".join(q_words)
+    c_clean = " ".join(c_words)
+    
+    if q_clean == c_clean:
+        return 100.0
+        
+    if q_clean in c_clean:
+        return 80.0 + (len(q_clean) / len(c_clean) * 10.0)
+    if c_clean in q_clean:
+        return 70.0 + (len(c_clean) / len(q_clean) * 10.0)
+        
+    q_set = set(q_words)
+    c_set = set(c_words)
+    overlap = q_set.intersection(c_set)
+    if not overlap:
+        return 0.0
+        
+    score = (len(overlap) / len(q_set)) * 60.0
+    
+    for i in range(len(q_words) - 1):
+        bigram = q_words[i] + " " + q_words[i+1]
+        if bigram in c_clean:
+            score += 10.0
+            break
+            
+    return score
+
 def run_summarize(base_url, chat_name=None, chat_id=None, limit=50):
     """Find the chat by name or ID, and run the summarizer."""
     headers = get_headers()
@@ -98,20 +142,41 @@ def run_summarize(base_url, chat_name=None, chat_id=None, limit=50):
         if "error" in chats_result:
             return {"error": f"Could not fetch chats to resolve name: {chats_result['error']}"}
         
-        matched_chats = []
-        target_name_lower = chat_name.lower().strip()
+        scored_chats = []
         for chat in chats_result.get("chats", []):
-            name = chat.get("name", "").lower().strip()
-            if target_name_lower == name:
-                matched_chats.insert(0, chat) # exact match takes precedence
-            elif target_name_lower in name:
-                matched_chats.append(chat)
-
-        if not matched_chats:
+            score = score_match(chat_name, chat.get("name", ""))
+            if score >= 20.0:
+                scored_chats.append((score, chat))
+ 
+        if not scored_chats:
             return {"error": f"No chat found matching name '{chat_name}'. Please ensure the name is correct or check the chat list."}
         
-        chat_id = matched_chats[0]["id"]
-        print(f"[DEBUG] Resolved chat name '{chat_name}' to ID: {chat_id} (Matched: {matched_chats[0]['name']})", file=sys.stderr)
+        # Sort by score descending
+        scored_chats.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_chat = scored_chats[0]
+        
+        # Subgroup redirection for COMMUNITY parent groups and LINKED_ANNOUNCEMENT_GROUPs
+        group_type = best_chat.get("groupType")
+        if group_type in ["COMMUNITY", "LINKED_ANNOUNCEMENT_GROUP"]:
+            query_lower = chat_name.lower()
+            if "community" not in query_lower and "announcement" not in query_lower:
+                parent_id = best_chat["id"] if group_type == "COMMUNITY" else best_chat.get("parentGroup")
+                if parent_id:
+                    parent_chat = next((ch for ch in chats_result.get("chats", []) if ch.get("id") == parent_id), None)
+                    subgroups = (parent_chat.get("joinedSubgroups") or []) if parent_chat else (best_chat.get("joinedSubgroups") or [])
+                    subgroup_chats = []
+                    for sub_id in subgroups:
+                        sub_chat = next((ch for ch in chats_result.get("chats", []) if ch.get("id") == sub_id), None)
+                        if sub_chat:
+                            subgroup_chats.append(sub_chat)
+                    # Find general/discussion group
+                    general_chat = next((ch for ch in subgroup_chats if any(word in ch.get("name", "").lower() for word in ["general", "discussion", "chat"])), None)
+                    if general_chat:
+                        best_chat = general_chat
+                        best_score = 100.0 # Override score
+        
+        chat_id = best_chat["id"]
+        print(f"[DEBUG] Resolved chat name '{chat_name}' to ID: {chat_id} (Matched: '{best_chat.get('name')}' with score {best_score:.1f})", file=sys.stderr)
 
     # Perform summarization
     safe_limit = 50

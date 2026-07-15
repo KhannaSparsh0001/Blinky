@@ -88,6 +88,28 @@ app.get('/api/chats', requireSession, async (req, res) => {
   }
 });
 
+app.get('/api/debug-chats', requireSession, async (req, res) => {
+  try {
+        const results = await req.session.client.pupPage.evaluate(() => {
+            const chat = window.require('WAWebCollections').Chat.get('120363426941949148@g.us');
+            if (!chat) return { error: "Chat not found" };
+            return {
+                id: chat.id._serialized,
+                groupType: chat.groupMetadata?.groupType,
+                metadata: chat.groupMetadata ? Object.keys(chat.groupMetadata).reduce((acc, k) => {
+                    const val = chat.groupMetadata[k];
+                    if (val && typeof val === 'object' && val._serialized) acc[k] = val._serialized;
+                    else if (typeof val !== 'object' || val === null) acc[k] = val;
+                    return acc;
+                }, {}) : null
+            };
+        });
+        res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/chats/:id/read', requireSession, async (req, res) => {
     try {
         const { status } = req.session.getStatus();

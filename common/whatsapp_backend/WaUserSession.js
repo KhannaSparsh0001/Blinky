@@ -6,6 +6,7 @@ import axios from 'axios';
 import { readFile, writeFile, unlink, mkdir, appendFile, rm } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
+import { exec } from 'child_process';
 import systemPrompt from './generated-prompt.cjs';
 
 const { Client, LocalAuth } = pkg;
@@ -173,6 +174,103 @@ function normalizeName(name) {
     return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function cleanAndTokenize(text) {
+    if (!text) return [];
+    const stopWords = new Set(["group", "of", "in", "the", "a", "and", "to", "chat", "for", "with", "community"]);
+    return String(text).toLowerCase()
+        .replace(/[^a-z0-9]/g, ' ')
+        .split(' ')
+        .map(w => w.trim())
+        .filter(w => w.length > 0 && !stopWords.has(w));
+}
+
+function scoreMatch(query, candidate) {
+    const qWords = cleanAndTokenize(query);
+    const cWords = cleanAndTokenize(candidate);
+    if (qWords.length === 0 || cWords.length === 0) return 0;
+
+    const qClean = qWords.join(' ');
+    const cClean = cWords.join(' ');
+
+    if (qClean === cClean) return 100.0;
+    if (cClean.includes(qClean)) return 80.0 + (qClean.length / cClean.length * 10.0);
+    if (qClean.includes(cClean)) return 70.0 + (cClean.length / qClean.length * 10.0);
+
+    const qSet = new Set(qWords);
+    const cSet = new Set(cWords);
+    let intersection = 0;
+    for (const w of qSet) {
+        if (cSet.has(w)) intersection++;
+    }
+
+    if (intersection === 0) return 0;
+
+    let score = (intersection / qSet.size) * 60.0;
+
+    // Order bonus
+    for (let i = 0; i < qWords.length - 1; i++) {
+        const bigram = qWords[i] + ' ' + qWords[i+1];
+        if (cClean.includes(bigram)) {
+            score += 10.0;
+            break;
+        }
+    }
+
+    return score;
+}
+
+function findBestChatMatch(allChats, queryName) {
+    let bestChat = null;
+    let bestScore = 0;
+    for (const ch of allChats) {
+        const name = ch.name || ch.chatName || '';
+        const score = scoreMatch(queryName, name);
+        if (score > bestScore) {
+            bestScore = score;
+            bestChat = ch;
+        }
+    }
+    
+    if (bestChat && bestScore >= 20) {
+        const groupType = bestChat.groupType || bestChat.groupMetadata?.groupType;
+        const queryLower = queryName.toLowerCase();
+        
+        if ((groupType === 'COMMUNITY' || groupType === 'LINKED_ANNOUNCEMENT_GROUP') && 
+            !queryLower.includes('community') && !queryLower.includes('announcement')) {
+            
+            let parentId = null;
+            if (groupType === 'COMMUNITY') {
+                parentId = bestChat.id?._serialized || bestChat.id || bestChat.chatId;
+            } else {
+                const parentGroup = bestChat.parentGroup || bestChat.groupMetadata?.parentGroup;
+                parentId = parentGroup?._serialized || parentGroup || null;
+            }
+            
+            if (parentId) {
+                const parentChat = allChats.find(ch => (ch.id?._serialized || ch.id || ch.chatId) === parentId);
+                const subgroups = parentChat?.joinedSubgroups || 
+                                  parentChat?.groupMetadata?.joinedSubgroups?.map(g => g._serialized || g.id?._serialized || g.id || g) || 
+                                  bestChat.joinedSubgroups || [];
+                                  
+                const subgroupChats = [];
+                for (const subId of subgroups) {
+                    const subChat = allChats.find(ch => (ch.id?._serialized || ch.id || ch.chatId) === subId);
+                    if (subChat) subgroupChats.push(subChat);
+                }
+                const generalChat = subgroupChats.find(ch => {
+                    const name = (ch.name || ch.chatName || '').toLowerCase();
+                    return name.includes('general') || name.includes('discussion') || name.includes('chat');
+                });
+                if (generalChat) {
+                    return generalChat;
+                }
+            }
+        }
+        return bestChat;
+    }
+    return null;
+}
+
 function extractPhoneFromJid(jid) {
     const raw = String(jid || '');
     const match = raw.match(/(\d{6,15})/);
@@ -292,9 +390,18 @@ export class WaUserSession {
     }
 
     // ── Auth / Chromium cleanup ───────────────────────────────────────────────
+    async killOrphanedBrowsers() {
+        if (process.platform !== 'win32') return;
+        return new Promise((resolve) => {
+            const cmd = `powershell -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'msedge.exe' AND CommandLine LIKE '%session-${this.sessionId}%'\\" | Remove-CimInstance"`;
+            exec(cmd, () => resolve());
+        });
+    }
+
     async cleanupChromiumSingletonFiles() {
+        try { await this.killOrphanedBrowsers(); } catch {}
         const sessionDir = join(process.cwd(), '.wwebjs_auth', `session-${this.sessionId}`);
-        for (const file of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+        for (const file of ['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'lockfile', 'lock']) {
             try { await unlink(join(sessionDir, file)); } catch {}
         }
     }
@@ -350,21 +457,50 @@ export class WaUserSession {
         }
 
         try {
-            const chats = await withTimeout(this.client.getChats(), 15_000, 'api getChats');
-            const payload = chats.slice(0, 100).map(c => ({
-                id: c.id._serialized,
-                name: c.name || c.id.user,
-                isGroup: c.isGroup,
-                unreadCount: c.unreadCount,
-                lastMessage: c.lastMessage?.body?.slice(0, 80) || '',
-                timestamp: c.timestamp,
-            }));
+            const payload = await withTimeout(this.client.pupPage.evaluate(() => {
+                const chats = window.require('WAWebCollections').Chat.getModelsArray();
+                return chats.map(c => {
+                    const groupType = c.groupMetadata?.groupType || null;
+                    const parentGroup = c.groupMetadata?.parentGroup?._serialized || c.groupMetadata?.parentGroup || null;
+                    
+                    let subgroups = null;
+                    if (groupType === 'COMMUNITY') {
+                        subgroups = c.groupMetadata?.joinedSubgroups?.map(g => g._serialized || g.id?._serialized || g.id || g) || null;
+                    } else if (groupType === 'LINKED_ANNOUNCEMENT_GROUP' && parentGroup) {
+                        const parentChat = window.require('WAWebCollections').Chat.get(parentGroup);
+                        subgroups = parentChat?.groupMetadata?.joinedSubgroups?.map(g => g._serialized || g.id?._serialized || g.id || g) || null;
+                    }
+                    
+                    return {
+                        id: c.id._serialized,
+                        name: c.name || c.id.user || '',
+                        isGroup: !!c.isGroup,
+                        unreadCount: c.unreadCount || 0,
+                        lastMessage: c.lastMessage?.body?.slice(0, 80) || '',
+                        timestamp: c.t || c.timestamp || null,
+                        groupType,
+                        parentGroup,
+                        joinedSubgroups: subgroups
+                    };
+                });
+            }), 20_000, 'getChatsForApi page evaluate');
 
-            void Promise.all(chats.map(ch => this.rememberChatDirectory(ch, []))).catch(() => {});
+            const memory = await this.loadSummaryMemory();
+            const directory = memory.chatDirectory || {};
+            for (const ch of payload) {
+                const cached = directory[ch.id];
+                if (cached && cached.chatName) {
+                    if (!ch.name || ch.name.toLowerCase() === 'student society' || ch.name === ch.id.split('@')[0]) {
+                        ch.name = cached.chatName;
+                    }
+                }
+            }
+
+            void Promise.all(payload.map(ch => this.rememberChatDirectory(ch, []))).catch(() => {});
 
             return { chats: payload, status: 'connected', stale: false };
         } catch (err) {
-            this.emit('error', `[API] getChats failed, using cached chat directory: ${err.message}`);
+            this.emit('error', `[API] getChats failed, using cached chat directory: ${err.stack || err.message}`);
             const cachedChats = await this.getCachedChatsForApi();
             return {
                 chats: cachedChats,
@@ -420,6 +556,8 @@ export class WaUserSession {
             const entry = directory[chatId] || { chatId, chatName, isGroup: !!chat.isGroup, phones: [], updatedAt: null };
             entry.chatName  = chatName || entry.chatName;
             entry.isGroup   = !!chat.isGroup;
+            entry.groupType = chat.groupType || chat.groupMetadata?.groupType || entry.groupType || null;
+            entry.joinedSubgroups = chat.joinedSubgroups || (chat.groupMetadata?.joinedSubgroups ? chat.groupMetadata.joinedSubgroups.map(g => g._serialized || g.id?._serialized || g.id || g) : null) || entry.joinedSubgroups || null;
             entry.updatedAt = new Date().toISOString();
             const merged = new Set(entry.phones || []);
             for (const p of participants) { if (p && typeof p === 'string') merged.add(p); }
@@ -440,9 +578,11 @@ export class WaUserSession {
         if (exactId) {
             try { return await withTimeout(c.getChatById(exactId), 15_000, 'getChatById memory exact'); } catch {}
         }
-        const partial = Object.values(directory).find(e => normalizeName(e?.chatName).includes(normalized));
-        if (partial?.chatId) {
-            try { return await withTimeout(c.getChatById(partial.chatId), 15_000, 'getChatById memory partial'); } catch {}
+        
+        // Try fuzzy matching over memory directory entries
+        const bestEntry = findBestChatMatch(Object.values(directory), groupName);
+        if (bestEntry?.chatId) {
+            try { return await withTimeout(c.getChatById(bestEntry.chatId), 15_000, 'getChatById memory fuzzy'); } catch {}
         }
         return null;
     }
@@ -621,7 +761,7 @@ export class WaUserSession {
             }
         } catch (err) {
             if (this.restarting || isTargetClosedError(err)) return;
-            this.emit('error', `[AUTO] Failed syncing unread counts: ${err.message}`);
+            this.emit('error', `[AUTO] Failed syncing unread counts: ${err.stack || err.message}`);
         }
     }
 
@@ -690,6 +830,12 @@ export class WaUserSession {
         let sessionIsAuthenticated = false;
         const c = new Client({
             authStrategy: new LocalAuth({ clientId: this.sessionId }),
+            webVersion: '2.3000.1043123085',
+            webVersionCache: {
+                type: 'remote',
+                remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}-alpha.html',
+                strict: true
+            },
             puppeteer: {
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || getEdgeOrChromePath() || undefined,
                 args: [
@@ -1095,7 +1241,7 @@ export class WaUserSession {
             if (!msg.fromMe) {
                 let chat;
                 try { chat = await withTimeout(msg.getChat(), 15_000, 'getChat'); }
-                catch (err) { this.emit('error', '[AUTO] Failed to get chat: ' + err.message); return; }
+                catch (err) { this.emit('error', '[AUTO] Failed to get chat: ' + (err.stack || err.message)); return; }
 
                 let senderName = 'Unknown', senderPhone = '';
                 try {
@@ -1224,8 +1370,7 @@ export class WaUserSession {
                     targetChat = await this.findChatByNameFromMemory(c, groupName);
                     if (!targetChat) {
                         const allChats = await withTimeout(this.client.getChats(), 30_000, 'getChats');
-                        targetChat = allChats.find(ch => ch.name?.toLowerCase() === groupName.toLowerCase())
-                            || allChats.find(ch => ch.name?.toLowerCase().includes(groupName.toLowerCase()));
+                        targetChat = findBestChatMatch(allChats, groupName);
                         for (const ch of allChats) await this.rememberChatDirectory(ch, []);
                     }
                     if (!targetChat) { this.emit('error', `[ERROR] No chat found matching "${groupName}"`); return; }
