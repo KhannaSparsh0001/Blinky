@@ -42,24 +42,6 @@ def _config() -> tuple[str, str, str]:
     return base_url, api_key, model
 
 
-def _is_thinking_model(model: str) -> bool:
-    """Known thinking-model families that support the `thinking` toggle.
-
-    minimax-m3 etc. burn their max_tokens budget on chain-of-thought unless
-    `thinking: {"type": "disabled"}` is sent; disabling it keeps responses
-    fast and JSON-clean. Text-only families (deepseek/mimo) are unaffected.
-    """
-    m = model.lower()
-    return any(hint in m for hint in ("minimax", "qwen", "glm", "kimi", "grok"))
-
-
-def _with_thinking_disabled(payload: dict[str, Any], model: str) -> dict[str, Any]:
-    """Return payload + thinking-off toggle for thinking models."""
-    if not _is_thinking_model(model):
-        return payload
-    return {**payload, "thinking": {"type": "disabled"}}
-
-
 def _build_messages(prompt: str, screenshot_path: Path | str | None) -> list[dict[str, Any]]:
     """Build OpenAI-format messages. With a screenshot, use the multimodal
     content array (base64 data URL) so vision-capable models see the screen."""
@@ -121,6 +103,51 @@ def _post(
     return response.json()
 
 
+def _post_with_fallback(
+    base_payload: dict[str, Any],
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: int = 90,
+) -> dict[str, Any]:
+    """Execute chat completion with automatic fallback for optional parameters
+    (such as thinking disable or response_format) that certain endpoints reject."""
+    candidates: list[dict[str, Any]] = []
+
+    # 1. For minimax specifically on Zen/Go, try with thinking disabled + response_format
+    if "minimax" in model.lower():
+        candidates.append({
+            **base_payload,
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+        })
+        candidates.append({
+            **base_payload,
+            "thinking": {"type": "disabled"},
+        })
+
+    # 2. Standard structured JSON mode (OpenAI standard)
+    candidates.append({
+        **base_payload,
+        "response_format": {"type": "json_object"},
+    })
+
+    # 3. Plain base payload (most compatible fallback)
+    candidates.append(base_payload)
+
+    last_err: Exception | None = None
+    for payload in candidates:
+        try:
+            return _post(payload, base_url, api_key, timeout=timeout)
+        except RuntimeError as exc:
+            last_err = exc
+            LOGGER.debug("Custom provider fallback from %s due to: %s", list(payload.keys()), exc)
+
+    if last_err:
+        raise last_err
+    raise RuntimeError("Custom provider failed with no response.")
+
+
 def _extract_content(payload: dict[str, Any]) -> str:
     choices = payload.get("choices", [])
     if not choices or not isinstance(choices, list):
@@ -128,14 +155,20 @@ def _extract_content(payload: dict[str, Any]) -> str:
     message = choices[0].get("message", {})
     content = message.get("content", "")
     if isinstance(content, list):
-        return "".join(
+        content = "".join(
             str(item.get("text", "")) for item in content if isinstance(item, dict)
         )
-    return str(content)
+    content_str = str(content) if content is not None else ""
+    if not content_str.strip():
+        # Check reasoning_content in case model output was placed entirely in reasoning
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or message.get("thought") or ""
+        if reasoning:
+            return str(reasoning)
+    return content_str
 
 
 def _parse_json(text: str) -> dict[str, Any]:
-    # Strip thinking-model chain-of-thought blocks (minimax-m3, etc.)
+    # Strip thinking-model chain-of-thought blocks (minimax-m3, deepseek, glm, etc.)
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned.strip(), flags=re.IGNORECASE)
     if not cleaned.strip():
@@ -189,43 +222,28 @@ def _find_json_object(text: str) -> str | None:
     return None
 
 
-def ask_custom_text(prompt: str, max_tokens: int = 300) -> dict[str, Any]:
+def ask_custom_text(prompt: str, max_tokens: int = 1024) -> dict[str, Any]:
     base_url, api_key, model = _config()
-
-    payload: dict[str, Any] = _with_thinking_disabled({
+    payload = {
         "model": model,
         "temperature": 0.1,
         "max_tokens": max_tokens,
         "messages": _build_messages(prompt, None),
-    }, model)
-    # Try structured JSON mode first (OpenAI-compatible), fall back to plain
-    # completion if the endpoint rejects response_format (vLLM etc).
-    try:
-        body = _post({**payload, "response_format": {"type": "json_object"}}, base_url, api_key)
-        return _parse_json(_extract_content(body))
-    except (RuntimeError, json.JSONDecodeError):
-        body = _post(payload, base_url, api_key)
-        return _parse_json(_extract_content(body))
+    }
+    body = _post_with_fallback(payload, base_url, api_key, model)
+    return _parse_json(_extract_content(body))
 
 
-def ask_custom_vision(prompt: str, screenshot_path: Path, max_tokens: int = 1024) -> dict[str, Any]:
+def ask_custom_vision(prompt: str, screenshot_path: Path, max_tokens: int = 2048) -> dict[str, Any]:
     base_url, api_key, model = _config()
-
-    payload: dict[str, Any] = _with_thinking_disabled({
+    payload = {
         "model": model,
         "temperature": 0.1,
         "max_tokens": max_tokens,
         "messages": _build_messages(prompt, screenshot_path),
-    }, model)
-    # Vision models are more likely to drift into prose; if JSON mode fails
-    # or the endpoint rejects it, fall back to a plain call and let the
-    # balanced-object extractor salvage whatever JSON appears.
-    try:
-        body = _post({**payload, "response_format": {"type": "json_object"}}, base_url, api_key)
-        return _parse_json(_extract_content(body))
-    except (RuntimeError, json.JSONDecodeError):
-        body = _post(payload, base_url, api_key)
-        return _parse_json(_extract_content(body))
+    }
+    body = _post_with_fallback(payload, base_url, api_key, model)
+    return _parse_json(_extract_content(body))
 
 
 def has_vision_capability() -> bool:

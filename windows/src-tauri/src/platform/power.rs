@@ -12,6 +12,12 @@ pub fn execute_restart() {
     }
 }
 
+pub fn execute_hibernate() {
+    if let Err(e) = Command::new("shutdown").args(&["/h"]).spawn() {
+        eprintln!("Failed to execute Windows hibernate: {:?}", e);
+    }
+}
+
 pub fn execute_sleep() {
     if let Err(e) = Command::new("rundll32.exe")
         .args(&["powrprof.dll,SetSuspendState", "0", "1", "0"])

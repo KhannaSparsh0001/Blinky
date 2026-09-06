@@ -195,6 +195,17 @@ fn trim_env_value(value: &str) -> String {
     value.to_string()
 }
 
+static ACTIVE_CLIENTS: OnceLock<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>> = OnceLock::new();
+
+fn get_active_clients() -> &'static Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>> {
+    ACTIVE_CLIENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub async fn broadcast_to_all_clients(message: &str) {
+    let mut clients = get_active_clients().lock().await;
+    clients.retain(|tx| tx.send(message.to_string()).is_ok());
+}
+
 static DAEMON: OnceLock<Mutex<Option<AgentDaemon>>> = OnceLock::new();
 
 fn get_daemon_mutex() -> &'static Mutex<Option<AgentDaemon>> {
@@ -300,6 +311,23 @@ async fn handle_connection(
     let (ws_sender, mut ws_receiver) = ws_stream.split();
     let ws_sender = std::sync::Arc::new(tokio::sync::Mutex::new(ws_sender));
 
+    let (client_tx, mut client_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    {
+        let mut clients = get_active_clients().lock().await;
+        clients.push(client_tx);
+    }
+
+    let ws_sender_writer = ws_sender.clone();
+    tokio::spawn(async move {
+        while let Some(msg_text) = client_rx.recv().await {
+            let _ = ws_sender_writer
+                .lock()
+                .await
+                .send(tokio_tungstenite::tungstenite::Message::Text(msg_text.into()))
+                .await;
+        }
+    });
+
     let mut authenticated = remote_authed;
     if !authenticated {
         eprintln!(
@@ -355,11 +383,60 @@ async fn handle_connection(
                 continue;
             }
 
-            if trimmed == "power_off" {
+            if trimmed == "get_system_info" || trimmed == "system_info" {
+                let info = crate::platform::get_system_telemetry();
+                let _ = ws_sender.lock().await
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        info.to_string().into(),
+                    ))
+                    .await;
+            } else if trimmed == "hibernate" {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let evt = serde_json::json!({
+                    "type": "power_event",
+                    "action": "hibernate",
+                    "status": "triggered",
+                    "message": "Hibernate triggered by Sentinel.",
+                    "timestamp": now
+                });
+                let _ = app.emit("blinky://power-event", evt.clone());
+                broadcast_to_all_clients(&evt.to_string()).await;
+                crate::platform::execute_hibernate();
+            } else if trimmed == "power_off" {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let evt = serde_json::json!({
+                    "type": "power_event",
+                    "action": "power_off",
+                    "status": "triggered",
+                    "message": "Shutdown triggered by Sentinel.",
+                    "timestamp": now
+                });
+                let _ = app.emit("blinky://power-event", evt.clone());
+                broadcast_to_all_clients(&evt.to_string()).await;
                 crate::platform::execute_power_off();
             } else if trimmed == "restart" {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let evt = serde_json::json!({
+                    "type": "power_event",
+                    "action": "restart",
+                    "status": "triggered",
+                    "message": "Reboot triggered by Sentinel.",
+                    "timestamp": now
+                });
+                let _ = app.emit("blinky://power-event", evt.clone());
+                broadcast_to_all_clients(&evt.to_string()).await;
                 crate::platform::execute_restart();
             } else if trimmed == "sleep" {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let evt = serde_json::json!({
+                    "type": "power_event",
+                    "action": "sleep",
+                    "status": "triggered",
+                    "message": "Sleep mode triggered by Sentinel.",
+                    "timestamp": now
+                });
+                let _ = app.emit("blinky://power-event", evt.clone());
+                broadcast_to_all_clients(&evt.to_string()).await;
                 crate::platform::execute_sleep();
             } else if trimmed == "volume_up" {
                 crate::platform::execute_volume_up();
@@ -368,6 +445,16 @@ async fn handle_connection(
             } else if trimmed == "volume_mute" || trimmed == "mute" {
                 crate::platform::execute_volume_mute();
             } else if trimmed == "lock" {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let evt = serde_json::json!({
+                    "type": "power_event",
+                    "action": "lock",
+                    "status": "triggered",
+                    "message": "Workstation locked by Sentinel.",
+                    "timestamp": now
+                });
+                let _ = app.emit("blinky://power-event", evt.clone());
+                broadcast_to_all_clients(&evt.to_string()).await;
                 crate::platform::execute_lock();
             } else if trimmed == "screenshot" {
                 crate::platform::execute_screenshot();

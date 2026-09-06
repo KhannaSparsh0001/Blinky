@@ -42,6 +42,8 @@ import {
   setAudioModeAsync,
 } from 'expo-audio';
 import { usePCWebSocket, ConnectionStatus } from './usePCWebSocket';
+import { SentinelModal } from './SentinelModal';
+import { sendWakeOnLan, MAC_STORAGE_KEY, WOL_BROADCAST_STORAGE_KEY } from './lib/wol';
 
 export const triggerHaptic = (style: 'light' | 'medium' | 'heavy' | 'selection' = 'light') => {
   try {
@@ -404,7 +406,23 @@ const PinchableImageViewer: React.FC<PinchableImageViewerProps> = ({ uri, onClos
 export default function App() {
   const [ipAddress, setIpAddress] = useState('');
   const [remoteToken, setRemoteToken] = useState('');
-  const { status, errorMsg, latestResponse, connect, disconnect, sendCommand, sendQuery } = usePCWebSocket();
+  const {
+    status,
+    errorMsg,
+    latestResponse,
+    systemInfo,
+    latestPowerEvent,
+    connect,
+    disconnect,
+    sendCommand,
+    sendQuery,
+    fetchSystemInfo,
+  } = usePCWebSocket();
+  const [showSentinel, setShowSentinel] = useState(false);
+  const [macAddress, setMacAddress] = useState('');
+  const [wolBroadcastIp, setWolBroadcastIp] = useState('255.255.255.255');
+  const [isSendingWol, setIsSendingWol] = useState(false);
+  const [wolFeedback, setWolFeedback] = useState<string | null>(null);
   const isConnected = status === 'connected';
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -952,10 +970,14 @@ export default function App() {
   useEffect(() => {
     async function loadIp() {
       try {
-        const [savedIp, savedToken] = await Promise.all([
+        const [savedIp, savedToken, savedMac, savedWolIp] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY),
           AsyncStorage.getItem(TOKEN_STORAGE_KEY),
+          AsyncStorage.getItem(MAC_STORAGE_KEY),
+          AsyncStorage.getItem(WOL_BROADCAST_STORAGE_KEY),
         ]);
+        if (savedMac) setMacAddress(savedMac);
+        if (savedWolIp) setWolBroadcastIp(savedWolIp);
         const detectedIp = getExpoHostIp();
         const initialIp = savedIp || detectedIp || '';
         if (savedToken) setRemoteToken(savedToken);
@@ -975,6 +997,23 @@ export default function App() {
     }
     loadIp();
   }, []);
+
+  // Auto-fill target MAC from host telemetry if available
+  useEffect(() => {
+    if (systemInfo?.network?.mac_address && !macAddress) {
+      setMacAddress(systemInfo.network.mac_address);
+      AsyncStorage.setItem(MAC_STORAGE_KEY, systemInfo.network.mac_address).catch(() => {});
+    }
+  }, [systemInfo]);
+
+  // Live alert banner for power events broadcast across clients
+  useEffect(() => {
+    if (latestPowerEvent) {
+      triggerHaptic('heavy');
+      setActionFeedback(`⚡ Sentinel: ${latestPowerEvent.action.toUpperCase()} action dispatched.`);
+      setTimeout(() => setActionFeedback(null), 5000);
+    }
+  }, [latestPowerEvent]);
 
   // When connection succeeds, auto-close the settings card
   useEffect(() => {
@@ -1107,30 +1146,55 @@ export default function App() {
     }
   };
 
-  const triggerPowerCommand = (command: 'power_off' | 'restart' | 'sleep', label: string) => {
+  const triggerPowerCommand = (
+    command: 'power_off' | 'restart' | 'sleep' | 'hibernate' | 'lock',
+    label: string
+  ) => {
     triggerHaptic('heavy');
     setShowMenu(false);
     Alert.alert(
-      `Confirm Action`,
+      `Confirm ${label}`,
       `Are you sure you want to trigger "${label}" on your PC?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
-          style: 'destructive',
+          style: command === 'power_off' || command === 'restart' || command === 'hibernate' ? 'destructive' : 'default',
           onPress: () => {
             triggerHaptic('heavy');
             const success = sendCommand(command);
             if (success) {
-              setActionFeedback(`Command "${label}" sent!`);
-              setTimeout(() => setActionFeedback(null), 3000);
+              setActionFeedback(`Command "${label}" dispatched!`);
+              setTimeout(() => setActionFeedback(null), 4000);
             } else {
-              Alert.alert('Error', 'Failed to send command. Check link.');
+              Alert.alert('Error', 'Failed to send command. Check link to PC.');
             }
           },
         },
       ]
     );
+  };
+
+  const handleSendWakeOnLan = async () => {
+    if (!macAddress.trim()) {
+      Alert.alert('Missing MAC Address', 'Please enter your host PC Ethernet/Wi-Fi MAC address.');
+      return;
+    }
+    setIsSendingWol(true);
+    setWolFeedback('Dispatching Magic Packet burst...');
+    try {
+      const res = await sendWakeOnLan(macAddress.trim(), wolBroadcastIp.trim());
+      setWolFeedback(res.message);
+      if (res.success) {
+        await AsyncStorage.setItem(MAC_STORAGE_KEY, macAddress.trim());
+        await AsyncStorage.setItem(WOL_BROADCAST_STORAGE_KEY, wolBroadcastIp.trim());
+      }
+    } catch (err: any) {
+      setWolFeedback(`WoL failed: ${err?.message || err}`);
+    } finally {
+      setIsSendingWol(false);
+      setTimeout(() => setWolFeedback(null), 5000);
+    }
   };
 
   const triggerQuickAction = (command: any, label: string) => {
@@ -1161,6 +1225,19 @@ export default function App() {
               <Text style={styles.title}>BLINKY</Text>
             </View>
             <View style={styles.headerRight}>
+              <TouchableOpacity
+                style={styles.sentinelBtnHeader}
+                onPress={() => {
+                  triggerHaptic('light');
+                  fetchSystemInfo();
+                  setShowSentinel(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="flash" size={13} color="#FF5A36" style={{ marginRight: 4 }} />
+                <Text style={styles.sentinelBtnHeaderText}>SENTINEL</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.statusRowHeader}
                 onPress={() => {
@@ -1203,6 +1280,24 @@ export default function App() {
               <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerQuickAction('lock' as any, 'Lock')}>
                 <Ionicons name="lock-closed-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
                 <Text style={styles.dropdownText}>Lock Workstation</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => {
+                  triggerHaptic('light');
+                  setShowMenu(false);
+                  fetchSystemInfo();
+                  setShowSentinel(true);
+                }}
+              >
+                <Ionicons name="flash-outline" size={18} color="#FF5A36" style={styles.dropdownIcon} />
+                <Text style={[styles.dropdownText, { color: '#FF5A36' }]}>Sentinel Monitor</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerPowerCommand('hibernate', 'Hibernate')}>
+                <Ionicons name="moon" size={18} color="#A78BFA" style={styles.dropdownIcon} />
+                <Text style={[styles.dropdownText, { color: '#A78BFA' }]}>Hibernate Host</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerPowerCommand('sleep', 'Sleep')}>
@@ -1505,6 +1600,24 @@ export default function App() {
               />
             )}
           </Modal>
+
+          {/* Sentinel Power & Telemetry Monitor Modal */}
+          <SentinelModal
+            visible={showSentinel}
+            onClose={() => setShowSentinel(false)}
+            isConnected={isConnected}
+            systemInfo={systemInfo}
+            onRefresh={fetchSystemInfo}
+            onTriggerPowerCommand={triggerPowerCommand}
+            macAddress={macAddress}
+            onChangeMacAddress={setMacAddress}
+            wolBroadcastIp={wolBroadcastIp}
+            onChangeWolBroadcastIp={setWolBroadcastIp}
+            onSendWakeOnLan={handleSendWakeOnLan}
+            isSendingWol={isSendingWol}
+            wolFeedback={wolFeedback}
+            latestPowerEvent={latestPowerEvent}
+          />
         </KeyboardAvoidingView>
       </View>
     </LinearGradient>
@@ -1546,6 +1659,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  sentinelBtnHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 90, 54, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 90, 54, 0.35)',
+  },
+  sentinelBtnHeaderText: {
+    color: '#FF5A36',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   statusRowHeader: {
     flexDirection: 'row',
