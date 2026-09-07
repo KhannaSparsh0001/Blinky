@@ -226,7 +226,22 @@ def build_ass_text(srt_text: str, preset_name: str, words_data: list[dict[str, A
 
     # 1. Instagram / Word-by-Word active highlight or single word pop
     if effect.get("word_by_word") or effect.get("single_word_pop"):
-        words = words_data if (words_data and len(words_data) > 0) else _parse_srt_to_word_list(srt_text)
+        raw_words = words_data if (words_data and len(words_data) > 0) else _parse_srt_to_word_list(srt_text)
+        if not raw_words:
+            return _build_standard_ass_events(out, srt_text, preset)
+
+        # Sanitize and ensure monotonic timestamps to prevent jitter and overlap
+        words: list[dict[str, Any]] = []
+        last_s = 0.0
+        for w in raw_words:
+            w_txt = str(w.get("word", "")).strip()
+            if not w_txt:
+                continue
+            s = max(float(w.get("start", 0.0)), last_s, 0.0)
+            e = max(float(w.get("end", s + 0.1)), s + 0.05)
+            words.append({"start": round(s, 2), "end": round(e, 2), "word": w_txt})
+            last_s = s
+
         if not words:
             return _build_standard_ass_events(out, srt_text, preset)
 
@@ -236,10 +251,20 @@ def build_ass_text(srt_text: str, preset_name: str, words_data: list[dict[str, A
 
         # Single-Word Center Pop (TikTok punchy style)
         if effect.get("single_word_pop"):
-            for w in words:
+            for idx, w in enumerate(words):
                 w_text = w["word"].upper() if allcaps else w["word"]
-                s_ts = _sec_to_ass_ts(w["start"])
-                e_ts = _sec_to_ass_ts(w["end"])
+                s = w["start"]
+                # Cap end time at the next word's start time to prevent overlap
+                if idx + 1 < len(words):
+                    next_s = words[idx + 1]["start"]
+                    if next_s > s:
+                        e = min(max(w["end"], s + 0.05), next_s)
+                    else:
+                        e = s + 0.05
+                else:
+                    e = max(w["end"] + 0.15, s + 0.15)
+                s_ts = _sec_to_ass_ts(s)
+                e_ts = _sec_to_ass_ts(e)
                 out += f"Dialogue: 0,{s_ts},{e_ts},Default,,0,0,0,,{{\\c{h_color}&\\t(0,60,\\fscx118\\fscy118)}}{w_text}\n"
             return out
 
@@ -255,10 +280,28 @@ def build_ass_text(srt_text: str, preset_name: str, words_data: list[dict[str, A
         if curr:
             chunks.append(curr)
 
-        for chunk in chunks:
+        for c_idx, chunk in enumerate(chunks):
+            next_chunk = chunks[c_idx + 1] if c_idx + 1 < len(chunks) else None
+            next_chunk_start = next_chunk[0]["start"] if next_chunk else None
+
             for i, w_active in enumerate(chunk):
                 t_start = w_active["start"]
-                t_end = chunk[i + 1]["start"] if i + 1 < len(chunk) else (w_active["end"] + 0.15)
+                if i + 1 < len(chunk):
+                    # Within chunk: transition directly to next word's start
+                    t_end = max(chunk[i + 1]["start"], t_start + 0.05)
+                else:
+                    # Last word in chunk: MUST NEVER exceed the start time of the next chunk!
+                    if next_chunk_start is not None:
+                        if next_chunk_start > t_start:
+                            # Allow lingering only up to next_chunk_start so the old caption disappears
+                            # precisely when (or before) the new caption appears
+                            t_end = min(max(w_active["end"], t_start + 0.05), next_chunk_start)
+                        else:
+                            t_end = t_start + 0.05
+                    else:
+                        # Final chunk of the video: linger for readability
+                        t_end = max(w_active["end"] + 0.2, t_start + 0.2)
+
                 s_ts = _sec_to_ass_ts(t_start)
                 e_ts = _sec_to_ass_ts(t_end)
 

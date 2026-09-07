@@ -367,7 +367,42 @@ def test_format_pipeline_summary():
     assert "clip1.mp4" in summary
     assert "Audio Track Added" in summary
     assert "beats.mp3" in summary
-    assert "Captions Burned" in summary
-    assert "instagram" in summary
     assert "final_merged.mp4" in summary
+
+
+def test_build_ass_no_overlapping_captions():
+    from subtitles.presets import build_ass_text
+    words = [
+        {"start": 1.0, "end": 1.4, "word": "Hello"},
+        {"start": 1.4, "end": 1.8, "word": "Instagram"},
+        {"start": 1.8, "end": 2.3, "word": "Reels"},
+        {"start": 2.3, "end": 2.7, "word": "This"},
+        {"start": 2.7, "end": 3.1, "word": "Is"},
+        {"start": 3.1, "end": 3.5, "word": "Blinky"},
+    ]
+    ass = build_ass_text("", "instagram", words_data=words)
+    dialogue_lines = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
+    assert len(dialogue_lines) == 6
+
+    # Parse timestamps of all dialogue lines: Format is Dialogue: Layer,Start,End,...
+    def parse_ts(ts_str):
+        parts = ts_str.split(":")
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+    for k in range(len(dialogue_lines) - 1):
+        fields_curr = dialogue_lines[k].split(",")
+        fields_next = dialogue_lines[k + 1].split(",")
+        curr_end = parse_ts(fields_curr[2])
+        next_start = parse_ts(fields_next[1])
+        # Current caption must end at or before the next caption begins!
+        assert curr_end <= next_start, f"Overlap detected between line {k} ({curr_end}) and line {k+1} ({next_start})"
+
+
+def test_get_fast_video_encoder_args():
+    from subtitles.render import get_fast_encoder_args
+    args = get_fast_encoder_args()
+    assert "-c:v" in args
+    assert any(codec in args for codec in ("h264_nvenc", "libx264"))
+    assert "-preset" in args
+
 

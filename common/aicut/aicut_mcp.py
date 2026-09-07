@@ -496,10 +496,44 @@ def transcribe_audio(
             "error": "faster-whisper not installed. Run: pip install faster-whisper (or bun run setup:python)",
         }
 
-    try:
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
-        segments_iter, info = model.transcribe(str(a_path), language=language, word_timestamps=True)
+    def _setup_nvidia_dll_directories() -> None:
+        """Register site-packages nvidia binary paths with Windows DLL loader."""
+        import os
+        import sys
+        site_packages = os.path.join(sys.prefix, "Lib", "site-packages")
+        nvidia_dir = os.path.join(site_packages, "nvidia")
+        if os.path.exists(nvidia_dir):
+            for sub in ("cublas", "cudnn", "cuda_nvrtc"):
+                bin_dir = os.path.join(nvidia_dir, sub, "bin")
+                if os.path.exists(bin_dir):
+                    try:
+                        os.add_dll_directory(bin_dir)
+                    except Exception:
+                        pass
+                    if bin_dir not in os.environ.get("PATH", ""):
+                        os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
 
+    _setup_nvidia_dll_directories()
+
+    def _can_use_cuda_whisper() -> bool:
+        """Verify if CUDA device and required cuBLAS DLLs are actually available."""
+        try:
+            import ctranslate2
+            if ctranslate2.get_cuda_device_count() <= 0:
+                return False
+            import ctypes
+            # ctranslate2 on Windows requires cublas64_12.dll to run matrix math on GPU
+            ctypes.CDLL("cublas64_12.dll")
+            return True
+        except Exception:
+            return False
+
+    whisper_device = "cuda" if _can_use_cuda_whisper() else "cpu"
+    whisper_compute = "float16" if whisper_device == "cuda" else "int8"
+
+    def _do_transcribe(dev: str, comp: str):
+        model = WhisperModel(model_size, device=dev, compute_type=comp)
+        segments_iter, info = model.transcribe(str(a_path), language=language, word_timestamps=True)
         segments = []
         words = []
         srt_lines: list[str] = []
@@ -524,6 +558,17 @@ def transcribe_audio(
             start_ts = _srt_timestamp(seg.start)
             end_ts = _srt_timestamp(seg.end)
             srt_lines.append(f"{i}\n{start_ts} --> {end_ts}\n{seg.text.strip()}\n")
+        return segments, words, srt_lines, info
+
+    try:
+        try:
+            segments, words, srt_lines, info = _do_transcribe(whisper_device, whisper_compute)
+        except Exception:
+            if whisper_device != "cpu":
+                # Fallback to CPU if CUDA fails during model loading or iteration
+                segments, words, srt_lines, info = _do_transcribe("cpu", "int8")
+            else:
+                raise
 
         if not srt_output:
             srt_output = str(a_path.with_suffix(".srt"))
