@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
+#[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
 /// Collects host identity, uptime, memory, battery, and network telemetry.
