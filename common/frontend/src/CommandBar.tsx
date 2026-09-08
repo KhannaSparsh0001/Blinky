@@ -89,6 +89,7 @@ function ExternalMarkdownLink({ href, children }: AnchorHTMLAttributes<HTMLAncho
   );
 }
 
+/** Renders the desktop command bar and coordinates its interactive workflows. */
 export function CommandBar() {
   const [question, setQuestion] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedMedia[]>([]);
@@ -1767,6 +1768,19 @@ export function CommandBar() {
     };
   }, [isRunning]);
 
+  // Listen for remote Sentinel power events (Hibernate, Shutdown, Reboot, Lock, Sleep)
+  useEffect(() => {
+    const unlisten = listen<{ action?: string; message?: string }>('blinky://power-event', (event) => {
+      const action = event.payload?.action || 'power action';
+      const msg = event.payload?.message || `⚡ Sentinel: Remote ${action} initiated.`;
+      setStatus(msg);
+      setShowGuideCompletionSummary(true);
+    });
+    return () => {
+      unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
   // Listen for global Enter keypress to auto-advance if the active step is a text-entry step
   useEffect(() => {
     const unlisten = listen('blinky://global-enter', () => {
@@ -2602,5 +2616,3 @@ export function CommandBar() {
     </main>
   );
 }
-
-

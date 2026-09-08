@@ -12,6 +12,13 @@ pub fn execute_restart() {
     }
 }
 
+/// Requests immediate system hibernation through the Windows shutdown utility.
+pub fn execute_hibernate() {
+    if let Err(e) = Command::new("shutdown").args(&["/h"]).spawn() {
+        eprintln!("Failed to execute Windows hibernate: {:?}", e);
+    }
+}
+
 pub fn execute_sleep() {
     if let Err(e) = Command::new("rundll32.exe")
         .args(&["powrprof.dll,SetSuspendState", "0", "1", "0"])
@@ -93,5 +100,4 @@ pub fn execute_volume_down() {
 pub fn execute_volume_mute() {
     let _ = send_keypress(0xAD);
 }
-
 

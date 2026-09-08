@@ -344,6 +344,9 @@ if (process.platform === "win32" && !existsSync("common/python_runtime/Python313
   }
 }
 
+const customPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+
+/** Stops stale Windows development processes and listeners. */
 const killWindowsProcessTree = (pid?: number) => {
   if (process.platform !== "win32") return;
   try {
@@ -351,10 +354,11 @@ const killWindowsProcessTree = (pid?: number) => {
       Bun.spawnSync(["taskkill", "/F", "/T", "/PID", String(pid)]);
     }
     Bun.spawnSync(["taskkill", "/F", "/T", "/IM", "blinky.exe"]);
-    Bun.spawnSync(["powershell", "-NoProfile", "-Command", "Get-NetTCPConnection -LocalPort 5173,9001 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"]);
+    Bun.spawnSync(["powershell", "-NoProfile", "-Command", `Get-NetTCPConnection -LocalPort ${customPort},9001 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`]);
   } catch {}
 };
 
+/** Restores the user's standard Windows cursor scheme after development runs. */
 const restoreWindowsSystemCursor = () => {
   if (process.platform === "win32") {
     try {
@@ -374,12 +378,27 @@ const restoreWindowsSystemCursor = () => {
   }
 };
 
-// Pre-flight cleanup to ensure port 5173 and 9001 are free and native cursor is active
+// Pre-flight cleanup to ensure port and 9001 are free and native cursor is active
 restoreWindowsSystemCursor();
 killWindowsProcessTree();
 
-console.log("Starting Tauri Development Server...");
-const tauriDev = spawn(["bun", "tauri", "dev"], {
+const tauriArgs = ["bun", "tauri", "dev"];
+if (process.env.PORT) {
+  const dynamicConfig = JSON.stringify({
+    build: {
+      devUrl: `http://localhost:${customPort}`,
+    },
+    app: {
+      security: {
+        csp: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:9001 wss://api.sarvam.ai ws://localhost:${customPort} http://localhost:${customPort}`,
+      },
+    },
+  });
+  tauriArgs.push("--config", dynamicConfig);
+}
+
+console.log(`Starting Tauri Development Server on port ${customPort}...`);
+const tauriDev = spawn(tauriArgs, {
   stdout: "inherit",
   stderr: "inherit",
   stdin: "ignore",

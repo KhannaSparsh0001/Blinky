@@ -27,6 +27,13 @@ pub fn execute_sleep() {
     }
 }
 
+/// Requests immediate system hibernation through systemd.
+pub fn execute_hibernate() {
+    if let Err(e) = Command::new("systemctl").args(&["hibernate", "-i"]).spawn() {
+        eprintln!("Failed to execute Linux/Unix hibernate: {:?}", e);
+    }
+}
+
 pub fn execute_volume_up() {
     let _ = Command::new("pactl")
         .args(&["set-sink-volume", "@DEFAULT_SINK@", "+5%"])

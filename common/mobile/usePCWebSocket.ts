@@ -2,10 +2,65 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
+export interface SystemMemory {
+  total_mb: number;
+  used_mb: number;
+  percent: number;
+}
+
+export interface SystemBattery {
+  has_battery: boolean;
+  percent: number | null;
+  is_charging: boolean;
+  status: string;
+}
+
+export interface SystemNetwork {
+  mac_address: string;
+  interface: string;
+}
+
+export interface SystemInfo {
+  type: 'system_info';
+  hostname: string;
+  os: string;
+  platform: 'linux' | 'windows';
+  compositor: string;
+  uptime_seconds: number;
+  memory: SystemMemory;
+  battery: SystemBattery;
+  network: SystemNetwork;
+  version: string;
+}
+
+export interface PowerEvent {
+  type: 'power_event';
+  action: 'hibernate' | 'power_off' | 'restart' | 'sleep' | 'lock';
+  status: 'triggered';
+  message: string;
+  timestamp: number;
+}
+
+export type PowerCommand =
+  | 'power_off'
+  | 'restart'
+  | 'sleep'
+  | 'hibernate'
+  | 'lock'
+  | 'volume_up'
+  | 'volume_down'
+  | 'volume_mute'
+  | 'get_sarvam_key'
+  | 'get_system_info'
+  | 'screenshot';
+
+/** Manages the mobile app's authenticated WebSocket connection to a Blinky host. */
 export function usePCWebSocket() {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [latestResponse, setLatestResponse] = useState<any>(null);
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [latestPowerEvent, setLatestPowerEvent] = useState<PowerEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const disconnect = useCallback(() => {
@@ -18,6 +73,21 @@ export function usePCWebSocket() {
     setLatestResponse(null);
   }, []);
 
+  /** Sends a host command when the WebSocket connection is ready. */
+  const sendCommand = useCallback((command: PowerCommand | string) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(command);
+      return true;
+    }
+    return false;
+  }, []);
+
+  /** Requests a fresh telemetry snapshot from the connected host. */
+  const fetchSystemInfo = useCallback(() => {
+    return sendCommand('get_system_info');
+  }, [sendCommand]);
+
+  /** Opens a WebSocket connection and authenticates it when a token is provided. */
   const connect = useCallback((ipAddress: string, token?: string) => {
     disconnect();
     
@@ -68,6 +138,13 @@ export function usePCWebSocket() {
           }
           setStatus('connected');
           setErrorMsg(null);
+
+          // Request initial telemetry upon connection
+          setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send('get_system_info');
+            }
+          }, 300);
         }
       };
 
@@ -75,7 +152,13 @@ export function usePCWebSocket() {
         if (wsRef.current === ws) {
           try {
             const parsed = JSON.parse(e.data);
-            setLatestResponse(parsed);
+            if (parsed.type === 'system_info') {
+              setSystemInfo(parsed as SystemInfo);
+            } else if (parsed.type === 'power_event') {
+              setLatestPowerEvent(parsed as PowerEvent);
+            } else {
+              setLatestResponse(parsed);
+            }
           } catch (err) {
             console.log('Received raw websocket message:', e.data);
           }
@@ -106,14 +189,6 @@ export function usePCWebSocket() {
     }
   }, [disconnect]);
 
-  const sendCommand = useCallback((command: 'power_off' | 'restart' | 'sleep' | 'volume_up' | 'volume_down' | 'volume_mute') => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(command);
-      return true;
-    }
-    return false;
-  }, []);
-
   const sendQuery = useCallback((query: string, requestId: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const payload = JSON.stringify({ requestId, query });
@@ -136,10 +211,12 @@ export function usePCWebSocket() {
     status,
     errorMsg,
     latestResponse,
+    systemInfo,
+    latestPowerEvent,
     connect,
     disconnect,
     sendCommand,
     sendQuery,
+    fetchSystemInfo,
   };
 }
-

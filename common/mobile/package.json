@@ -14,8 +14,8 @@
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
-    "react-native-volume-manager": "^2.0.8"
-
+    "react-native-volume-manager": "^2.0.8",
+    "react-native-wol": "^1.0.2"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
@@ -28,6 +28,5 @@
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
-
   "private": true
 }
