@@ -22,6 +22,11 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {}
+    "extra": {},
+    "plugins": [
+      "expo-audio",
+      "expo-status-bar",
+      "expo-asset"
+    ]
   }
 }
