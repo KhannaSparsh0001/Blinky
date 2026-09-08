@@ -37,13 +37,13 @@ exit /b 1
 
 :run_adb
 echo.
-echo Running 'adb reverse tcp:9001 tcp:9001'...
+echo Running 'adb reverse tcp:9001 tcp:9001' and 'adb reverse tcp:8081 tcp:8081'...
 %ADB_PATH% reverse tcp:9001 tcp:9001
+%ADB_PATH% reverse tcp:8081 tcp:8081 >nul 2>nul
 if %ERRORLEVEL% equ 0 (
     echo [SUCCESS] USB reverse routing established!
     echo Inside the Blinky Mobile App, connect using IP: localhost
-    echo.
-    echo Make sure your Blinky desktop app (setup exe or dev server) is running.
+    echo Make sure your Blinky desktop app is running.
 ) else (
     echo [ERROR] Failed to run adb reverse.
     echo Please make sure:
