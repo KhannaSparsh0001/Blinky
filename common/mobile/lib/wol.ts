@@ -74,26 +74,33 @@ export const sendWakeOnLan = async (
 
     /** Sends each packet in the configured Wake-on-LAN burst. */
     const sendBurst = (index: number) => {
-      RNWol.send(broadcastIp, formattedMac, (success: boolean, msg: string) => {
-        if (success) anySuccess = true;
-        sentCount += 1;
+      try {
+        RNWol.send(broadcastIp, formattedMac, (success: boolean, msg: string) => {
+          if (success) anySuccess = true;
+          sentCount += 1;
 
-        if (index + 1 < burstCount) {
-          setTimeout(() => sendBurst(index + 1), 150);
-        } else {
-          if (anySuccess) {
-            resolve({
-              success: true,
-              message: `Magic Packet dispatched to ${formattedMac} (${burstCount}x burst).`,
-            });
+          if (index + 1 < burstCount) {
+            setTimeout(() => sendBurst(index + 1), 150);
           } else {
-            resolve({
-              success: false,
-              message: msg || 'Failed to dispatch Wake-on-LAN packet.',
-            });
+            if (anySuccess) {
+              resolve({
+                success: true,
+                message: `Magic Packet dispatched to ${formattedMac} (${burstCount}x burst).`,
+              });
+            } else {
+              resolve({
+                success: false,
+                message: msg || 'Failed to dispatch Wake-on-LAN packet.',
+              });
+            }
           }
-        }
-      });
+        });
+      } catch (err: any) {
+        resolve({
+          success: false,
+          message: err?.message || 'Failed to invoke Wake-on-LAN native module.',
+        });
+      }
     };
 
     sendBurst(0);

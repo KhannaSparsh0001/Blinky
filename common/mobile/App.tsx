@@ -36,7 +36,7 @@ import {
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import {
-  useAudioRecorder,
+  AudioModule,
   RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
@@ -480,9 +480,20 @@ export default function App() {
 
   // Voice command states
   const [sarvamApiKey, setSarvamApiKey] = useState<string | null>(null);
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const audioRecorderRef = useRef<any>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+
+  // Cleanup audio recorder on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRecorderRef.current) {
+        try {
+          audioRecorderRef.current.stop();
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   // Request Sarvam key from PC when connected
   useEffect(() => {
@@ -798,8 +809,10 @@ export default function App() {
         playsInSilentMode: true,
       });
 
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
+      const recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+      audioRecorderRef.current = recorder;
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       triggerHaptic('heavy');
       setIsVoiceRecording(true);
     } catch (err) {
@@ -814,8 +827,13 @@ export default function App() {
     setIsVoiceRecording(false);
     setIsVoiceTranscribing(true);
     try {
-      await audioRecorder.stop();
-      const uri = audioRecorder.uri;
+      const recorder = audioRecorderRef.current;
+      if (!recorder) {
+        throw new Error('No active recorder found');
+      }
+      await recorder.stop();
+      const uri = recorder.uri;
+      audioRecorderRef.current = null;
 
       if (!uri) {
         throw new Error('No recording URI found');

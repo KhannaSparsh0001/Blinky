@@ -30,5 +30,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
-  "private": true
+  "private": true,
+  "patchedDependencies": {
+    "react-native-wol@1.0.2": "patches/react-native-wol@1.0.2.patch"
+  }
 }
