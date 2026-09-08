@@ -42,23 +42,9 @@ import {
   setAudioModeAsync,
 } from 'expo-audio';
 import { usePCWebSocket, ConnectionStatus } from './usePCWebSocket';
-import { SentinelModal } from './SentinelModal';
 import { sendWakeOnLan, MAC_STORAGE_KEY, WOL_BROADCAST_STORAGE_KEY } from './lib/wol';
-
-export const triggerHaptic = (style: 'light' | 'medium' | 'heavy' | 'selection' = 'light') => {
-  try {
-    if (Platform.OS === 'web') return;
-    if (style === 'light') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } else if (style === 'medium') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } else if (style === 'heavy') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    } else if (style === 'selection') {
-      Haptics.selectionAsync();
-    }
-  } catch (e) {}
-};
+import { triggerHaptic } from './lib/haptics';
+export { triggerHaptic };
 
 const STORAGE_KEY = '@blinky_pc_ip';
 const TOKEN_STORAGE_KEY = '@blinky_pc_token';
@@ -419,7 +405,6 @@ export default function App() {
     sendQuery,
     fetchSystemInfo,
   } = usePCWebSocket();
-  const [showSentinel, setShowSentinel] = useState(false);
   const [macAddress, setMacAddress] = useState('');
   const [wolBroadcastIp, setWolBroadcastIp] = useState('255.255.255.255');
   const [isSendingWol, setIsSendingWol] = useState(false);
@@ -1185,26 +1170,32 @@ export default function App() {
   const handleSendWakeOnLan = async () => {
     const targetMac = (macAddress.trim() || systemInfo?.network?.mac_address?.trim() || '');
     if (!targetMac) {
-      Alert.alert('Missing MAC Address', 'Please connect to your PC once to auto-detect its MAC address, or enter it manually.');
+      Alert.alert(
+        'Missing MAC Address',
+        'Please connect to your PC once to auto-detect its MAC address, or enter it in Local Link Setup.'
+      );
       return;
     }
     if (!macAddress.trim() && targetMac) {
       setMacAddress(targetMac);
     }
     setIsSendingWol(true);
-    setWolFeedback('Dispatching Magic Packet burst...');
+    setActionFeedback('⚡ Dispatching Wake-on-LAN Magic Packet...');
     try {
       const res = await sendWakeOnLan(targetMac, wolBroadcastIp.trim());
       setWolFeedback(res.message);
+      setActionFeedback(`⚡ ${res.message}`);
       if (res.success) {
         await AsyncStorage.setItem(MAC_STORAGE_KEY, targetMac);
         await AsyncStorage.setItem(WOL_BROADCAST_STORAGE_KEY, wolBroadcastIp.trim());
       }
     } catch (err: any) {
-      setWolFeedback(`WoL failed: ${err?.message || err}`);
+      const msg = `WoL failed: ${err?.message || err}`;
+      setWolFeedback(msg);
+      setActionFeedback(msg);
     } finally {
       setIsSendingWol(false);
-      setTimeout(() => setWolFeedback(null), 5000);
+      setTimeout(() => setActionFeedback(null), 5000);
     }
   };
 
@@ -1237,19 +1228,6 @@ export default function App() {
             </View>
             <View style={styles.headerRight}>
               <TouchableOpacity
-                style={styles.sentinelBtnHeader}
-                onPress={() => {
-                  triggerHaptic('light');
-                  fetchSystemInfo();
-                  setShowSentinel(true);
-                }}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="flash" size={13} color="#FF5A36" style={{ marginRight: 4 }} />
-                <Text style={styles.sentinelBtnHeaderText}>SENTINEL</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
                 style={styles.statusRowHeader}
                 onPress={() => {
                   triggerHaptic('light');
@@ -1275,8 +1253,23 @@ export default function App() {
                 <Ionicons name="settings-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
                 <Text style={styles.dropdownText}>Local Link Setup</Text>
               </TouchableOpacity>
-              
+
               <View style={styles.dropdownDivider} />
+
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => {
+                  triggerHaptic('heavy');
+                  setShowMenu(false);
+                  handleSendWakeOnLan();
+                }}
+                disabled={isSendingWol}
+              >
+                <Ionicons name="flash" size={18} color="#10B981" style={styles.dropdownIcon} />
+                <Text style={[styles.dropdownText, { color: '#10B981', fontWeight: '600' }]}>
+                  {isSendingWol ? 'Waking PC...' : 'Wake PC (WoL)'}
+                </Text>
+              </TouchableOpacity>
 
               <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerQuickAction('volume_mute', 'Mute')}>
                 <Ionicons name="volume-mute-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
@@ -1291,19 +1284,6 @@ export default function App() {
               <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerQuickAction('lock' as any, 'Lock')}>
                 <Ionicons name="lock-closed-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
                 <Text style={styles.dropdownText}>Lock Workstation</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.dropdownItem}
-                onPress={() => {
-                  triggerHaptic('light');
-                  setShowMenu(false);
-                  fetchSystemInfo();
-                  setShowSentinel(true);
-                }}
-              >
-                <Ionicons name="flash-outline" size={18} color="#FF5A36" style={styles.dropdownIcon} />
-                <Text style={[styles.dropdownText, { color: '#FF5A36' }]}>Sentinel Monitor</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.dropdownItem} onPress={() => triggerPowerCommand('hibernate', 'Hibernate')}>
@@ -1398,6 +1378,36 @@ export default function App() {
                   <Text style={styles.errorText}>{errorMsg}</Text>
                 </View>
               )}
+
+              {/* Target MAC address for Wake-on-LAN */}
+              <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: '#8A86AA', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>TARGET PC MAC ADDRESS</Text>
+                  {systemInfo?.network?.mac_address ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        triggerHaptic('light');
+                        setMacAddress(systemInfo.network.mac_address);
+                      }}
+                      style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: 'rgba(16, 185, 129, 0.15)', borderWidth: 1, borderColor: 'rgba(16, 185, 129, 0.3)' }}
+                    >
+                      <Text style={{ fontSize: 10, color: '#10B981', fontWeight: '700' }}>⚡ Auto-detected</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="hardware-chip-outline" size={18} color="#6C6985" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder={systemInfo?.network?.mac_address || "e.g. 68:c6:ac:a2:d2:30"}
+                    placeholderTextColor="#6C6985"
+                    value={macAddress}
+                    onChangeText={setMacAddress}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
             </View>
           )}
 
@@ -1611,24 +1621,6 @@ export default function App() {
               />
             )}
           </Modal>
-
-          {/* Sentinel Power & Telemetry Monitor Modal */}
-          <SentinelModal
-            visible={showSentinel}
-            onClose={() => setShowSentinel(false)}
-            isConnected={isConnected}
-            systemInfo={systemInfo}
-            onRefresh={fetchSystemInfo}
-            onTriggerPowerCommand={triggerPowerCommand}
-            macAddress={macAddress}
-            onChangeMacAddress={setMacAddress}
-            wolBroadcastIp={wolBroadcastIp}
-            onChangeWolBroadcastIp={setWolBroadcastIp}
-            onSendWakeOnLan={handleSendWakeOnLan}
-            isSendingWol={isSendingWol}
-            wolFeedback={wolFeedback}
-            latestPowerEvent={latestPowerEvent}
-          />
         </KeyboardAvoidingView>
       </View>
     </LinearGradient>
@@ -1670,22 +1662,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-  },
-  sentinelBtnHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 90, 54, 0.12)',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 90, 54, 0.35)',
-  },
-  sentinelBtnHeaderText: {
-    color: '#FF5A36',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
   },
   statusRowHeader: {
     flexDirection: 'row',

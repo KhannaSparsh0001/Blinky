@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { triggerHaptic } from './App';
+import { triggerHaptic } from './lib/haptics';
 import type { SystemInfo, PowerEvent } from './usePCWebSocket';
 
 interface SentinelModalProps {
