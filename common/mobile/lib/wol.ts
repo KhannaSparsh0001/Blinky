@@ -59,11 +59,12 @@ export const sendWakeOnLan = async (
   }
 
   if (!RNWol || !NativeModules.Wol) {
-    // In Expo Go or mock environment without native link
-    console.log(`[WoL Simulated] Dispatched Magic Packet to ${formattedMac} via ${broadcastIp}`);
+    const msg =
+      'Wake-on-LAN requires the compiled Blinky APK. Expo Go does not support raw native UDP packets.';
+    console.warn(`[WoL] ${msg}`);
     return {
-      success: true,
-      message: `Magic Packet dispatched to ${formattedMac} (Simulated in current environment).`,
+      success: false,
+      message: msg,
     };
   }
 

@@ -1184,10 +1184,12 @@ export default function App() {
     try {
       const res = await sendWakeOnLan(targetMac, wolBroadcastIp.trim());
       setWolFeedback(res.message);
-      setActionFeedback(`⚡ ${res.message}`);
       if (res.success) {
+        setActionFeedback(`⚡ ${res.message}`);
         await AsyncStorage.setItem(MAC_STORAGE_KEY, targetMac);
         await AsyncStorage.setItem(WOL_BROADCAST_STORAGE_KEY, wolBroadcastIp.trim());
+      } else {
+        Alert.alert('Wake-on-LAN Notice', res.message);
       }
     } catch (err: any) {
       const msg = `WoL failed: ${err?.message || err}`;
