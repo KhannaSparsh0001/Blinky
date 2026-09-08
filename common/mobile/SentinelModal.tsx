@@ -405,12 +405,26 @@ export const SentinelModal: React.FC<SentinelModalProps> = ({
 
               {showSettings && (
                 <View style={styles.settingsBody}>
-                  <Text style={styles.inputLabel}>TARGET MAC ADDRESS (PHYSICAL INTERFACE)</Text>
+                  <View style={styles.inputLabelRow}>
+                    <Text style={styles.inputLabel}>TARGET MAC ADDRESS (PHYSICAL INTERFACE)</Text>
+                    {systemInfo?.network?.mac_address ? (
+                      <TouchableOpacity
+                        onPress={() => {
+                          triggerHaptic('light');
+                          onChangeMacAddress(systemInfo.network.mac_address);
+                        }}
+                        style={styles.autofillBadge}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.autofillText}>⚡ Auto-fill PC MAC</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                   <View style={styles.inputWrapper}>
                     <Ionicons name="hardware-chip-outline" size={18} color="#6C6985" style={styles.inputIcon} />
                     <TextInput
                       style={styles.input}
-                      placeholder="e.g. 18:c0:4d:b9:0a:7d"
+                      placeholder={systemInfo?.network?.mac_address || "e.g. 18:c0:4d:b9:0a:7d"}
                       placeholderTextColor="#6C6985"
                       value={macAddress}
                       onChangeText={onChangeMacAddress}
@@ -742,6 +756,27 @@ const styles = StyleSheet.create({
   },
   settingsBody: {
     marginTop: 16,
+  },
+  inputLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+    marginTop: 6,
+  },
+  autofillBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.4)',
+  },
+  autofillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#A5B4FC',
+    letterSpacing: 0.3,
   },
   inputLabel: {
     color: '#6C6985',

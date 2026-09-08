@@ -199,27 +199,166 @@ fn read_linux_network() -> Value {
     })
 }
 
-/// Returns the currently supported Windows telemetry fields and defaults.
+/// Returns the currently supported Windows telemetry fields including memory, uptime, battery, and physical network MAC.
 #[cfg(target_os = "windows")]
 fn read_windows_telemetry() -> (String, u64, u64, u32, u64, Value, Value) {
-    // Standard Windows fallback defaults
     let os_name = "Windows".to_string();
-    let total_mb = 0u64;
-    let used_mb = 0u64;
-    let mem_percent = 0u32;
-    let uptime_seconds = 0u64;
 
-    let battery = json!({
-        "has_battery": false,
-        "percent": null,
-        "is_charging": false,
-        "status": "AC Mains Nominal"
-    });
+    // 1. Memory stats via GlobalMemoryStatusEx
+    let (total_mb, used_mb, mem_percent) = unsafe {
+        let mut mem: windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX = std::mem::zeroed();
+        mem.dwLength = std::mem::size_of::<windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX>() as u32;
+        if windows_sys::Win32::System::SystemInformation::GlobalMemoryStatusEx(&mut mem) != 0 {
+            let total = mem.ullTotalPhys / (1024 * 1024);
+            let avail = mem.ullAvailPhys / (1024 * 1024);
+            let used = total.saturating_sub(avail);
+            (total, used, mem.dwMemoryLoad)
+        } else {
+            (0, 0, 0)
+        }
+    };
 
-    let network = json!({
-        "mac_address": "",
-        "interface": ""
-    });
+    // 2. System uptime via GetTickCount64
+    let uptime_seconds = unsafe {
+        windows_sys::Win32::System::SystemInformation::GetTickCount64() / 1000
+    };
+
+    // 3. Battery stats via GetSystemPowerStatus
+    let battery = unsafe {
+        let mut power: windows_sys::Win32::System::Power::SYSTEM_POWER_STATUS = std::mem::zeroed();
+        if windows_sys::Win32::System::Power::GetSystemPowerStatus(&mut power) != 0 {
+            let has_battery = power.BatteryFlag != 128 && power.BatteryFlag != 255;
+            let percent = if power.BatteryLifePercent <= 100 {
+                Some(power.BatteryLifePercent as u32)
+            } else {
+                None
+            };
+            let is_charging = (power.BatteryFlag & 8) != 0;
+            let status = if !has_battery {
+                "AC Mains Nominal".to_string()
+            } else if is_charging {
+                "Charging".to_string()
+            } else {
+                "Discharging".to_string()
+            };
+            json!({
+                "has_battery": has_battery,
+                "percent": percent,
+                "is_charging": is_charging,
+                "status": status
+            })
+        } else {
+            json!({
+                "has_battery": false,
+                "percent": null,
+                "is_charging": false,
+                "status": "AC Mains Nominal"
+            })
+        }
+    };
+
+    // 4. Physical network adapter and MAC address
+    let network = read_windows_network();
 
     (os_name, total_mb, used_mb, mem_percent, uptime_seconds, battery, network)
+}
+
+/// Reads the active physical network adapter MAC address and name on Windows.
+#[cfg(target_os = "windows")]
+fn read_windows_network() -> Value {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    static NET_CACHE: Mutex<Option<(Instant, String, String)>> = Mutex::new(None);
+
+    if let Ok(mut guard) = NET_CACHE.lock() {
+        if let Some((cached_at, ref mac, ref iface)) = *guard {
+            if !mac.is_empty() && cached_at.elapsed() < Duration::from_secs(30) {
+                return json!({
+                    "mac_address": mac,
+                    "interface": iface
+                });
+            }
+        }
+
+        let (mac, iface) = query_windows_mac_and_iface();
+        *guard = Some((Instant::now(), mac.clone(), iface.clone()));
+        return json!({
+            "mac_address": mac,
+            "interface": iface
+        });
+    }
+
+    let (mac, iface) = query_windows_mac_and_iface();
+    json!({
+        "mac_address": mac,
+        "interface": iface
+    })
+}
+
+/// Discovers active physical network adapter MAC using getmac with PowerShell WMI fallback.
+#[cfg(target_os = "windows")]
+fn query_windows_mac_and_iface() -> (String, String) {
+    use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // 1. Fast path: getmac /fo csv /nh
+    if let Ok(output) = Command::new("getmac")
+        .args(["/fo", "csv", "/nh"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let parts: Vec<&str> = trimmed
+                    .split(',')
+                    .map(|p| p.trim().trim_matches('"'))
+                    .collect();
+                if parts.len() >= 2 {
+                    let mac = parts[0];
+                    let transport = parts[1];
+                    if mac != "N/A"
+                        && !mac.is_empty()
+                        && !transport.to_lowercase().contains("disconnected")
+                    {
+                        let clean_mac = mac.replace('-', ":").to_lowercase();
+                        if clean_mac.split(':').count() == 6 {
+                            let iface = if transport.contains("Tcpip") {
+                                "Wi-Fi / Ethernet".to_string()
+                            } else {
+                                transport.to_string()
+                            };
+                            return (clean_mac, iface);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: PowerShell WMI query for active adapter MAC
+    if let Ok(output) = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = TRUE and MACAddress IS NOT NULL' | Select-Object -ExpandProperty MACAddress -First 1",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let mac = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+            if mac.split(':').count() == 6 {
+                return (mac, "Physical Adapter".to_string());
+            }
+        }
+    }
+
+    (String::new(), String::new())
 }

@@ -1002,11 +1002,14 @@ export default function App() {
 
   // Auto-fill target MAC from host telemetry if available
   useEffect(() => {
-    if (systemInfo?.network?.mac_address && !macAddress) {
-      setMacAddress(systemInfo.network.mac_address);
-      AsyncStorage.setItem(MAC_STORAGE_KEY, systemInfo.network.mac_address).catch(() => {});
+    if (systemInfo?.network?.mac_address) {
+      const hostMac = systemInfo.network.mac_address.trim().toLowerCase();
+      if (!macAddress || macAddress.trim().toLowerCase() !== hostMac) {
+        setMacAddress(hostMac);
+        AsyncStorage.setItem(MAC_STORAGE_KEY, hostMac).catch(() => {});
+      }
     }
-  }, [systemInfo]);
+  }, [systemInfo?.network?.mac_address]);
 
   // Live alert banner for power events broadcast across clients
   useEffect(() => {
@@ -1180,17 +1183,21 @@ export default function App() {
 
   /** Sends a Wake-on-LAN request using the currently configured host settings. */
   const handleSendWakeOnLan = async () => {
-    if (!macAddress.trim()) {
-      Alert.alert('Missing MAC Address', 'Please enter your host PC Ethernet/Wi-Fi MAC address.');
+    const targetMac = (macAddress.trim() || systemInfo?.network?.mac_address?.trim() || '');
+    if (!targetMac) {
+      Alert.alert('Missing MAC Address', 'Please connect to your PC once to auto-detect its MAC address, or enter it manually.');
       return;
+    }
+    if (!macAddress.trim() && targetMac) {
+      setMacAddress(targetMac);
     }
     setIsSendingWol(true);
     setWolFeedback('Dispatching Magic Packet burst...');
     try {
-      const res = await sendWakeOnLan(macAddress.trim(), wolBroadcastIp.trim());
+      const res = await sendWakeOnLan(targetMac, wolBroadcastIp.trim());
       setWolFeedback(res.message);
       if (res.success) {
-        await AsyncStorage.setItem(MAC_STORAGE_KEY, macAddress.trim());
+        await AsyncStorage.setItem(MAC_STORAGE_KEY, targetMac);
         await AsyncStorage.setItem(WOL_BROADCAST_STORAGE_KEY, wolBroadcastIp.trim());
       }
     } catch (err: any) {
