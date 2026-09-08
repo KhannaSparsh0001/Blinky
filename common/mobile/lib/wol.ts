@@ -11,11 +11,13 @@ try {
   console.log('react-native-wol native module not available in this environment');
 }
 
+/** Returns whether a MAC address contains exactly six hexadecimal octets. */
 export const validateMacAddress = (mac: string): boolean => {
   const clean = mac.trim().replace(/[:\-]/g, '');
   return clean.length === 12 && /^[0-9a-fA-F]{12}$/.test(clean);
 };
 
+/** Normalizes a valid MAC address to lowercase colon-separated octets. */
 export const formatMacAddress = (mac: string): string => {
   const clean = mac.trim().replace(/[:\-]/g, '').toLowerCase();
   if (clean.length !== 12) return mac.trim();
@@ -69,6 +71,7 @@ export const sendWakeOnLan = async (
     let sentCount = 0;
     let anySuccess = false;
 
+    /** Sends each packet in the configured Wake-on-LAN burst. */
     const sendBurst = (index: number) => {
       RNWol.send(broadcastIp, formattedMac, (success: boolean, msg: string) => {
         if (success) anySuccess = true;

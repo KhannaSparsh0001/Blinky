@@ -54,6 +54,7 @@ export type PowerCommand =
   | 'get_system_info'
   | 'screenshot';
 
+/** Manages the mobile app's authenticated WebSocket connection to a Blinky host. */
 export function usePCWebSocket() {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export function usePCWebSocket() {
     setLatestResponse(null);
   }, []);
 
+  /** Sends a host command when the WebSocket connection is ready. */
   const sendCommand = useCallback((command: PowerCommand | string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(command);
@@ -80,10 +82,12 @@ export function usePCWebSocket() {
     return false;
   }, []);
 
+  /** Requests a fresh telemetry snapshot from the connected host. */
   const fetchSystemInfo = useCallback(() => {
     return sendCommand('get_system_info');
   }, [sendCommand]);
 
+  /** Opens a WebSocket connection and authenticates it when a token is provided. */
   const connect = useCallback((ipAddress: string, token?: string) => {
     disconnect();
     

@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
+/// Collects host identity, uptime, memory, battery, and network telemetry.
 pub fn get_system_telemetry() -> Value {
     #[cfg(target_os = "linux")]
     {
@@ -117,6 +118,7 @@ pub fn get_system_telemetry() -> Value {
     }
 }
 
+/// Parses a `/proc/meminfo` value expressed in kilobytes.
 #[cfg(target_os = "linux")]
 fn parse_meminfo_kb(line: &str) -> u64 {
     line.split_whitespace()
@@ -125,6 +127,7 @@ fn parse_meminfo_kb(line: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// Reads battery capacity and charging state from Linux sysfs.
 #[cfg(target_os = "linux")]
 fn read_linux_battery() -> Value {
     let power_path = Path::new("/sys/class/power_supply");
@@ -158,6 +161,7 @@ fn read_linux_battery() -> Value {
     })
 }
 
+/// Selects an active physical network interface and reports its MAC address.
 #[cfg(target_os = "linux")]
 fn read_linux_network() -> Value {
     let net_path = Path::new("/sys/class/net");
@@ -193,6 +197,7 @@ fn read_linux_network() -> Value {
     })
 }
 
+/// Returns the currently supported Windows telemetry fields and defaults.
 #[cfg(target_os = "windows")]
 fn read_windows_telemetry() -> (String, u64, u64, u32, u64, Value, Value) {
     // Standard Windows fallback defaults

@@ -149,6 +149,7 @@ def _post_with_fallback(
 
 
 def _extract_content(payload: dict[str, Any]) -> str:
+    """Extract visible or reasoning text from a chat-completion response."""
     choices = payload.get("choices", [])
     if not choices or not isinstance(choices, list):
         raise RuntimeError("Custom provider returned no choices.")
@@ -168,6 +169,7 @@ def _extract_content(payload: dict[str, Any]) -> str:
 
 
 def _parse_json(text: str) -> dict[str, Any]:
+    """Parse a JSON object from provider output, tolerating common wrappers."""
     # Strip thinking-model chain-of-thought blocks (minimax-m3, deepseek, glm, etc.)
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned.strip(), flags=re.IGNORECASE)
@@ -223,6 +225,7 @@ def _find_json_object(text: str) -> str | None:
 
 
 def ask_custom_text(prompt: str, max_tokens: int = 1024) -> dict[str, Any]:
+    """Send a text prompt to the configured provider and return its JSON result."""
     base_url, api_key, model = _config()
     payload = {
         "model": model,
@@ -235,6 +238,7 @@ def ask_custom_text(prompt: str, max_tokens: int = 1024) -> dict[str, Any]:
 
 
 def ask_custom_vision(prompt: str, screenshot_path: Path, max_tokens: int = 2048) -> dict[str, Any]:
+    """Send a screenshot prompt to the configured provider and return JSON."""
     base_url, api_key, model = _config()
     payload = {
         "model": model,

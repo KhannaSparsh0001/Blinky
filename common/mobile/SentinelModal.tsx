@@ -37,6 +37,7 @@ interface SentinelModalProps {
   latestPowerEvent: PowerEvent | null;
 }
 
+/** Displays host telemetry, power controls, and Wake-on-LAN settings. */
 export const SentinelModal: React.FC<SentinelModalProps> = ({
   visible,
   onClose,
@@ -55,6 +56,7 @@ export const SentinelModal: React.FC<SentinelModalProps> = ({
 }) => {
   const [showSettings, setShowSettings] = useState(false);
 
+  /** Formats an uptime duration as compact hours and minutes. */
   const formatUptime = (seconds: number) => {
     if (!seconds) return 'N/A';
     const hrs = Math.floor(seconds / 3600);

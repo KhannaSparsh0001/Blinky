@@ -346,6 +346,7 @@ if (process.platform === "win32" && !existsSync("common/python_runtime/Python313
 
 const customPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
 
+/** Stops stale Windows development processes and listeners. */
 const killWindowsProcessTree = (pid?: number) => {
   if (process.platform !== "win32") return;
   try {
@@ -357,6 +358,7 @@ const killWindowsProcessTree = (pid?: number) => {
   } catch {}
 };
 
+/** Restores the user's standard Windows cursor scheme after development runs. */
 const restoreWindowsSystemCursor = () => {
   if (process.platform === "win32") {
     try {

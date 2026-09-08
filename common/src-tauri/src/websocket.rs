@@ -197,10 +197,12 @@ fn trim_env_value(value: &str) -> String {
 
 static ACTIVE_CLIENTS: OnceLock<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>> = OnceLock::new();
 
+/// Returns the shared registry of connected WebSocket client senders.
 fn get_active_clients() -> &'static Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>> {
     ACTIVE_CLIENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Broadcasts a message and removes clients whose channels have closed.
 pub async fn broadcast_to_all_clients(message: &str) {
     let mut clients = get_active_clients().lock().await;
     clients.retain(|tx| tx.send(message.to_string()).is_ok());
@@ -254,6 +256,7 @@ pub async fn run_agent_query(app: &AppHandle, query: &str) -> Result<serde_json:
     agent_responses_to_tutor_result(&lines)
 }
 
+/// Authenticates a client and handles commands received over its WebSocket.
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     peer_addr: SocketAddr,

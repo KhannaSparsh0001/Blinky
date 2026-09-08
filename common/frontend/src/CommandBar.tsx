@@ -89,6 +89,7 @@ function ExternalMarkdownLink({ href, children }: AnchorHTMLAttributes<HTMLAncho
   );
 }
 
+/** Renders the desktop command bar and coordinates its interactive workflows. */
 export function CommandBar() {
   const [question, setQuestion] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedMedia[]>([]);
@@ -2615,5 +2616,3 @@ export function CommandBar() {
     </main>
   );
 }
-
-

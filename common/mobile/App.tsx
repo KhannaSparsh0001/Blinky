@@ -403,6 +403,7 @@ const PinchableImageViewer: React.FC<PinchableImageViewerProps> = ({ uri, onClos
   );
 };
 
+/** Renders the Blinky mobile companion and coordinates its desktop connection. */
 export default function App() {
   const [ipAddress, setIpAddress] = useState('');
   const [remoteToken, setRemoteToken] = useState('');
@@ -968,6 +969,7 @@ export default function App() {
 
   // Load saved IP address + remote token on launch
   useEffect(() => {
+    /** Restores persisted connection and Wake-on-LAN settings on launch. */
     async function loadIp() {
       try {
         const [savedIp, savedToken, savedMac, savedWolIp] = await Promise.all([
@@ -1146,6 +1148,7 @@ export default function App() {
     }
   };
 
+  /** Confirms and dispatches a potentially disruptive host power command. */
   const triggerPowerCommand = (
     command: 'power_off' | 'restart' | 'sleep' | 'hibernate' | 'lock',
     label: string
@@ -1175,6 +1178,7 @@ export default function App() {
     );
   };
 
+  /** Sends a Wake-on-LAN request using the currently configured host settings. */
   const handleSendWakeOnLan = async () => {
     if (!macAddress.trim()) {
       Alert.alert('Missing MAC Address', 'Please enter your host PC Ethernet/Wi-Fi MAC address.');

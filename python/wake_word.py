@@ -14,6 +14,7 @@ if sys.platform.startswith("linux"):
             None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p
         )
         def _alsa_noop_handler(filename, line, function, err, fmt):
+            """Discard ALSA diagnostic callbacks already handled by the app."""
             pass
         _c_alsa_handler = ERROR_HANDLER_FUNC(_alsa_noop_handler)
         asound.snd_lib_error_set_handler(_c_alsa_handler)
@@ -52,6 +53,7 @@ def stdin_listener():
         print(f"Error in stdin listener: {e}", file=sys.stderr)
 
 def start_wake_word_detector(model_name="hey_blinky.onnx", threshold=0.25, verbose=True):
+    """Capture microphone audio and emit an event when the wake word is detected."""
     threading.Thread(target=stdin_listener, daemon=True).start()
     try:
         # pyrefly: ignore [missing-import]
@@ -118,6 +120,7 @@ def start_wake_word_detector(model_name="hey_blinky.onnx", threshold=0.25, verbo
         native_blocksize = int(native_sr * 0.08)
 
         def audio_callback(indata, frames, time_info, status):
+            """Resample an input block and enqueue it for wake-word inference."""
             if is_paused:
                 return
             
