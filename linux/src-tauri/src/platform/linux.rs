@@ -47,7 +47,10 @@ pub fn scroll_at_point_impl(x: i32, y: i32, direction: &str, amount: i32) -> Res
     Ok(())
 }
 
-pub fn type_text_impl(text: &str, press_enter: bool) -> Result<(), String> {
+/// `_x` / `_y` mirror the Windows signature, where the point selects the target window.
+/// The Linux path types into the focused surface via the compositor, which has no
+/// equivalent of "address this window without focusing it", so the point is unused.
+pub fn type_text_impl(_x: i32, _y: i32, text: &str, press_enter: bool) -> Result<(), String> {
     if !text.is_empty() {
         Command::new("wtype")
             .arg(text)

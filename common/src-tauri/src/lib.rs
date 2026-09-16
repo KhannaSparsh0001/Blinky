@@ -16,9 +16,9 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use platform::{
-    click_screen_point_impl, configure_overlay_passthrough, get_cursor_position_impl,
-    open_url_impl, register_exit_cursor_restorer, scroll_at_point_impl,
-    set_system_cursor_visibility, set_window_capture_exclusion,
+    click_element_impl, click_screen_point_impl, configure_overlay_passthrough,
+    get_cursor_position_impl, open_url_impl, register_exit_cursor_restorer,
+    scroll_at_point_impl, set_system_cursor_visibility, set_window_capture_exclusion,
     start_global_click_listener, type_text_impl,
 };
 
@@ -154,19 +154,55 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn click_screen_point(x: i32, y: i32) -> Result<(), String> {
-    click_screen_point_impl(x, y)
+/// Run a blocking actuator call off the UI thread.
+///
+/// Tauri executes *synchronous* commands inline, on the thread that dispatched
+/// the IPC message — on Windows that is the UI thread — so blocking I/O in one
+/// freezes the entire window. The macro emits
+/// `let result = $path(...); let kind = (&result).blocking_kind();` with no
+/// spawn, so a slow command stalls the event loop: no repaints, no event
+/// delivery, and the window reports "not responding".
+///
+/// That is invisible while the body is sub-millisecond `SendInput`, and becomes
+/// a freeze the moment the actuator talks to cua-driver over a pipe. Anything
+/// that spawns a process, writes to a pipe, or waits on a condition variable
+/// belongs here.
+async fn actuator<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|err| format!("actuator task failed: {err}"))?
 }
 
 #[tauri::command]
-fn scroll_at_point(x: i32, y: i32, direction: String, amount: i32) -> Result<(), String> {
-    scroll_at_point_impl(x, y, &direction, amount)
+async fn click_screen_point(x: i32, y: i32) -> Result<(), String> {
+    actuator(move || click_screen_point_impl(x, y)).await
+}
+
+/// Click the element behind a screen point, preferring the background path.
+///
+/// `label` is the matched target text; cua-driver uses it, together with the
+/// point, to pick the control to invoke.
+#[tauri::command]
+async fn click_element(x: i32, y: i32, label: String) -> Result<(), String> {
+    actuator(move || click_element_impl(x, y, &label)).await
 }
 
 #[tauri::command]
-fn type_text(text: String, press_enter: bool) -> Result<(), String> {
-    type_text_impl(&text, press_enter)
+async fn scroll_at_point(x: i32, y: i32, direction: String, amount: i32) -> Result<(), String> {
+    actuator(move || scroll_at_point_impl(x, y, &direction, amount)).await
+}
+
+/// Type into the window behind a screen point, preferring the background path.
+///
+/// The point is required, not decorative: cua-driver refuses a `type_text` that names
+/// no target, and without it the text would go to whichever window holds focus.
+#[tauri::command]
+async fn type_text(x: i32, y: i32, text: String, press_enter: bool) -> Result<(), String> {
+    actuator(move || type_text_impl(x, y, &text, press_enter)).await
 }
 
 #[tauri::command]
@@ -911,6 +947,7 @@ pub fn run() {
             show_overlay,
             hide_overlay,
             click_screen_point,
+            click_element,
             scroll_at_point,
             type_text,
             open_url,

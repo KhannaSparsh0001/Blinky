@@ -15,7 +15,7 @@ import {
   shouldCompleteStepOnHighlightClick,
   shouldShowSummaryBubble,
 } from './lib/guidance';
-import { runTutor, showOverlay, hideOverlay, resizeCommandWindow, getSettings, saveSettings, resizeAndMoveCommandWindow, clickScreenPoint, openUrl, typeText, scrollAtPoint, pauseWakeWord, resumeWakeWord, logDebugMessage, confirmRecipeSave, setAgentCursorVisibility } from './lib/tauri';
+import { runTutor, showOverlay, hideOverlay, resizeCommandWindow, getSettings, saveSettings, resizeAndMoveCommandWindow, clickElement, clickScreenPoint, openUrl, typeText, scrollAtPoint, pauseWakeWord, resumeWakeWord, logDebugMessage, confirmRecipeSave, setAgentCursorVisibility } from './lib/tauri';
 
 import { linkCitationMarkers, preprocessMarkdown } from './lib/citations';
 import { buildAudioDataUrl, buildSarvamTtsPayload, buildSpeechContent, getSarvamErrorMessage } from './lib/tts';
@@ -1259,6 +1259,20 @@ export function CommandBar() {
             act: async (point, step) => {
               if (cancelledRunIdsRef.current.has(runId)) return;
               const plannedTarget = (step as any).planned_target;
+              // Prefer the element rung. cua-driver resolves the labelled control
+              // inside the window that owns the point and invokes it through UIA:
+              // it stays in the background, keeps the real pointer still, and does
+              // not depend on the target being the topmost window. The point-only
+              // click is the fallback for surfaces with no element tree (canvas,
+              // video, WebGL) and for a step that carries no target text.
+              const label = String((step as any).target_text || plannedTarget || '').trim();
+              const click = async () => {
+                if (label) {
+                  await clickElement(point.x, point.y, label);
+                } else {
+                  await clickScreenPoint(point.x, point.y);
+                }
+              };
               if (isScrollAction(step.instruction)) {
                 const direction = getScrollDirection(step.instruction);
                 setStatus(`Autopilot scrolling ${direction}...`);
@@ -1269,15 +1283,15 @@ export function CommandBar() {
                 if (textToType) {
                   setStatus(`Autopilot typing "${textToType}"...`);
                   rememberCompletedStep(step.target_text, step.instruction, plannedTarget);
-                  await clickScreenPoint(point.x, point.y);
+                  await click();
                   await new Promise((resolve) => setTimeout(resolve, 150));
                   if (cancelledRunIdsRef.current.has(runId)) return;
                   const pressEnter = (step as any).key?.toLowerCase() === 'enter' || shouldPressEnterAfterTyping(step.instruction);
-                  await typeText(textToType, pressEnter);
+                  await typeText(point.x, point.y, textToType, pressEnter);
                 } else {
                   setStatus(`Autopilot clicking (${point.x}, ${point.y})...`);
                   rememberCompletedStep(step.target_text, step.instruction, plannedTarget);
-                  await clickScreenPoint(point.x, point.y);
+                  await click();
                 }
               }
             },
@@ -1351,7 +1365,12 @@ export function CommandBar() {
               if (cancelledRunIdsRef.current.has(runId)) return;
               await logDebugMessage(`[executeTutor] (Standard) Autopilot act: clicking point x=${point.x}, y=${point.y}`);
               setStatus(`Clicking (${point.x}, ${point.y})...`);
-              await clickScreenPoint(point.x, point.y);
+              const label = String(step.target_text || '').trim();
+              if (label) {
+                await clickElement(point.x, point.y, label);
+              } else {
+                await clickScreenPoint(point.x, point.y);
+              }
             },
           });
           if (autopilot.stopReason === 'complete' || autopilot.attempts > 0) {

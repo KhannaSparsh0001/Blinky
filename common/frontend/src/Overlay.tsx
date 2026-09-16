@@ -224,7 +224,7 @@ export function Overlay() {
             { transform: `translate3d(${targetCssX}px, ${targetCssY}px, 0)` }
           ],
           {
-            duration: 600,
+            duration: 220,
             easing: 'cubic-bezier(0.2, 0.85, 0.25, 1)',
             fill: 'forwards'
           }

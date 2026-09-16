@@ -23,7 +23,36 @@ pub fn get_cursor_position_impl() -> Result<(i32, i32), String> {
     }
 }
 
+/// Click the UI element behind a screen point, preferring the background path.
+///
+/// `label` is the matched target text. With it, cua-driver resolves the element
+/// under the point inside the window that owns it and invokes it through UIA —
+/// the real pointer never moves and focus is never stolen. Without a resolvable
+/// element (canvas / video / WebGL surfaces) this degrades to the point click.
+pub fn click_element_impl(x: i32, y: i32, label: &str) -> Result<(), String> {
+    if super::cua::is_available() {
+        match super::cua::click_element_at(x, y, Some(label)) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                eprintln!("blinky: cua element click failed ({err}); falling back to point click")
+            }
+        }
+    }
+
+    click_screen_point_impl(x, y)
+}
+
 pub fn click_screen_point_impl(x: i32, y: i32) -> Result<(), String> {
+    // Prefer background delivery: cua-driver clicks the target without moving
+    // the real cursor or stealing focus. Falls through to SendInput when the
+    // driver is missing, unhealthy, or explicitly disabled.
+    if super::cua::is_available() {
+        match super::cua::click(x, y) {
+            Ok(()) => return Ok(()),
+            Err(err) => eprintln!("blinky: cua click failed ({err}); falling back to SendInput"),
+        }
+    }
+
     use std::thread;
     use std::time::Duration;
     use windows_sys::Win32::Foundation::POINT;
@@ -130,6 +159,16 @@ pub fn click_screen_point_impl(x: i32, y: i32) -> Result<(), String> {
 
 
 pub fn scroll_at_point_impl(x: i32, y: i32, direction: &str, amount: i32) -> Result<(), String> {
+    // Background first, same contract as the click path. `cua::scroll` resolves
+    // the window under the point and stays window-scoped, so the wheel events
+    // are delivered without moving the real pointer.
+    if super::cua::is_available() {
+        match super::cua::scroll(x, y, direction, amount) {
+            Ok(()) => return Ok(()),
+            Err(err) => eprintln!("blinky: cua scroll failed ({err}); falling back to SendInput"),
+        }
+    }
+
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE,
@@ -271,7 +310,28 @@ pub fn read_enter_key(was_enter_down: &mut bool) -> Option<()> {
     }
 }
 
-pub fn type_text_impl(text: &str, press_enter: bool) -> Result<(), String> {
+pub fn type_text_impl(x: i32, y: i32, text: &str, press_enter: bool) -> Result<(), String> {
+    // Background first. The point is threaded through so the driver can address the
+    // window the AI cursor is actually over, rather than whichever window happens to
+    // hold focus — a bare `type_text` is refused outright by the driver (see
+    // `cua::type_text`). Nothing here moves the real pointer, so a user typing
+    // elsewhere is not interrupted.
+    if super::cua::is_available() {
+        match super::cua::type_text(x, y, text) {
+            Ok(()) => {
+                if press_enter {
+                    if let Err(err) = super::cua::press_key(x, y, "Return") {
+                        eprintln!("blinky: cua press_key failed ({err}); falling back to SendInput");
+                    }
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                eprintln!("blinky: cua type_text failed ({err}); falling back to SendInput")
+            }
+        }
+    }
+
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
     };

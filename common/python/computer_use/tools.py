@@ -1453,24 +1453,50 @@ def _get_linux_mcp():
         return None
 
 
-def list_windows_tool() -> ToolResult:
-    if not IS_LINUX:
-        return ToolResult(
-            False,
-            "list_windows",
-            "Desktop window listing is supported on Linux only.",
-            {},
-        )
+def _backend_error(action: str) -> ToolResult | None:
+    """Explain why the Python actuator can't serve a call, or None if it can.
+
+    Linux is deliberately ungated: those tools already route through
+    `computer_use.linux_mcp`, and we don't want a backend-construction hiccup
+    to turn a working Linux path into a hard failure.
+
+    On Windows/macOS the gate matters: when no backend is active (cua-driver
+    missing, unhealthy, or `BLINKY_COMPUTER_USE_BACKEND=native`) we return a
+    clear failure so callers fall back to the legacy Rust SendInput path.
+    """
+    if IS_LINUX:
+        return None
 
     try:
-        from computer_use.linux_mcp import list_windows
+        from computer_use.actuator import backend_name
+
+        name = backend_name()
+    except Exception as exc:
+        return ToolResult(False, action, f"Computer-use backend unavailable: {exc}", {})
+
+    if name == "native":
+        return ToolResult(
+            False,
+            action,
+            "No computer-use backend active; falling back to the native path.",
+            {"backend": "native"},
+        )
+    return None
+
+
+def list_windows_tool() -> ToolResult:
+    if (err := _backend_error("list_windows")) is not None:
+        return err
+
+    try:
+        from computer_use.actuator import backend_name, list_windows
 
         windows = list_windows()
         return ToolResult(
             True,
             "list_windows",
             f"Found {len(windows)} windows.",
-            {"windows": windows, "count": len(windows)},
+            {"windows": windows, "count": len(windows), "backend": backend_name()},
         )
     except Exception as e:
         LOGGER.exception("list_windows_tool failed")
@@ -1478,16 +1504,11 @@ def list_windows_tool() -> ToolResult:
 
 
 def get_app_state_tool(app_name: str) -> ToolResult:
-    if not IS_LINUX:
-        return ToolResult(
-            False,
-            "get_app_state",
-            "Desktop app inspection is supported on Linux only.",
-            {"app_name": app_name},
-        )
+    if (err := _backend_error("get_app_state")) is not None:
+        return err
 
     try:
-        from computer_use.linux_mcp import get_app_state
+        from computer_use.actuator import get_app_state
 
         state = get_app_state(app_name=app_name, max_nodes=200, max_depth=4)
         elements = state.get("elements", [])
@@ -1516,13 +1537,11 @@ def click_element_tool(
     x: int | None = None,
     y: int | None = None,
 ) -> ToolResult:
-    if not IS_LINUX:
-        return ToolResult(
-            False, "click_element", "Desktop clicking is supported on Linux only.", {}
-        )
+    if (err := _backend_error("click_element")) is not None:
+        return err
 
     try:
-        from computer_use.linux_mcp import _check_ok, click_element
+        from computer_use.actuator import _check_ok, click_element
 
         result = click_element(index=index, role=role, name=name, x=x, y=y)
         ok = _check_ok(result)
@@ -1540,16 +1559,11 @@ def click_element_tool(
 
 
 def type_text_tool(text: str, target_app: str | None = None) -> ToolResult:
-    if not IS_LINUX:
-        return ToolResult(
-            False,
-            "type_text",
-            "Desktop typing is supported on Linux only.",
-            {"text": text},
-        )
+    if (err := _backend_error("type_text")) is not None:
+        return err
 
     try:
-        from computer_use.linux_mcp import _check_ok, type_text
+        from computer_use.actuator import _check_ok, type_text
 
         result = type_text(text, target_app=target_app)
         ok = _check_ok(result)
@@ -1583,16 +1597,11 @@ def type_text_tool(text: str, target_app: str | None = None) -> ToolResult:
 
 
 def press_key_tool(key: str, target_app: str | None = None) -> ToolResult:
-    if not IS_LINUX:
-        return ToolResult(
-            False,
-            "press_key",
-            "Desktop key presses are supported on Linux only.",
-            {"key": key},
-        )
+    if (err := _backend_error("press_key")) is not None:
+        return err
 
     try:
-        from computer_use.linux_mcp import _check_ok, press_key
+        from computer_use.actuator import _check_ok, press_key
 
         result = press_key(key, target_app=target_app)
         ok = _check_ok(result)
@@ -1625,6 +1634,101 @@ def press_key_tool(key: str, target_app: str | None = None) -> ToolResult:
         return ToolResult(False, "press_key", str(e), {"key": key})
 
 
+def _mouse_tool_via_backend(
+    action: str,
+    *,
+    x: int | None = None,
+    y: int | None = None,
+    button: str = "left",
+    scroll_amount: int = 3,
+) -> ToolResult:
+    """Windows/macOS mouse control through the backend (cua-driver).
+
+    Clicks and scrolls are delivered in the **background** — the real cursor
+    does not move and focus is not stolen. `move` deliberately drives the
+    cosmetic overlay cursor only, which is what a tutor should do when it wants
+    to point at something without hijacking the user's pointer.
+    """
+    if (err := _backend_error("mouse")) is not None:
+        return err
+
+    try:
+        from computer_use.backends import get_backend
+
+        backend = get_backend()
+        if backend is None:
+            return ToolResult(False, "mouse", "No computer-use backend active.", {})
+
+        aliases = {
+            "left_click": "click",
+            "right_click": "click",
+            "double_click": "click",
+            "leftclick": "click",
+            "rightclick": "click",
+            "middle_click": "click",
+        }
+        resolved = aliases.get(action, action)
+        if action in ("right_click", "rightclick"):
+            button = "right"
+        elif action in ("middle_click",):
+            button = "middle"
+        click_count = 2 if action == "double_click" else 1
+
+        if resolved == "move":
+            if x is None or y is None:
+                return ToolResult(False, "mouse", "move requires x and y coordinates.", {})
+            result = backend.move_agent_cursor(int(x), int(y))
+            return ToolResult(
+                result.ok,
+                "mouse",
+                result.message,
+                {"action": "move", "x": int(x), "y": int(y), "overlay_only": True},
+            )
+
+        if resolved == "click":
+            if x is None or y is None:
+                return ToolResult(False, "mouse", "click requires x and y coordinates.", {})
+            result = backend.click(x=int(x), y=int(y), button=button, click_count=click_count)
+            return ToolResult(
+                result.ok,
+                "mouse",
+                result.message,
+                {
+                    "action": "click",
+                    "x": int(x),
+                    "y": int(y),
+                    "button": button,
+                    "count": click_count,
+                    "result": result.data,
+                },
+            )
+
+        if resolved == "scroll":
+            direction = "down" if int(scroll_amount) >= 0 else "up"
+            result = backend.scroll(
+                direction=direction,
+                amount=max(1, abs(int(scroll_amount))),
+                x=int(x) if x is not None else None,
+                y=int(y) if y is not None else None,
+            )
+            return ToolResult(
+                result.ok,
+                "mouse",
+                result.message,
+                {
+                    "action": "scroll",
+                    "direction": direction,
+                    "amount": max(1, abs(int(scroll_amount))),
+                    "result": result.data,
+                },
+            )
+
+        return ToolResult(False, "mouse", f"Unsupported mouse action: {action}", {})
+    except Exception as e:
+        LOGGER.exception("mouse_tool (backend) failed")
+        return ToolResult(False, "mouse", str(e), {})
+
+
 def mouse_tool(
     action: str,
     x: int | None = None,
@@ -1640,8 +1744,8 @@ def mouse_tool(
       scroll  — scroll at current position (scroll_amount: positive=down, negative=up)
     """
     if not IS_LINUX:
-        return ToolResult(
-            False, "mouse", "Mouse control is supported on Linux only.", {}
+        return _mouse_tool_via_backend(
+            action, x=x, y=y, button=button, scroll_amount=scroll_amount
         )
 
     try:

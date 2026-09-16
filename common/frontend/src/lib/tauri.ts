@@ -89,12 +89,30 @@ export async function clickScreenPoint(x: number, y: number): Promise<void> {
   return invoke('click_screen_point', { x, y });
 }
 
+/**
+ * Click the element behind a screen point, preferring the background path.
+ *
+ * `label` is the matched target text. cua-driver uses it together with the point
+ * to pick the control to invoke through UIA, which keeps the real pointer still
+ * and does not require the window to be unobstructed. Falls back to the
+ * point-only click on surfaces with no element tree.
+ */
+export async function clickElement(x: number, y: number, label: string): Promise<void> {
+  return invoke('click_element', { x, y, label });
+}
+
 export async function scrollAtPoint(x: number, y: number, direction: 'down' | 'up', amount: number = 3): Promise<void> {
   return invoke('scroll_at_point', { x, y, direction, amount });
 }
 
-export async function typeText(text: string, pressEnter: boolean): Promise<void> {
-  return invoke('type_text', { text, pressEnter });
+/**
+ * Type into the window behind a screen point.
+ *
+ * `x`/`y` are required: the background path needs them to address the target window,
+ * and cua-driver refuses a `type_text` that names no target.
+ */
+export async function typeText(x: number, y: number, text: string, pressEnter: boolean): Promise<void> {
+  return invoke('type_text', { x, y, text, pressEnter });
 }
 
 export async function logDebugMessage(message: string): Promise<void> {

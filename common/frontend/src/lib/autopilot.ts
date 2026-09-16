@@ -96,12 +96,15 @@ export async function runAutopilotLoop({
       return { finalResult: current, attempts, stopReason: 'complete' };
     }
 
-    // Emit cursor move event so Overlay can animate the AI cursor to the exact target
+    // Point the AI cursor at the target. The glide is a GPU-composited CSS
+    // animation inside the overlay window, so it runs *alongside* the click
+    // instead of in front of it — the action is dispatched immediately below.
+    // Awaiting the animation here used to add ~620ms of dead time to every
+    // step, on top of the 600ms glide itself, which is what made the click
+    // feel like it landed long after the cursor arrived.
     try {
       if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
         await emit('blinky://agent-cursor-move', { x: point.x, y: point.y, instruction: nextStep.instruction });
-        // Allow virtual cursor to glide smoothly to the target point (~600ms glide animation)
-        await new Promise((r) => setTimeout(r, 620));
       }
     } catch {}
 
