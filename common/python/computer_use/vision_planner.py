@@ -68,6 +68,7 @@ def plan_action(
     action = result.get("action", "")
     args = result.get("args", {})
     reasoning = result.get("reasoning", "")
+    step_explanation = result.get("step_explanation", "")
 
     if not action:
         metrics.log_vision_call(
@@ -86,13 +87,14 @@ def plan_action(
         schema_clarification = (
             f"Your previous output had action='{action}' which is not a valid tool. "
             f"Valid tools: {list(tool_schema.keys())}. "
-            f"Return a JSON object with 'action' (one of the valid tool names), 'args' (dict), and 'reasoning' (string)."
+            f"Return a JSON object with 'action' (one of the valid tool names), 'args' (dict), 'reasoning' (string), and 'step_explanation' (string)."
         )
         try:
             result = ask_model(schema_clarification, Path(screenshot_path))
             action = result.get("action", "")
             args = result.get("args", {})
             reasoning = result.get("reasoning", "")
+            step_explanation = result.get("step_explanation", "")
         except Exception:
             break
 
@@ -108,6 +110,7 @@ def plan_action(
             "action": "raw_text",
             "args": {"suggestion": f"{action}: {json.dumps(args)}"},
             "reasoning": f"Model returned unparseable tool call after {misparses} retries",
+            "step_explanation": step_explanation,
         }
 
     metrics.log_vision_call(
@@ -122,4 +125,5 @@ def plan_action(
         "action": action,
         "args": args,
         "reasoning": reasoning,
+        "step_explanation": step_explanation,
     }

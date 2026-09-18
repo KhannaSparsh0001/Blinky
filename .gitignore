@@ -64,3 +64,4 @@ log[0-9]*.txt
 cache/huggingface/
 models/
 *.bin
+issue16HIGHIGHTbox.md

@@ -13,7 +13,7 @@ system: |
   {tools}
 
   Output exactly one JSON:
-  {{"tool": "name", "args": {{"param": "value"}}}}
+  {{"tool": "name", "args": {{"param": "value"}}, "step_explanation": "Short description of this step"}}
   {{"answer": "What was done and the result."}}
 
   RULES:
@@ -116,6 +116,7 @@ vision_planner_prompt: |
     - "action": the tool name to call (one of the exact tool names above)
     - "args": dict of arguments for the tool
     - "reasoning": brief explanation of why this step
+    - "step_explanation": short, conversational description of what you are doing (e.g. 'Clicking the Search button...')
   Be specific and precise. Choose only ONE action.
 
 vision_verifier_prompt: |
