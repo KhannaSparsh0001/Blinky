@@ -16,6 +16,14 @@ if _COMMON_PY not in sys.path:
 
 # Add platform-specific python directory with higher priority
 if sys.platform == "win32":
+    try:
+        import ctypes
+        _user32 = ctypes.windll.user32
+        _hdesk = _user32.OpenDesktopW("Default", 0, False, 0x01FF)
+        if _hdesk:
+            _user32.SetThreadDesktop(_hdesk)
+    except Exception:
+        pass
     _PLATFORM_PY = str(_SCRIPT_DIR.parent.parent / "windows" / "python")
 else:
     _PLATFORM_PY = str(_SCRIPT_DIR.parent.parent / "linux" / "python")
@@ -345,6 +353,12 @@ def run(
         wa_action = str(extracted_params.get("wa_action") or "status").lower().strip()
         wa_chat_name = extracted_params.get("wa_chat_name") or None
         return run_whatsapp_tool(wa_action, wa_chat_name, started, warnings)
+    elif intent == "SCREENSHOT":
+        LOGGER.info("Routing to SCREENSHOT fast-path")
+        return run_screenshot_tool(started, warnings)
+    elif intent == "ESP32_LIGHT":
+        LOGGER.info("Routing to ESP32 light tool for intent: ESP32_LIGHT")
+        return run_esp32_light_tool(extracted_params, started, warnings)
     elif intent in {"COMPUTER_USE", "OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
         LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
         agent_mode = True
@@ -966,6 +980,35 @@ def classify_request(
     except Exception as exc:
         LOGGER.debug("Fast-path WhatsApp resolution failed: %s", exc)
 
+    # Fast-path Screenshot / Screen capture
+    cleaned_lower = question.lower().strip().rstrip("?.!,;:")
+    if any(k in cleaned_lower for k in {
+        "capture screenshot", "take screenshot", "get screenshot", 
+        "capture current pc screen", "capture screen", "pc screenshot",
+        "take a screenshot", "screenshot of current pc screen", "take a screenshot of my screen",
+        "capture pc screen", "screenshot"
+    }):
+        return {
+            "intent": "SCREENSHOT",
+            "needs_screen": False,
+            "is_continuation": False,
+            "extracted_params": {},
+        }
+
+    # Fast-path ESP32 Smart Light
+    try:
+        from tools.esp32_light_tool import resolve_esp32_light_request
+        esp32_match = resolve_esp32_light_request(question)
+        if esp32_match:
+            return {
+                "intent": "ESP32_LIGHT",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": esp32_match,
+            }
+    except Exception as exc:
+        LOGGER.debug("Fast-path ESP32 light resolution failed: %s", exc)
+
     try:
         payload = ask_text_model(build_preflight_prompt(question, previous_question, conversation_history))
     except Exception as exc:
@@ -1109,6 +1152,57 @@ def run_whatsapp_tool(
     except Exception as exc:
         summary = f"Failed to run WhatsApp tool: {exc}"
 
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    return {
+        "summary": summary,
+        "steps": [],
+        "active_app": {"title": "", "process": "", "supported": False},
+        "ocr": {"count": 0, "items": []},
+        "elapsed_ms": elapsed_ms,
+        "provider": get_provider_label(),
+        "warnings": warnings,
+        "is_continuation": False,
+    }
+
+
+def run_screenshot_tool(started: float, warnings: list[str]) -> dict:
+    """Capture desktop screenshot immediately and return base64 without screen scanning/OCR."""
+    import base64
+    from capture import capture_screen
+
+    _emit_status("screenshot", "Capturing PC screen...")
+    shot = capture_screen()
+    b64_data = ""
+    try:
+        with open(shot.path, "rb") as f:
+            b64_data = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as exc:
+        LOGGER.warning("Failed to encode screenshot: %s", exc)
+        warnings.append(f"Screenshot encode error: {exc}")
+
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    return {
+        "summary": "Captured screenshot of current PC screen.",
+        "steps": [],
+        "screenshot": str(shot.path),
+        "screenshot_b64": b64_data,
+        "active_app": {"title": "", "process": "", "supported": False},
+        "ocr": {"count": 0, "items": []},
+        "elapsed_ms": elapsed_ms,
+        "provider": get_provider_label(),
+        "warnings": warnings,
+        "is_continuation": False,
+    }
+
+
+def run_esp32_light_tool(params: dict, started: float, warnings: list[str]) -> dict:
+    """Execute ESP32 smart light action directly."""
+    from tools.esp32_light_tool import handle_request
+    _emit_status("esp32_light", "Controlling smart light...")
+    res = handle_request(params)
+    summary = res.get("message", "Smart light action completed.")
+    if "warning" in res:
+        warnings.append(res["warning"])
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
         "summary": summary,

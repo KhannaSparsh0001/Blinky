@@ -1,5 +1,13 @@
 export type TabScreen = 'Chat' | 'Actions' | 'Files' | 'PC';
 
+export interface AttachedFile {
+  uri: string;
+  name: string;
+  type?: string;
+  size?: number;
+  mimeType?: string;
+}
+
 export interface Message {
   id: string;
   sender: 'user' | 'blinky';
@@ -11,6 +19,7 @@ export interface Message {
     duration: number;
   };
   screenshot_b64?: string;
+  attachedFile?: AttachedFile;
   steps?: any[];
 }
 

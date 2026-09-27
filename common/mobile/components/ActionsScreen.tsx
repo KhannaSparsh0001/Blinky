@@ -13,14 +13,12 @@ interface ActionItem {
 }
 
 const QUICK_ACTIONS: ActionItem[] = [
-  { id: 'sleep', title: 'Sleep PC', icon: 'moon', color: '#8B5CF6', command: 'Put the computer to sleep' },
-  { id: 'lock', title: 'Lock Screen', icon: 'lock-closed', color: '#F59E0B', command: 'Lock the computer' },
-  { id: 'music', title: 'Play/Pause', icon: 'play', color: '#10B981', command: 'Toggle media playback' },
-  { id: 'mute', title: 'Mute Audio', icon: 'volume-mute', color: '#EF4444', command: 'Mute the system volume' },
-  { id: 'screenshot', title: 'Screenshot', icon: 'camera', color: '#3B82F6', command: 'Take a screenshot of the desktop' },
-  { id: 'chrome', title: 'Open Browser', icon: 'globe', color: '#06B6D4', command: 'Open Google Chrome' },
-  { id: 'lights', title: 'Toggle Lights', icon: 'bulb', color: '#FCD34D', command: 'Toggle smart lights' },
-  { id: 'terminal', title: 'Terminal', icon: 'terminal', color: '#6B7280', command: 'Open a new terminal window' },
+  { id: 'music', title: 'Play/Pause', icon: 'play', color: '#10B981', command: 'media_play_pause' },
+  { id: 'mute', title: 'Mute Audio', icon: 'volume-mute', color: '#EF4444', command: 'volume_mute' },
+  { id: 'screenshot', title: 'Screenshot', icon: 'camera', color: '#3B82F6', command: 'screenshot' },
+  { id: 'chrome', title: 'Open Browser', icon: 'globe', color: '#06B6D4', command: 'open_browser' },
+  { id: 'lights', title: 'Toggle Lights', icon: 'bulb', color: '#FCD34D', command: 'toggle_lights' },
+  { id: 'terminal', title: 'Terminal', icon: 'terminal', color: '#6B7280', command: 'open_terminal' },
 ];
 
 interface ActionsScreenProps {

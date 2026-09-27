@@ -24,6 +24,42 @@ export function MessageBubble({ message, formatTime, onEnlargeScreenshot }: Mess
       )}
 
       <View style={isUser ? styles.userBubble : styles.blinkyBubble}>
+        {/* Attached File/Photo Preview */}
+        {message.attachedFile && (
+          <TouchableOpacity
+            style={styles.attachedCard}
+            activeOpacity={message.attachedFile.type === 'image' || message.attachedFile.mimeType?.startsWith('image') ? 0.8 : 1}
+            onPress={() => {
+              if (message.attachedFile?.type === 'image' || message.attachedFile?.mimeType?.startsWith('image')) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onEnlargeScreenshot(message.attachedFile.uri);
+              }
+            }}
+          >
+            {message.attachedFile.type === 'image' || message.attachedFile.mimeType?.startsWith('image') ? (
+              <View style={styles.attachedImageContainer}>
+                <Image source={{ uri: message.attachedFile.uri }} style={styles.attachedImage} />
+                <View style={styles.attachedImageOverlay}>
+                  <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                  <Text style={styles.attachedImageText}>Tap to peek</Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.attachedFileRow}>
+                <Ionicons name="document-text" size={18} color={isUser ? "#FFFFFF" : colors.accent} style={{ marginRight: 6 }} />
+                <Text style={[styles.attachedFileName, isUser && { color: "#FFFFFF" }]} numberOfLines={1}>
+                  {message.attachedFile.name}
+                </Text>
+                {message.attachedFile.size ? (
+                  <Text style={[styles.attachedFileSize, isUser && { color: "rgba(255,255,255,0.7)" }]}>
+                    ({message.attachedFile.size} MB)
+                  </Text>
+                ) : null}
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
+
         <MarkdownRenderer content={message.text} isUser={isUser} />
 
         {/* Active Progress Card */}
@@ -291,5 +327,59 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textSecondary,
     fontFamily: 'monospace',
+  },
+  attachedCard: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  attachedImageContainer: {
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  attachedImage: {
+    width: 220,
+    height: 140,
+    borderRadius: radius.md,
+  },
+  attachedImageOverlay: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.round,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  attachedImageText: {
+    ...typography.bodySmall,
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  attachedFileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  attachedFileName: {
+    ...typography.bodySmall,
+    color: colors.textPrimary,
+    fontWeight: '500',
+    flexShrink: 1,
+  },
+  attachedFileSize: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    fontSize: 10,
+    marginLeft: 4,
   },
 });

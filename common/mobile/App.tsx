@@ -55,7 +55,7 @@ import { SystemScreen } from './components/SystemScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { FilesScreen } from './components/FilesScreen';
 import { BottomNavigation } from './components/BottomNavigation';
-import { TabScreen } from './types';
+import { TabScreen, AttachedFile } from './types';
 import { colors } from './theme/theme';
 import { useFonts } from 'expo-font';
 export { triggerHaptic };
@@ -296,6 +296,7 @@ interface Message {
     duration: number;
   };
   screenshot_b64?: string;
+  attachedFile?: AttachedFile;
   steps?: any[];
 }
 
@@ -971,20 +972,21 @@ export default function App() {
     });
   };
 
-  const handleQuery = () => {
-    if (!queryText.trim()) {
+  const handleQuery = (attachedFile?: AttachedFile | null) => {
+    let query = queryText.trim();
+    if (!query && !attachedFile) {
       triggerHaptic('selection');
-      Alert.alert('Empty query', 'Please enter a search/browsing query first.');
+      Alert.alert('Empty query', 'Please enter a search/browsing query or attach a file first.');
       return;
     }
 
     // Direct prompt to Antigravity IDE
     if (
-      queryText.startsWith('/agy ') ||
-      queryText.startsWith('/antigravity ') ||
-      queryText.toLowerCase().startsWith('antigravity:')
+      query.startsWith('/agy ') ||
+      query.startsWith('/antigravity ') ||
+      query.toLowerCase().startsWith('antigravity:')
     ) {
-      const prompt = queryText.replace(/^(\/(agy|antigravity)\s*|antigravity:\s*)/i, '').trim();
+      const prompt = query.replace(/^(\/(agy|antigravity)\s*|antigravity:\s*)/i, '').trim();
       if (prompt) {
         sendAntigravityPrompt(prompt);
         setAgentStatus('processing');
@@ -1000,6 +1002,7 @@ export default function App() {
             sender: 'user',
             text: `⚡ Sent to Antigravity: "${prompt}"`,
             timestamp: currentTime,
+            attachedFile: attachedFile || undefined,
           },
           {
             id: agyMsgId,
@@ -1022,13 +1025,13 @@ export default function App() {
     triggerHaptic('light');
 
     // Parse agent or ask prefixes if provided
-    let query = queryText.trim();
     if (query.startsWith('/agent ')) {
       query = query.replace(/^\/agent\s+/i, '').trim();
     } else if (query.startsWith('/ask ')) {
       query = query.replace(/^\/ask\s+/i, '').trim();
     }
-    setRunningQuery(query);
+    const displayQuery = query || (attachedFile ? `Attached: ${attachedFile.name}` : '');
+    setRunningQuery(displayQuery);
     setQueryText('');
     setAgentStatus('processing');
     setTimerSeconds(0);
@@ -1045,8 +1048,9 @@ export default function App() {
       {
         id: userMsgId,
         sender: 'user',
-        text: query,
+        text: displayQuery,
         timestamp: currentTime,
+        attachedFile: attachedFile || undefined,
       },
       {
         id: blinkyMsgId,
@@ -1061,7 +1065,10 @@ export default function App() {
       }
     ]);
 
-    const success = sendQuery(query, generateUuid());
+    const queryToSend = attachedFile
+      ? `[Referenced Files: ${attachedFile.name}] ${query}`.trim()
+      : query;
+    const success = sendQuery(queryToSend, generateUuid());
     if (!success) {
       setAgentStatus('error');
       setMessages(prev => prev.map(m => {
@@ -1776,8 +1783,8 @@ export default function App() {
                   <ChatHome
                     onQuickAction={(action) => {
                       if (action === 'Screenshot') handleCaptureScreenshot();
-                      else if (action === 'Open app') setQueryText('/app ');
-                      else if (action === 'Run command') setQueryText('/run ');
+                      else if (action === 'Open app') setQueryText('Open ');
+                      else if (action === 'Run command') setQueryText('Run ');
                     }}
                   />
                 )}
@@ -1809,6 +1816,11 @@ export default function App() {
                 onStop={handleStopQuery}
                 status={agentStatus}
                 isConnected={isConnected}
+                onPeekImage={(uri) => {
+                  triggerHaptic('light');
+                  setPreviewImageUri(uri);
+                }}
+                onCaptureScreenshot={handleCaptureScreenshot}
                 isVoiceRecording={isVoiceRecording}
                 isVoiceTranscribing={isVoiceTranscribing}
                 onToggleVoice={toggleVoiceRecording}
@@ -1820,8 +1832,14 @@ export default function App() {
             <ActionsScreen 
               isConnected={isConnected}
               onExecuteAction={(cmd) => {
-                // Send the command directly using the existing websocket query function
-                sendQuery(cmd, generateUuid());
+                if (cmd === 'screenshot') {
+                  setActiveTab('Chat');
+                  handleCaptureScreenshot();
+                  return;
+                }
+                sendCommand(cmd);
+                setActionFeedback(`Action dispatched: ${cmd}`);
+                setTimeout(() => setActionFeedback(null), 2500);
               }}
             />
           )}
@@ -1831,11 +1849,9 @@ export default function App() {
               systemInfo={systemInfo}
               isConnected={isConnected}
               onPowerAction={(action) => {
-                // Example of sending a JSON power event to the server
-                if (action === 'sleep') sendQuery('/sleep', generateUuid());
-                if (action === 'lock') sendQuery('/lock', generateUuid());
-                if (action === 'restart') sendQuery('/restart', generateUuid());
-                if (action === 'hibernate') sendQuery('/hibernate', generateUuid());
+                sendCommand(action);
+                setActionFeedback(`Power command dispatched: ${action}`);
+                setTimeout(() => setActionFeedback(null), 2500);
               }}
             />
           )}

@@ -1,37 +1,37 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  TouchableOpacity, 
-  StyleSheet, 
-  Animated, 
-  Keyboard, 
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+  Keyboard,
   Platform,
   LayoutAnimation,
-  UIManager
+  UIManager,
+  Image,
+  Alert,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, typography, radius, spacing } from '../theme/theme';
+import type { AttachedFile } from '../types';
 
 // LayoutAnimation works automatically on Android Fabric (New Architecture)
-
-interface AttachedFile {
-  uri: string;
-  name: string;
-  type?: string;
-  size?: number;
-}
 
 interface CommandComposerProps {
   queryText: string;
   setQueryText: (text: string) => void;
-  onSubmit: () => void;
+  onSubmit: (file?: AttachedFile | null) => void;
   onStop: () => void;
   status: 'idle' | 'processing' | 'success' | 'error';
   isConnected: boolean;
-  
+  onPeekImage?: (uri: string) => void;
+  onCaptureScreenshot?: () => void;
+
   // Voice recording
   isVoiceRecording: boolean;
   isVoiceTranscribing: boolean;
@@ -46,6 +46,8 @@ export function CommandComposer({
   onStop,
   status,
   isConnected,
+  onPeekImage,
+  onCaptureScreenshot,
   isVoiceRecording,
   isVoiceTranscribing,
   onToggleVoice
@@ -83,16 +85,78 @@ export function CommandComposer({
     setShowAttachMenu(!showAttachMenu);
   };
 
-  const handleAttachOption = (option: string) => {
+  const handleAttachOption = async (option: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setShowAttachMenu(false);
-    // Mock attachment for now based on prompt
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setAttachedFile({
-      uri: 'mock-uri',
-      name: option === 'File' ? 'Project_Proposal.pdf' : `Attached_${option}.jpg`,
-      size: 1.2
-    });
+
+    try {
+      if (option === 'Camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert('Permission Required', 'Camera permission is required to take photos.');
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          allowsEditing: false,
+          quality: 0.8,
+        });
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+          const asset = result.assets[0];
+          const sizeMB = asset.fileSize ? Number((asset.fileSize / (1024 * 1024)).toFixed(2)) : undefined;
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setAttachedFile({
+            uri: asset.uri,
+            name: asset.fileName || `Photo_${Date.now()}.jpg`,
+            size: sizeMB,
+            type: 'image',
+            mimeType: asset.mimeType || 'image/jpeg',
+          });
+        }
+      } else if (option === 'Image') {
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: false,
+          quality: 0.8,
+        });
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+          const asset = result.assets[0];
+          const sizeMB = asset.fileSize ? Number((asset.fileSize / (1024 * 1024)).toFixed(2)) : undefined;
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setAttachedFile({
+            uri: asset.uri,
+            name: asset.fileName || `Image_${Date.now()}.jpg`,
+            size: sizeMB,
+            type: 'image',
+            mimeType: asset.mimeType || 'image/jpeg',
+          });
+        }
+      } else if (option === 'File') {
+        const result = await DocumentPicker.getDocumentAsync({
+          type: '*/*',
+          copyToCacheDirectory: true,
+        });
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+          const asset = result.assets[0];
+          const sizeMB = asset.size ? Number((asset.size / (1024 * 1024)).toFixed(2)) : undefined;
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setAttachedFile({
+            uri: asset.uri,
+            name: asset.name,
+            size: sizeMB,
+            type: 'document',
+            mimeType: asset.mimeType,
+          });
+        }
+      } else if (option === 'Screenshot') {
+        if (onCaptureScreenshot) {
+          onCaptureScreenshot();
+        }
+      }
+    } catch (err: any) {
+      console.warn('Attachment selection error:', err);
+      Alert.alert('Attachment Error', err?.message || 'Could not attach the selected item.');
+    }
   };
 
   const handleRemoveAttachment = () => {
@@ -111,9 +175,9 @@ export function CommandComposer({
     <View style={styles.wrapper}>
       {/* Attachment Menu Popup */}
       {showAttachMenu && (
-        <Animated.View 
+        <Animated.View
           style={[
-            styles.attachMenu, 
+            styles.attachMenu,
             {
               opacity: attachAnim,
               transform: [
@@ -144,21 +208,39 @@ export function CommandComposer({
 
       {/* Main Composer Box */}
       <View style={[
-        styles.composerBox, 
+        styles.composerBox,
         !isConnected && styles.composerDisabled,
         isVoiceRecording && styles.composerRecording
       ]}>
-        
+
         {/* Attachment Preview (if any) */}
         {attachedFile && !isVoiceRecording && (
           <View style={styles.attachmentPreview}>
-            <View style={styles.attachmentIconBox}>
-              <Ionicons name="document-text" size={20} color={colors.accent} />
-            </View>
-            <View style={styles.attachmentDetails}>
-              <Text style={styles.attachmentName} numberOfLines={1}>{attachedFile.name}</Text>
-              {attachedFile.size && <Text style={styles.attachmentSize}>{attachedFile.size} MB</Text>}
-            </View>
+            <TouchableOpacity
+              style={styles.attachmentContentRow}
+              activeOpacity={attachedFile.type === 'image' || attachedFile.mimeType?.startsWith('image') ? 0.7 : 1}
+              onPress={() => {
+                if (attachedFile.type === 'image' || attachedFile.mimeType?.startsWith('image')) {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onPeekImage?.(attachedFile.uri);
+                }
+              }}
+            >
+              <View style={styles.attachmentIconBox}>
+                {attachedFile.type === 'image' || attachedFile.mimeType?.startsWith('image') ? (
+                  <Image source={{ uri: attachedFile.uri }} style={styles.attachmentThumb} />
+                ) : (
+                  <Ionicons name="document-text" size={20} color={colors.accent} />
+                )}
+              </View>
+              <View style={styles.attachmentDetails}>
+                <Text style={styles.attachmentName} numberOfLines={1}>{attachedFile.name}</Text>
+                <Text style={styles.attachmentSize}>
+                  {attachedFile.size ? `${attachedFile.size} MB` : 'Attached'}
+                  {(attachedFile.type === 'image' || attachedFile.mimeType?.startsWith('image')) ? ' • Tap to peek' : ''}
+                </Text>
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity onPress={handleRemoveAttachment} style={styles.attachmentRemove}>
               <Ionicons name="close" size={16} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -176,10 +258,10 @@ export function CommandComposer({
             {isVoiceTranscribing ? (
               <Ionicons name="sync" size={20} color={colors.accent} style={{ opacity: 0.7 }} />
             ) : (
-              <Ionicons 
-                name={isVoiceRecording ? "mic" : "mic"} 
-                size={22} 
-                color={isVoiceRecording ? colors.danger : colors.textSecondary} 
+              <Ionicons
+                name={isVoiceRecording ? "mic" : "mic"}
+                size={22}
+                color={isVoiceRecording ? colors.danger : colors.textSecondary}
               />
             )}
           </TouchableOpacity>
@@ -200,7 +282,7 @@ export function CommandComposer({
             ) : (
               <TextInput
                 style={[styles.textInput, { color: '#FFFFFF' }]}
-                placeholder="Message Blinky or /agy <prompt>"
+                placeholder="message or type /"
                 placeholderTextColor="rgba(255, 255, 255, 0.7)"
                 value={queryText}
                 onChangeText={setQueryText}
@@ -221,8 +303,8 @@ export function CommandComposer({
           {!isVoiceRecording && (
             <View style={styles.rightActions}>
               {queryText.length === 0 && (
-                <TouchableOpacity 
-                  style={styles.attachBtn} 
+                <TouchableOpacity
+                  style={styles.attachBtn}
                   onPress={handleToggleAttach}
                   activeOpacity={0.7}
                 >
@@ -231,22 +313,23 @@ export function CommandComposer({
               )}
 
               {status === 'processing' ? (
-                <TouchableOpacity 
-                  style={styles.stopBtn} 
+                <TouchableOpacity
+                  style={styles.stopBtn}
                   onPress={onStop}
                   activeOpacity={0.7}
                 >
                   <View style={styles.stopSquare} />
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[
                     styles.sendBtn,
                     (!isConnected || (!queryText.trim() && !attachedFile)) && styles.sendBtnDisabled
                   ]}
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    onSubmit();
+                    onSubmit(attachedFile);
+                    setAttachedFile(null);
                   }}
                   disabled={!isConnected || (!queryText.trim() && !attachedFile)}
                   activeOpacity={0.7}
@@ -258,8 +341,8 @@ export function CommandComposer({
           )}
 
           {isVoiceRecording && (
-            <TouchableOpacity 
-              style={styles.recordingStopBtn} 
+            <TouchableOpacity
+              style={styles.recordingStopBtn}
               onPress={onToggleVoice}
               activeOpacity={0.7}
             >
@@ -474,6 +557,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
+  attachmentContentRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  attachmentThumb: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+  },
   attachmentIconBox: {
     width: 32,
     height: 32,
@@ -482,6 +575,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
+    overflow: 'hidden',
   },
   attachmentDetails: {
     flex: 1,

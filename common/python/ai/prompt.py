@@ -53,6 +53,8 @@ Intents to choose from:
     - "input_paths": list of video paths when merging clips
     - "subtitles": boolean whether subtitles/captions should be burned (default false unless captions requested)
 9. `DESKTOP_AUTOMATION`: Any step-by-step guidance on the user's active desktop screen/application UI (e.g. "how do I install python extension?", "click the install button", "where is the settings tab?").
+10. `SCREENSHOT`: The user asks to capture a screenshot, take a screenshot, capture their screen, or get a screenshot of their desktop screen (e.g. "capture screenshot", "take screenshot", "screenshot of my screen").
+11. `ESP32_LIGHT`: The user asks to control, toggle, turn on, turn off, or change colors/brightness of physical ESP32 smart LED lights (e.g. "turn on the light", "turn off light", "toggle smart lights", "set light to blue"). Extract: "action" ("on", "off", "toggle", "set", "brightness"), and "color" (if specified).
 
 Compound-request rule (IMPORTANT):
 - If the request combines OPENING an app WITH a follow-up action inside it
@@ -62,7 +64,7 @@ Compound-request rule (IMPORTANT):
 
 Rules for needs_screen:
 - needs_screen is true ONLY when the student wants guidance tied to visible UI (like clicking, opening, selecting, locating, highlighting, installing, or navigating something in an app, menu, button, tab, or window), OR when the student asks what is on their screen ("what's on my screen", "whats on my screen", "describe my screen", "explain my screen", "what am I looking at").
-- needs_screen is false for COMPUTER_USE, OPEN_APP, MEDIA_PLAYBACK, SYSTEM_SHORTCUT, WEB_SEARCH, INFORMATIONAL_CHAT, WHATSAPP, and VIDEO_EDIT.
+- needs_screen is false for COMPUTER_USE, OPEN_APP, MEDIA_PLAYBACK, SYSTEM_SHORTCUT, WEB_SEARCH, INFORMATIONAL_CHAT, WHATSAPP, VIDEO_EDIT, SCREENSHOT, and ESP32_LIGHT.
 
 Rules for is_continuation:
 - is_continuation is true ONLY if the request is a short follow-up or query directly continuing or asking about the status/next step of the previous active goal/task (e.g. "what next?", "done", "now what?", "it is not showing up", "continue").

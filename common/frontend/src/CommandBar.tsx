@@ -212,6 +212,7 @@ export function CommandBar() {
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+  const lastTutorResultRef = useRef<TutorResult | null>(null);
   const [spokenStatus, setSpokenStatus] = useState<string>('');
   const [isTtsActive, setIsTtsActive] = useState<boolean>(false);
   const [steps, setSteps] = useState<any[]>([]);
@@ -1183,8 +1184,8 @@ export function CommandBar() {
     queryText: string,
     shouldSpeakAfter: boolean,
     options: TutorRunOptions = {},
-  ) {
-    if (isRunningRef.current) return;
+  ): Promise<TutorResult | null> {
+    if (isRunningRef.current) return null;
     isRunningRef.current = true;
     let effectiveQuery = queryText.trim().replace(/^(hey\s+)?blinky[\s,.:;!?]*/i, '').trim();
     if (attachedFiles.length > 0) {
@@ -1195,7 +1196,7 @@ export function CommandBar() {
       }
       setAttachedFiles([]);
     }
-    if (!effectiveQuery) return;
+    if (!effectiveQuery) return null;
 
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
@@ -1401,7 +1402,7 @@ export function CommandBar() {
         }
       }
       if (cancelledRunIdsRef.current.has(runId)) {
-        return;
+        return null;
       }
       const isContinuation = !!result.is_continuation;
 
@@ -1461,13 +1462,16 @@ export function CommandBar() {
       if (shouldSpeakAfter && !hasStreamedTtsRef.current && result.summary) {
         void speakText(result.summary, currentGuideSteps, { includeSteps: !showGuideCompletionSummary });
       }
+      lastTutorResultRef.current = result;
+      return result;
     } catch (error) {
       if (cancelledRunIdsRef.current.has(runId)) {
-        return;
+        return null;
       }
       await currentWindow.setFocus();
       setStatus(error instanceof Error ? error.message : String(error));
       setSteps([]);
+      return null;
     } finally {
       cancelledRunIdsRef.current.delete(runId);
       if (runIdRef.current === runId) {
@@ -1833,15 +1837,17 @@ export function CommandBar() {
           data: { message: `Executing '${cleanQuery}' with AI companion...`, percent: 40 },
         });
 
-        await executeTutor(cleanQuery, false, { resetProgress: true });
+        const tutorResult = await executeTutor(cleanQuery, false, { resetProgress: true });
 
         const summary = statusRef.current || `Completed: ${cleanQuery}`;
+        const screenshotB64 = tutorResult?.screenshot_b64 || (tutorResult as any)?.screenshot_b64 || lastTutorResultRef.current?.screenshot_b64;
         await emit('blinky://mobile-status', {
           requestId: requestId || 'unknown',
           status: 'success',
           data: {
             response: summary,
             steps: currentGuideStepsRef.current,
+            screenshot_b64: screenshotB64,
           },
         });
       } catch (err: any) {

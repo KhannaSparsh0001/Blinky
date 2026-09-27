@@ -929,6 +929,25 @@ where
                 crate::platform::execute_unlock(parsed_pin.as_deref());
             } else if trimmed == "screenshot" {
                 crate::platform::execute_screenshot();
+            } else if trimmed == "media_play_pause" || trimmed == "play_pause" {
+                crate::platform::execute_media_play_pause();
+            } else if trimmed == "open_browser" || trimmed == "browser" || trimmed == "chrome" {
+                crate::platform::execute_open_browser();
+            } else if trimmed == "open_terminal" || trimmed == "terminal" {
+                crate::platform::execute_open_terminal();
+            } else if trimmed == "toggle_lights" || trimmed == "lights" {
+                let root = project_root();
+                let python = python_executable(&root);
+                let script = root.join("common").join("python").join("tools").join("esp32_light_tool.py");
+                tauri::async_runtime::spawn(async move {
+                    let _ = TokioCommand::new(python)
+                        .arg("-u")
+                        .arg(&script)
+                        .arg("toggle")
+                        .current_dir(&root)
+                        .output()
+                        .await;
+                });
             } else if trimmed == "get_sarvam_key" {
                 let key = get_sarvam_api_key();
                 let resp = serde_json::json!({

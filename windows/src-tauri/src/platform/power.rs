@@ -411,3 +411,19 @@ pub fn execute_volume_mute() {
     let _ = send_keypress(0xAD);
 }
 
+pub fn execute_media_play_pause() {
+    let _ = send_keypress(0xB3);
+}
+
+pub fn execute_open_browser() {
+    let _ = Command::new("cmd")
+        .args(["/c", "start", "https://www.google.com"])
+        .spawn();
+}
+
+pub fn execute_open_terminal() {
+    if Command::new("wt").spawn().is_err() {
+        let _ = Command::new("powershell").spawn();
+    }
+}
+

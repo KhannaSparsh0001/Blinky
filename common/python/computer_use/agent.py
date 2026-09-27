@@ -180,8 +180,25 @@ def handle_media_playback_action(extracted_params: dict, query: str) -> ToolResu
 def try_run_agent_action(question: str, observation: dict[str, Any] | None = None) -> ToolResult | None:
     question_cleaned = question.strip().rstrip("?.!,;:")
 
+    # ESP32 Smart Light fast-path
+    try:
+        from tools.esp32_light_tool import resolve_esp32_light_request, handle_request as handle_esp32_light
+        esp32_params = resolve_esp32_light_request(question_cleaned)
+        if esp32_params:
+            res = handle_esp32_light(esp32_params)
+            msg = res.get("message") or "Smart light action completed."
+            return ToolResult(
+                res.get("success", False),
+                "esp32_light_tool",
+                msg,
+                res,
+            )
+    except Exception as exc:
+        LOGGER.debug("ESP32 light tool action failed: %s", exc)
+
     if wants_help_menu(question_cleaned, observation):
         return shortcut_tool("alt+h")
+
 
     play_match = PLAY_SPOTIFY_RE.match(question_cleaned)
     if play_match:
