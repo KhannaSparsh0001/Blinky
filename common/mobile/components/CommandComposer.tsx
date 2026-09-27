@@ -308,8 +308,8 @@ const styles = StyleSheet.create({
   },
   inputRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    minHeight: 48,
+    alignItems: 'center',
+    minHeight: 44,
   },
   micBtn: {
     width: 44,
@@ -323,16 +323,14 @@ const styles = StyleSheet.create({
     flex: 1,
     marginHorizontal: 8,
     justifyContent: 'center',
-    minHeight: 44,
-    paddingVertical: 4,
   },
   textInput: {
     ...typography.bodyLarge,
     fontSize: 16,
     color: colors.textPrimary,
+    minHeight: 40,
     maxHeight: 120,
-    paddingTop: 8,
-    paddingBottom: 8,
+    justifyContent: 'center',
   },
   rightActions: {
     flexDirection: 'row',
