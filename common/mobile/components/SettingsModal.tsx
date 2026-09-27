@@ -252,7 +252,7 @@ const styles = StyleSheet.create({
     ...typography.bodyMedium,
     color: colors.textPrimary,
     paddingVertical: 12,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {}),
   },
   inputDisabled: {
     opacity: 0.5,
