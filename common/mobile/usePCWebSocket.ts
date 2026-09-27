@@ -26,6 +26,10 @@ function loadNativeSecureSocketModule(): NativeSecureSocketModule | null {
   }
 }
 
+export interface SystemCpu {
+  percent: number;
+}
+
 export interface SystemMemory {
   total_mb: number;
   used_mb: number;
@@ -36,11 +40,13 @@ export interface SystemBattery {
   has_battery: boolean;
   percent: number | null;
   is_charging: boolean;
+  power_plugged?: boolean;
   status: string;
 }
 
 export interface SystemNetwork {
   mac_address: string;
+  ip_address?: string;
   interface: string;
 }
 
@@ -51,6 +57,8 @@ export interface SystemInfo {
   platform: 'linux' | 'windows';
   compositor: string;
   uptime_seconds: number;
+  cpu?: SystemCpu;
+  cpu_percent?: number;
   memory: SystemMemory;
   battery: SystemBattery;
   network: SystemNetwork;
@@ -200,6 +208,11 @@ export function usePCWebSocket() {
               nativeRef.current.authenticated = true;
               setStatus('connected');
               setErrorMsg(null);
+              setTimeout(() => {
+                if (nativeRef.current?.authenticated) {
+                  void nativeModule.sendText(socketId, 'get_system_info');
+                }
+              }, 300);
             } else {
               disconnect('The PC rejected the remote token.');
             }
@@ -367,12 +380,12 @@ export function usePCWebSocket() {
   const fetchSystemInfo = useCallback(() => {
     return sendCommand('get_system_info');
   }, [sendCommand]);
-  const sendQuery = useCallback((query: string, requestId: string) => {
+  const sendQuery = useCallback((query: string, requestId: string, attachedImage?: string, attachedFile?: { name: string; base64: string; mimeType?: string; size?: number }) => {
+    const payload = JSON.stringify({ requestId, query, attachedImage, attachedFile });
     if (RELEASE_TRANSPORT) {
-      return sendNativeText(JSON.stringify({ requestId, query }));
+      return sendNativeText(payload);
     }
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const payload = JSON.stringify({ requestId, query });
       wsRef.current.send(payload);
       return true;
     }

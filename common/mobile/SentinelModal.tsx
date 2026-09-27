@@ -75,7 +75,7 @@ export const SentinelModal: React.FC<SentinelModalProps> = ({
 
   const hasBattery = systemInfo?.battery?.has_battery;
   const batteryPercent = systemInfo?.battery?.percent ?? null;
-  const isCharging = systemInfo?.battery?.is_charging ?? false;
+  const isCharging = systemInfo?.battery?.is_charging || systemInfo?.battery?.power_plugged || false;
   const batteryStatusText = systemInfo?.battery?.status || 'AC Mains Nominal';
 
   return (

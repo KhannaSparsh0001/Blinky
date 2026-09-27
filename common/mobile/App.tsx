@@ -617,7 +617,6 @@ export default function App() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   const [showSettings, setShowSettings] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
 
   // Haptic feedback for Antigravity events
@@ -687,7 +686,6 @@ export default function App() {
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
 
   const handleCaptureScreenshot = () => {
-    setShowMenu(false);
     if (!isConnected) {
       Alert.alert('Error', 'Failed to capture screenshot. Check link to PC.');
       return;
@@ -1068,7 +1066,18 @@ export default function App() {
     const queryToSend = attachedFile
       ? `[Referenced Files: ${attachedFile.name}] ${query}`.trim()
       : query;
-    const success = sendQuery(queryToSend, generateUuid());
+    const attachedImage = (attachedFile?.type === 'image' && attachedFile.base64)
+      ? attachedFile.base64
+      : undefined;
+    const attachedFilePayload = attachedFile?.base64
+      ? {
+          name: attachedFile.name,
+          base64: attachedFile.base64,
+          mimeType: attachedFile.mimeType,
+          size: attachedFile.size,
+        }
+      : undefined;
+    const success = sendQuery(queryToSend, generateUuid(), attachedImage, attachedFilePayload);
     if (!success) {
       setAgentStatus('error');
       setMessages(prev => prev.map(m => {
@@ -1157,21 +1166,41 @@ export default function App() {
       formData.append('model', 'saaras:v3');
       formData.append('language_code', 'en-IN');
 
-      const res = await fetch('https://api.sarvam.ai/speech-to-text', {
-        method: 'POST',
-        headers: {
-          'api-subscription-key': apiKeyToUse,
-        },
-        body: formData,
+      // Use XMLHttpRequest to avoid Expo fetch's "Unsupported FormDataPart implementation" error
+      // Expo's fetch polyfill does not support React Native's file URI object in FormData,
+      // whereas React Native's XMLHttpRequest natively handles `{ uri, type, name }` multipart uploads.
+      const data: any = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', 'https://api.sarvam.ai/speech-to-text');
+        xhr.setRequestHeader('api-subscription-key', apiKeyToUse);
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch (e) {
+              reject(new Error('Invalid JSON response from Sarvam STT'));
+            }
+          } else {
+            let errorMsg = `HTTP ${xhr.status}`;
+            try {
+              const parsed = JSON.parse(xhr.responseText);
+              if (parsed.message) errorMsg = parsed.message;
+            } catch {}
+            reject(new Error(errorMsg));
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error('Network error during speech recognition upload'));
+        };
+
+        xhr.ontimeout = () => {
+          reject(new Error('Speech recognition request timed out'));
+        };
+
+        xhr.send(formData);
       });
-
-      if (!res.ok) {
-        let payload: any = {};
-        try { payload = await res.json(); } catch {}
-        throw new Error(payload.message || `HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
       const transcript = data.transcript?.trim() || '';
 
       if (transcript) {
@@ -1504,7 +1533,6 @@ export default function App() {
       return;
     }
     triggerHaptic('heavy');
-    setShowMenu(false);
     Alert.alert(
       `Confirm ${label}`,
       `Are you sure you want to trigger "${label}" on your PC?`,
@@ -1534,7 +1562,6 @@ export default function App() {
   /** Unlocks the host workstation by waking displays, dismissing lock screen, and typing optional PIN. */
   const handleUnlockWorkstation = (pin?: string) => {
     triggerHaptic('heavy');
-    setShowMenu(false);
     const targetPin = (pin !== undefined ? pin : workstationPin).trim();
     const cmd = targetPin ? `unlock:${targetPin}` : 'unlock';
     const success = sendCommand(cmd as any);
@@ -1550,7 +1577,6 @@ export default function App() {
   /** Handles Wake PC button tap, offering unlock if host workstation is locked. */
   const onWakePcPressed = () => {
     triggerHaptic('heavy');
-    setShowMenu(false);
     if (isWorkstationLocked && isConnected) {
       Alert.alert(
         'Workstation Locked',
@@ -1609,7 +1635,6 @@ export default function App() {
 
   const triggerQuickAction = (command: any, label: string) => {
     triggerHaptic('medium');
-    setShowMenu(false);
     if (command === 'unlock') {
       handleUnlockWorkstation();
       return;
@@ -1643,33 +1668,7 @@ export default function App() {
             status={status}
             isConnected={isConnected}
             onPressConnection={() => setShowSettings(!showSettings)}
-            onPressMenu={() => setShowMenu(!showMenu)}
           />
-
-          {/* Three Dots Dropdown Overlay Menu (Temporary fallback) */}
-          {showMenu && (
-            <View style={styles.dropdownMenu}>
-              <TouchableOpacity style={styles.dropdownItem} onPress={() => { triggerHaptic('light'); setShowMenu(false); setShowSettings(!showSettings); }}>
-                <Ionicons name="settings-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
-                <Text style={styles.dropdownText}>Local Link Setup</Text>
-              </TouchableOpacity>
-              <View style={styles.dropdownDivider} />
-              <TouchableOpacity style={styles.dropdownItem} onPress={onWakePcPressed} disabled={isSendingWol}>
-                <Ionicons name="flash" size={18} color="#10B981" style={styles.dropdownIcon} />
-                <Text style={[styles.dropdownText, { color: '#10B981', fontWeight: '600' }]}>
-                  {isSendingWol ? 'Waking PC...' : isWorkstationLocked ? 'Wake / Unlock PC' : 'Wake PC (WoL)'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem} onPress={() => { setShowMenu(false); triggerQuickAction('volume_mute', 'Mute'); }}>
-                <Ionicons name="volume-mute-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
-                <Text style={styles.dropdownText}>Mute Volume</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem} onPress={() => { setShowMenu(false); handleCaptureScreenshot(); }}>
-                <Ionicons name="crop-outline" size={18} color="#FFFFFF" style={styles.dropdownIcon} />
-                <Text style={styles.dropdownText}>Capture Screenshot</Text>
-              </TouchableOpacity>
-            </View>
-          )}
 
           {/* Settings modal extracted to SettingsModal.tsx */}
 
@@ -1853,6 +1852,10 @@ export default function App() {
                 setActionFeedback(`Power command dispatched: ${action}`);
                 setTimeout(() => setActionFeedback(null), 2500);
               }}
+              onWakePc={onWakePcPressed}
+              isSendingWol={isSendingWol}
+              isWorkstationLocked={isWorkstationLocked}
+              onRefresh={fetchSystemInfo}
             />
           )}
 
@@ -1972,44 +1975,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  dropdownMenu: {
-    position: 'absolute',
-    top: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 52 : 96,
-    right: 20,
-    width: 220,
-    backgroundColor: '#16151A',
-    borderRadius: 16,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    zIndex: 1000,
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
-  },
-  dropdownItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  dropdownIcon: {
-    marginRight: 12,
-    width: 20,
-    textAlign: 'center',
-  },
-  dropdownText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  dropdownDivider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    marginVertical: 4,
-  },
+
   connectionCard: {
     backgroundColor: 'rgba(21, 17, 43, 0.9)',
     borderRadius: 24,
