@@ -331,6 +331,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     maxHeight: 120,
     justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
   rightActions: {
     flexDirection: 'row',
