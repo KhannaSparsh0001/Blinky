@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, radius, spacing } from '../theme/theme';
 
@@ -8,7 +8,6 @@ interface ChatHomeProps {
 }
 
 export function ChatHome({ onQuickAction }: ChatHomeProps) {
-  // Simple time-based greeting
   const hour = new Date().getHours();
   let greeting = 'Good morning,';
   if (hour >= 12 && hour < 17) greeting = 'Good afternoon,';
@@ -25,22 +24,22 @@ export function ChatHome({ onQuickAction }: ChatHomeProps) {
         Control your PC, just a message away.
       </Text>
 
-      <View style={styles.actionsRow}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionsRow}>
         <TouchableOpacity style={styles.actionBtn} onPress={() => onQuickAction('Open app')} activeOpacity={0.7}>
-          <Ionicons name="play-circle-outline" size={20} color={colors.textPrimary} style={styles.actionIcon} />
+          <Ionicons name="play-circle-outline" size={18} color={colors.textPrimary} style={styles.actionIcon} />
           <Text style={styles.actionText}>Open app</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionBtn} onPress={() => onQuickAction('Run command')} activeOpacity={0.7}>
-          <Ionicons name="terminal-outline" size={20} color={colors.textPrimary} style={styles.actionIcon} />
+          <Ionicons name="terminal-outline" size={18} color={colors.textPrimary} style={styles.actionIcon} />
           <Text style={styles.actionText}>Run command</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionBtn} onPress={() => onQuickAction('Screenshot')} activeOpacity={0.7}>
-          <Ionicons name="scan-outline" size={20} color={colors.textPrimary} style={styles.actionIcon} />
+          <Ionicons name="scan-outline" size={18} color={colors.textPrimary} style={styles.actionIcon} />
           <Text style={styles.actionText}>Screenshot</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -76,12 +75,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   actionBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surfaceElevated,
-    paddingVertical: spacing.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.borderLight,
