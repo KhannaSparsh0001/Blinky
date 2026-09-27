@@ -34,6 +34,7 @@ struct TutorRequest {
     conversation_history: Option<serde_json::Value>,
     web_search_enabled: Option<bool>,
     agent_mode: Option<bool>,
+    attached_image: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +64,7 @@ async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<serde_json::
         request.conversation_history.as_ref(),
         request.web_search_enabled.unwrap_or(false),
         request.agent_mode.unwrap_or(false),
+        request.attached_image.as_deref(),
         command.clone(),
         overlay.clone(),
     );
@@ -469,6 +471,7 @@ fn run_python_worker(
     conversation_history: Option<&serde_json::Value>,
     web_search_enabled: bool,
     agent_mode: bool,
+    attached_image: Option<&str>,
     command_window: Option<WebviewWindow>,
     overlay_window: Option<WebviewWindow>,
 ) -> Result<String, String> {
@@ -508,6 +511,7 @@ fn run_python_worker(
         "web_search_enabled": web_search_enabled,
         "agent_mode": agent_mode,
         "ignored_rects": if command_rect.is_null() { vec![] } else { vec![command_rect] },
+        "attached_image": attached_image,
     });
 
     if let Some(mut stdin) = child.stdin.take() {

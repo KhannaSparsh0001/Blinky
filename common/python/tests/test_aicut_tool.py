@@ -406,3 +406,23 @@ def test_get_fast_video_encoder_args():
     assert "-preset" in args
 
 
+def test_natural_language_trim_and_referenced_files():
+    from tools.aicut_tool import resolve_aicut_request, _extract_trim_times
+
+    # 1. Test duration extraction
+    assert _extract_trim_times("trim to 1 minute") == (0.0, 60.0)
+    assert _extract_trim_times("trim to 30 seconds") == (0.0, 30.0)
+    assert _extract_trim_times("trim video from 10 to 40") == (10.0, 40.0)
+    assert _extract_trim_times("cut first 15s") == (0.0, 15.0)
+    assert _extract_trim_times("trim dance.mp4 to 30 seconds") == (0.0, 30.0)
+
+    # 2. Test query resolution with referenced files
+    res = resolve_aicut_request("[Referenced Files: hw2soon.mp4] trim to 1 minute")
+    assert res is not None
+    assert res["action"] == "trim"
+    assert res["start_seconds"] == 0.0
+    assert res["end_seconds"] == 60.0
+    assert res["video_path"] == "hw2soon.mp4"
+
+
+

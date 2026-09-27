@@ -54,6 +54,7 @@ interface TargetClickedPayload {
 interface TutorRunOptions {
   resetProgress?: boolean;
   preserveStepsDuringRun?: boolean;
+  attachedImage?: string;
 }
 
 function getLinkText(children: AnchorHTMLAttributes<HTMLAnchorElement>['children']): string {
@@ -1234,7 +1235,18 @@ export function CommandBar() {
     let isPointing = false;
     try {
       let result: TutorResult;
-      if (agentModeEnabled) {
+      if (options.attachedImage) {
+        // Fast-path: Attached photo/image query (mobile camera or gallery) -> Gemini Vision
+        result = await runTutor(
+          effectiveQuery,
+          previousQuestion,
+          currentProgress(),
+          conversationHistory,
+          false,
+          false,
+          options.attachedImage,
+        );
+      } else if (agentModeEnabled) {
         // Run the agent first — it may handle everything via MCP tools
         const agentResult = await runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, false, true);
 
@@ -1825,8 +1837,8 @@ export function CommandBar() {
 
   // Listen for remote mobile queries: executes with native PC Blinky tutor & autopilot pipeline
   useEffect(() => {
-    const unlisten = listen<{ requestId: string; query: string }>('blinky://mobile-query', async (event) => {
-      const { requestId, query } = event.payload;
+    const unlisten = listen<{ requestId: string; query: string; attachedImage?: string }>('blinky://mobile-query', async (event) => {
+      const { requestId, query, attachedImage } = event.payload;
       if (!query || !query.trim()) return;
       const cleanQuery = query.trim();
       setQuestion(cleanQuery);
@@ -1834,12 +1846,15 @@ export function CommandBar() {
         await emit('blinky://mobile-status', {
           requestId: requestId || 'unknown',
           status: 'processing',
-          data: { message: `Executing '${cleanQuery}' with AI companion...`, percent: 40 },
+          data: {
+            message: attachedImage ? 'Inspecting photo with Gemini Vision...' : `Executing '${cleanQuery}' with AI companion...`,
+            percent: 40,
+          },
         });
 
-        const tutorResult = await executeTutor(cleanQuery, false, { resetProgress: true });
+        const tutorResult = await executeTutor(cleanQuery, false, { resetProgress: true, attachedImage });
 
-        const summary = statusRef.current || `Completed: ${cleanQuery}`;
+        const summary = tutorResult?.summary || statusRef.current || `Completed: ${cleanQuery}`;
         const screenshotB64 = tutorResult?.screenshot_b64 || (tutorResult as any)?.screenshot_b64 || lastTutorResultRef.current?.screenshot_b64;
         await emit('blinky://mobile-status', {
           requestId: requestId || 'unknown',

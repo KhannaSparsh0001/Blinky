@@ -6,6 +6,7 @@ export interface AttachedFile {
   type?: string;
   size?: number;
   mimeType?: string;
+  base64?: string;
 }
 
 export interface Message {

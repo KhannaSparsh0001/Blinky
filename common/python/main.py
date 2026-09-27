@@ -278,13 +278,15 @@ def run(
     web_search_enabled: bool = False,
     agent_mode: bool = False,
     ignored_rects: list[dict] | None = None,
+    attached_image: str | None = None,
 ) -> dict:
     """
     RULE: Screenshots/OCR are ONLY taken when BOTH web_search_enabled=False
     AND agent_mode=False. The priority order is:
-      1. web_search_enabled → SearXNG pipeline (no OCR, no screenshots)
-      2. agent_mode        → MCP desktop automation (no OCR, no screenshots)
-      3. default           → vision pipeline with screenshots + OCR
+      1. attached_image    → Gemini Vision multimodal analysis (no screen OCR)
+      2. web_search_enabled → SearXNG pipeline (no OCR, no screenshots)
+      3. agent_mode        → MCP desktop automation (no OCR, no screenshots)
+      4. default           → vision pipeline with screenshots + OCR
     """
     started = time.perf_counter()
     warnings: list[str] = []
@@ -292,6 +294,34 @@ def run(
     # Clean wake word prefixes from the incoming question (e.g., "Hey Blinky", "Blinky")
     question = question.strip()
     question = re.sub(r"^(?:hey\s+)?blinky[\s,.:;!?]*", "", question, flags=re.IGNORECASE).strip()
+
+    # PATH 0: Attached Image (Mobile Camera/Gallery or Desktop Upload) -> Gemini Vision
+    if attached_image:
+        LOGGER.info("Attached image provided (%d chars) — analyzing with Gemini Vision", len(attached_image))
+        _emit_status("analyzing", "Inspecting photo with Gemini Vision...")
+        try:
+            from ai.gemini_client import ask_gemini_vision
+            clean_question = re.sub(r"^\[Referenced Files:[^\]]+\]\s*", "", question, flags=re.IGNORECASE).strip()
+            prompt = clean_question or "What is in this image? Describe what you see in detail."
+            vision_result = ask_gemini_vision(prompt=prompt, image_input=attached_image)
+            answer_text = vision_result.get("text", "")
+            return {
+                "summary": answer_text,
+                "steps": [],
+                "warnings": warnings,
+                "screenshot_b64": attached_image,
+                "computer_use": True,
+            }
+        except Exception as e:
+            LOGGER.exception("Gemini Vision failed on attached image")
+            warnings.append(f"Gemini Vision error: {e}")
+            return {
+                "summary": f"Could not analyze image with Gemini Vision: {e}",
+                "steps": [],
+                "warnings": warnings,
+                "screenshot_b64": attached_image,
+                "computer_use": True,
+            }
 
     if ignored_rects:
         from utils.window import set_ignored_overlay_rects
@@ -1828,10 +1858,20 @@ def main() -> None:
         web_search_enabled = bool(payload.get("web_search_enabled", False))
         agent_mode = bool(payload.get("agent_mode", False))
         ignored_rects = payload.get("ignored_rects")
-        if not question:
-            raise ValueError("Question is required.")
+        attached_image = payload.get("attached_image") or payload.get("attachedImage")
+        if not question and not attached_image:
+            raise ValueError("Question or attached image is required.")
 
-        result = run(question, previous_question, progress, conversation_history, web_search_enabled, agent_mode, ignored_rects)
+        result = run(
+            question,
+            previous_question,
+            progress,
+            conversation_history,
+            web_search_enabled,
+            agent_mode,
+            ignored_rects,
+            attached_image=attached_image,
+        )
         print(json.dumps(result, ensure_ascii=True))
     except Exception as exc:
         LOGGER.exception("Worker failed")

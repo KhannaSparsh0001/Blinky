@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, typography, radius, spacing } from '../theme/theme';
 import type { AttachedFile } from '../types';
+import { readUriAsBase64 } from '../lib/fileTransfer';
 
 // LayoutAnimation works automatically on Android Fabric (New Architecture)
 
@@ -99,11 +100,20 @@ export function CommandComposer({
         const result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images'],
           allowsEditing: false,
-          quality: 0.8,
+          quality: 0.7,
+          base64: true,
         });
         if (!result.canceled && result.assets && result.assets.length > 0) {
           const asset = result.assets[0];
           const sizeMB = asset.fileSize ? Number((asset.fileSize / (1024 * 1024)).toFixed(2)) : undefined;
+          let b64 = asset.base64;
+          if (!b64 && asset.uri) {
+            try {
+              b64 = await readUriAsBase64(asset.uri);
+            } catch (readErr) {
+              console.warn('Failed to read camera photo base64:', readErr);
+            }
+          }
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
           setAttachedFile({
             uri: asset.uri,
@@ -111,17 +121,27 @@ export function CommandComposer({
             size: sizeMB,
             type: 'image',
             mimeType: asset.mimeType || 'image/jpeg',
+            base64: b64 || undefined,
           });
         }
       } else if (option === 'Image') {
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ['images'],
           allowsEditing: false,
-          quality: 0.8,
+          quality: 0.7,
+          base64: true,
         });
         if (!result.canceled && result.assets && result.assets.length > 0) {
           const asset = result.assets[0];
           const sizeMB = asset.fileSize ? Number((asset.fileSize / (1024 * 1024)).toFixed(2)) : undefined;
+          let b64 = asset.base64;
+          if (!b64 && asset.uri) {
+            try {
+              b64 = await readUriAsBase64(asset.uri);
+            } catch (readErr) {
+              console.warn('Failed to read image library base64:', readErr);
+            }
+          }
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
           setAttachedFile({
             uri: asset.uri,
@@ -129,6 +149,7 @@ export function CommandComposer({
             size: sizeMB,
             type: 'image',
             mimeType: asset.mimeType || 'image/jpeg',
+            base64: b64 || undefined,
           });
         }
       } else if (option === 'File') {
@@ -139,13 +160,24 @@ export function CommandComposer({
         if (!result.canceled && result.assets && result.assets.length > 0) {
           const asset = result.assets[0];
           const sizeMB = asset.size ? Number((asset.size / (1024 * 1024)).toFixed(2)) : undefined;
+          let b64: string | undefined = undefined;
+          if (asset.uri) {
+            try {
+              b64 = await readUriAsBase64(asset.uri);
+            } catch (readErr) {
+              console.warn('Failed to read document/file base64:', readErr);
+            }
+          }
+          const isImg = asset.mimeType?.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/i.test(asset.name);
+          const isVid = asset.mimeType?.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm)$/i.test(asset.name);
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
           setAttachedFile({
             uri: asset.uri,
             name: asset.name,
             size: sizeMB,
-            type: 'document',
+            type: isImg ? 'image' : (isVid ? 'video' : 'document'),
             mimeType: asset.mimeType,
+            base64: b64 || undefined,
           });
         }
       } else if (option === 'Screenshot') {

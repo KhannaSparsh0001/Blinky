@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+_PARENT = Path(__file__).resolve().parent.parent
+if str(_PARENT) not in sys.path:
+    sys.path.insert(0, str(_PARENT))
+
 import time
 import pytest
 from main import classify_request, run, run_screenshot_tool, run_esp32_light_tool
@@ -72,3 +79,21 @@ def test_esp32_light_tool_execution_zero_ocr():
     assert res["ocr"]["count"] == 0
     assert len(res["ocr"]["items"]) == 0
     assert res["is_continuation"] is False
+
+
+def test_attached_image_gemini_vision_fast_path():
+    import io
+    import base64
+    from PIL import Image
+
+    img = Image.new("RGB", (100, 100), color="purple")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+
+    res = run("what color is this?", attached_image=b64)
+    assert res["steps"] == []
+    assert res["screenshot_b64"] == b64
+    assert res["computer_use"] is True
+    assert "purple" in res["summary"].lower() or "violet" in res["summary"].lower()
+

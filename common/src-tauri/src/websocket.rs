@@ -64,6 +64,8 @@ impl AgentDaemon {
         // Forward environment variables
         for var in &[
             "GROQ_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
             "BLINKY_AI_PROVIDER",
             "BLINKY_OLLAMA_URL",
             "BLINKY_OLLAMA_MODEL",
@@ -1032,9 +1034,46 @@ where
                     trimmed.to_string()
                 };
 
+                let attached_image = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    parsed
+                        .get("attachedImage")
+                        .or_else(|| parsed.get("attached_image"))
+                        .and_then(|img| img.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                };
+
+                let mut resolved_query = query_text.clone();
+                let mut attached_file_path: Option<String> = None;
+
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    if let Some(file_obj) = parsed.get("attachedFile").or_else(|| parsed.get("attached_file")) {
+                        let file_name = file_obj.get("name").and_then(|n| n.as_str()).unwrap_or("uploaded_file");
+                        let b64_content = file_obj.get("base64").and_then(|b| b.as_str());
+
+                        if let Some(b64) = b64_content {
+                            if let Ok(decoded_bytes) = BASE64.decode(b64) {
+                                let uploads_dir = std::env::temp_dir().join("blinky_uploads");
+                                let _ = std::fs::create_dir_all(&uploads_dir);
+                                let target_file = uploads_dir.join(file_name);
+                                if std::fs::write(&target_file, &decoded_bytes).is_ok() {
+                                    let saved_path_str = target_file.to_string_lossy().to_string();
+                                    println!("blinky: saved uploaded mobile file to: {}", saved_path_str);
+                                    attached_file_path = Some(saved_path_str.clone());
+                                    // Replace referenced file name in query with absolute path
+                                    let ref_pattern = format!("[Referenced Files: {}]", file_name);
+                                    let ref_replacement = format!("[Referenced Files: {}]", saved_path_str);
+                                    resolved_query = resolved_query.replace(&ref_pattern, &ref_replacement);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 println!(
-                    "blinky: received remote query from mobile: '{}' (req_id: {})",
-                    query_text, request_id
+                    "blinky: received remote query from mobile: '{}' (req_id: {}, has_image: {}, has_file: {})",
+                    resolved_query, request_id, attached_image.is_some(), attached_file_path.is_some()
                 );
 
                 // PC & Mobile Command Unification:
@@ -1045,7 +1084,9 @@ where
                     "blinky://mobile-query",
                     serde_json::json!({
                         "requestId": request_id,
-                        "query": query_text
+                        "query": resolved_query,
+                        "attachedImage": attached_image,
+                        "attachedFile": attached_file_path
                     }),
                 );
             } else {

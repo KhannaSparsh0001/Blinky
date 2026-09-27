@@ -9,6 +9,7 @@ export async function runTutor(
   conversationHistory?: TutorConversationMessage[],
   webSearchEnabled?: boolean,
   agentMode?: boolean,
+  attachedImage?: string,
 ): Promise<TutorResult> {
   return invoke<TutorResult>('run_tutor', {
     request: {
@@ -18,6 +19,7 @@ export async function runTutor(
       conversation_history: conversationHistory,
       web_search_enabled: webSearchEnabled,
       agent_mode: agentMode,
+      attached_image: attachedImage,
     },
   });
 }

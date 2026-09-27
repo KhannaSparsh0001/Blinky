@@ -8,10 +8,9 @@ interface BrandHeaderProps {
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   isConnected: boolean;
   onPressConnection: () => void;
-  onPressMenu: () => void;
 }
 
-export function BrandHeader({ status, isConnected, onPressConnection, onPressMenu }: BrandHeaderProps) {
+export function BrandHeader({ status, isConnected, onPressConnection }: BrandHeaderProps) {
   return (
     <View style={styles.header}>
       {/* Brand / Logo */}
@@ -47,18 +46,6 @@ export function BrandHeader({ status, isConnected, onPressConnection, onPressMen
             {isConnected ? 'My PC' : status === 'connecting' ? 'Connecting...' : 'Disconnected'}
           </Text>
           <Ionicons name="chevron-down" size={14} color={colors.textSecondary} style={{ marginLeft: 4 }} />
-        </TouchableOpacity>
-
-        {/* Overflow Menu Button */}
-        <TouchableOpacity
-          style={styles.menuButton}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onPressMenu();
-          }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="ellipsis-horizontal" size={18} color={colors.textPrimary} />
         </TouchableOpacity>
       </View>
     </View>
@@ -109,15 +96,5 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textPrimary,
     fontWeight: '500',
-  },
-  menuButton: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderLight,
   },
 });
