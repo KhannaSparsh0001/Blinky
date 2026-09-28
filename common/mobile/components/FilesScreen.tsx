@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { colors, typography, radius, spacing } from '../theme/theme';
 import { QuickAccessFolder, FsEntry, FsDirContents, FsFileData } from '../usePCWebSocket';
 
@@ -38,7 +39,57 @@ interface FilesScreenProps {
   onOpenFileOnMobile?: (path: string) => void;
   onClearFsFileData?: () => void;
   onResetDirectory?: () => void;
+  onPreviewImage?: (uri: string) => void;
   onAskBlinky?: (file: FsEntry) => void;
+}
+
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'];
+const TEXT_EXTENSIONS = [
+  'txt', 'md', 'json', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css',
+  'scss', 'rs', 'sh', 'bat', 'ps1', 'xml', 'yaml', 'yml', 'toml',
+  'ini', 'cfg', 'log', 'sql', 'c', 'cpp', 'h', 'java', 'kt'
+];
+
+function isImageFile(ext: string): boolean {
+  return IMAGE_EXTENSIONS.includes((ext || '').toLowerCase());
+}
+
+function isTextFile(ext: string): boolean {
+  return TEXT_EXTENSIONS.includes((ext || '').toLowerCase());
+}
+
+function getMimeType(ext: string): string {
+  const clean = (ext || '').toLowerCase();
+  switch (clean) {
+    case 'pdf': return 'application/pdf';
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'gif': return 'image/gif';
+    case 'webp': return 'image/webp';
+    case 'svg': return 'image/svg+xml';
+    case 'bmp': return 'image/bmp';
+    case 'txt':
+    case 'log': return 'text/plain';
+    case 'json': return 'application/json';
+    case 'html': return 'text/html';
+    case 'css': return 'text/css';
+    case 'js': return 'application/javascript';
+    case 'ts': return 'application/typescript';
+    case 'mp4': return 'video/mp4';
+    case 'mkv': return 'video/x-matroska';
+    case 'mov': return 'video/quicktime';
+    case 'mp3': return 'audio/mpeg';
+    case 'wav': return 'audio/wav';
+    case 'doc': return 'application/msword';
+    case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'xls': return 'application/vnd.ms-excel';
+    case 'xlsx': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case 'ppt': return 'application/vnd.ms-powerpoint';
+    case 'pptx': return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case 'zip': return 'application/zip';
+    default: return '*/*';
+  }
 }
 
 const FALLBACK_FOLDERS: QuickAccessFolder[] = [
@@ -155,6 +206,7 @@ export function FilesScreen({
   onOpenFileOnMobile,
   onClearFsFileData,
   onResetDirectory,
+  onPreviewImage,
   onAskBlinky,
 }: FilesScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -163,6 +215,7 @@ export function FilesScreen({
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [textPreview, setTextPreview] = useState<{ name: string; content: string } | null>(null);
   const searchTimeoutRef = useRef<any>(null);
 
   // Pan gesture for sliding down bottom sheet toastbar
@@ -212,7 +265,7 @@ export function FilesScreen({
     }
   }, [isConnected]);
 
-  // Handle incoming mobile file data and open natively
+  // Handle incoming mobile file data and open directly without showing send/share menu
   useEffect(() => {
     if (fsFileData && isDownloading) {
       setIsDownloading(false);
@@ -222,9 +275,45 @@ export function FilesScreen({
           await FileSystem.writeAsStringAsync(localUri, fsFileData.base64, {
             encoding: FileSystem.EncodingType.Base64,
           });
-          setActionFeedback(`Opened on mobile: ${fsFileData.name}`);
-          onClearFsFileData?.();
+
+          const ext = (fsFileData.name.includes('.') ? fsFileData.name.split('.').pop() || '' : '').toLowerCase();
           setSelectedFile(null);
+          onClearFsFileData?.();
+
+          // 1. Direct Image Viewer (in-app pinch-to-zoom, no OS send dialog)
+          if (isImageFile(ext)) {
+            setActionFeedback(`Viewing image: ${fsFileData.name}`);
+            onPreviewImage?.(localUri);
+            return;
+          }
+
+          // 2. Direct Text / Code Reader (in-app modal, no OS send dialog)
+          if (isTextFile(ext)) {
+            setActionFeedback(`Opening reader: ${fsFileData.name}`);
+            const textContent = await FileSystem.readAsStringAsync(localUri, {
+              encoding: FileSystem.EncodingType.UTF8,
+            });
+            setTextPreview({ name: fsFileData.name, content: textContent });
+            return;
+          }
+
+          // 3. Direct PDF & Document Viewer via Android ACTION_VIEW (opens in default viewer directly without Send)
+          if (Platform.OS === 'android') {
+            try {
+              const contentUri = await FileSystem.getContentUriAsync(localUri);
+              await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: contentUri,
+                flags: 1, // Intent.FLAG_GRANT_READ_URI_PERMISSION
+                type: getMimeType(ext),
+              });
+              setActionFeedback(`Opened: ${fsFileData.name}`);
+              return;
+            } catch (launcherErr) {
+              console.warn('[FilesScreen] IntentLauncher ACTION_VIEW fallback:', launcherErr);
+            }
+          }
+
+          // 4. Fallback for iOS or unsupported types
           if (await Sharing.isAvailableAsync()) {
             await Sharing.shareAsync(localUri, {
               dialogTitle: `Open ${fsFileData.name}`,
@@ -237,7 +326,7 @@ export function FilesScreen({
         }
       })();
     }
-  }, [fsFileData, isDownloading]);
+  }, [fsFileData, isDownloading, onPreviewImage, onClearFsFileData]);
 
   // Handle live search debounce
   const handleSearchChange = (text: string) => {
@@ -697,7 +786,7 @@ export function FilesScreen({
                 </View>
 
                 <View style={styles.modalActions}>
-                  {/* Open on Mobile button */}
+                  {/* Direct Open on Mobile button */}
                   {!selectedFile.is_dir && (
                     <TouchableOpacity
                       style={styles.mobileActionBtn}
@@ -708,10 +797,31 @@ export function FilesScreen({
                       {isDownloading ? (
                         <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
                       ) : (
-                        <Ionicons name="phone-portrait-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                        <Ionicons
+                          name={
+                            isImageFile(selectedFile.ext)
+                              ? 'image-outline'
+                              : selectedFile.ext.toLowerCase() === 'pdf'
+                              ? 'document-text-outline'
+                              : isTextFile(selectedFile.ext)
+                              ? 'reader-outline'
+                              : 'phone-portrait-outline'
+                          }
+                          size={18}
+                          color="#FFFFFF"
+                          style={{ marginRight: 8 }}
+                        />
                       )}
                       <Text style={styles.mobileActionBtnText}>
-                        {isDownloading ? 'Downloading from PC...' : 'Open on Mobile'}
+                        {isDownloading
+                          ? 'Opening directly...'
+                          : isImageFile(selectedFile.ext)
+                          ? 'View Image Directly'
+                          : selectedFile.ext.toLowerCase() === 'pdf'
+                          ? 'Open PDF Directly'
+                          : isTextFile(selectedFile.ext)
+                          ? 'Read File Directly'
+                          : 'Open Directly on Mobile'}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -749,6 +859,34 @@ export function FilesScreen({
             )}
           </Animated.View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* In-app Text / Code Reader Modal */}
+      <Modal
+        visible={!!textPreview}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setTextPreview(null)}
+      >
+        <View style={styles.textPreviewContainer}>
+          <View style={styles.textPreviewHeader}>
+            <View style={{ flex: 1, marginRight: spacing.sm }}>
+              <Text style={styles.textPreviewTitle} numberOfLines={1}>{textPreview?.name}</Text>
+              <Text style={styles.textPreviewSub}>In-app Reader</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.textPreviewCloseBtn}
+              onPress={() => setTextPreview(null)}
+            >
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.textPreviewScroll} contentContainerStyle={{ padding: spacing.md, paddingBottom: 60 }}>
+            <Text style={styles.textPreviewBody} selectable={true}>
+              {textPreview?.content}
+            </Text>
+          </ScrollView>
+        </View>
       </Modal>
     </View>
   );
@@ -1153,5 +1291,46 @@ const styles = StyleSheet.create({
   cancelActionBtnText: {
     ...typography.bodyMedium,
     color: colors.textMuted,
+  },
+  textPreviewContainer: {
+    flex: 1,
+    backgroundColor: colors.background,
+    paddingTop: Platform.OS === 'android' ? 40 : 50,
+  },
+  textPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+    backgroundColor: colors.surface,
+  },
+  textPreviewTitle: {
+    ...typography.heading3,
+    color: colors.textPrimary,
+  },
+  textPreviewSub: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+  },
+  textPreviewCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textPreviewScroll: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  textPreviewBody: {
+    ...typography.bodyMedium,
+    color: colors.textPrimary,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 22,
   },
 });

@@ -1909,6 +1909,7 @@ export default function App() {
               onOpenFileOnMobile={readFileForMobile}
               onClearFsFileData={clearFsFileData}
               onResetDirectory={resetDirectory}
+              onPreviewImage={setPreviewImageUri}
               onAskBlinky={(file) => {
                 setActiveTab('Chat');
                 setQueryText(`Can you examine this file on my PC: "${file.path}"?`);
