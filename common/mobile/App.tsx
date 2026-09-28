@@ -577,6 +577,17 @@ export default function App() {
     antigravityApproval,
     antigravityComplete,
     antigravityProgress,
+    quickAccessFolders,
+    currentDirectory,
+    recentFiles,
+    fsSearchResults,
+    fsLoading,
+    fsError,
+    fetchQuickAccess,
+    listDirectory,
+    fetchRecentFiles,
+    searchFiles,
+    openFileOnPC,
     connect,
     disconnect,
     sendCommand,
@@ -618,6 +629,14 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
+
+  // Sync PC files when opening Files tab
+  useEffect(() => {
+    if (isConnected && activeTab === 'Files') {
+      fetchQuickAccess();
+      fetchRecentFiles();
+    }
+  }, [isConnected, activeTab, fetchQuickAccess, fetchRecentFiles]);
 
   // Haptic feedback for Antigravity events
   useEffect(() => {
@@ -1860,7 +1879,24 @@ export default function App() {
           )}
 
           {activeTab === 'Files' && (
-            <FilesScreen isConnected={isConnected} />
+            <FilesScreen
+              isConnected={isConnected}
+              quickAccessFolders={quickAccessFolders}
+              currentDirectory={currentDirectory}
+              recentFiles={recentFiles}
+              searchResults={fsSearchResults}
+              isLoading={fsLoading}
+              fsError={fsError}
+              onFetchQuickAccess={fetchQuickAccess}
+              onListDirectory={listDirectory}
+              onFetchRecentFiles={fetchRecentFiles}
+              onSearch={searchFiles}
+              onOpenFileOnPC={openFileOnPC}
+              onAskBlinky={(file) => {
+                setActiveTab('Chat');
+                setQueryText(`Can you examine this file on my PC: "${file.path}"?`);
+              }}
+            />
           )}
 
           <SettingsModal 

@@ -1,107 +1,630 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  RefreshControl,
+  ActivityIndicator,
+  Modal,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, typography, radius, spacing } from '../theme/theme';
+import { QuickAccessFolder, FsEntry, FsDirContents } from '../usePCWebSocket';
 
 interface FilesScreenProps {
   isConnected: boolean;
-  onOpenFile?: (path: string) => void;
+  quickAccessFolders?: QuickAccessFolder[];
+  currentDirectory?: FsDirContents | null;
+  recentFiles?: FsEntry[];
+  searchResults?: FsEntry[];
+  isLoading?: boolean;
+  fsError?: string | null;
+  onFetchQuickAccess?: () => void;
+  onListDirectory?: (path?: string) => void;
+  onFetchRecentFiles?: () => void;
+  onSearch?: (query: string, path?: string) => void;
+  onOpenFileOnPC?: (path: string) => void;
+  onAskBlinky?: (file: FsEntry) => void;
 }
 
-const MOCK_FOLDERS = [
-  { id: 'desktop', name: 'Desktop', icon: 'desktop-outline', count: '12 items' },
-  { id: 'downloads', name: 'Downloads', icon: 'download-outline', count: '45 items' },
-  { id: 'documents', name: 'Documents', icon: 'document-text-outline', count: '128 items' },
-  { id: 'pictures', name: 'Pictures', icon: 'image-outline', count: '304 items' },
+const FALLBACK_FOLDERS: QuickAccessFolder[] = [
+  { id: 'desktop', name: 'Desktop', path: '', icon: 'desktop-outline', count: 'Synced' },
+  { id: 'downloads', name: 'Downloads', path: '', icon: 'download-outline', count: 'Synced' },
+  { id: 'documents', name: 'Documents', path: '', icon: 'document-text-outline', count: 'Synced' },
+  { id: 'pictures', name: 'Pictures', path: '', icon: 'image-outline', count: 'Synced' },
 ];
 
-const MOCK_RECENT = [
-  { id: '1', name: 'Project_Proposal.pdf', size: '2.4 MB', type: 'pdf', date: 'Today, 2:30 PM' },
-  { id: '2', name: 'screenshot_12.png', size: '840 KB', type: 'image', date: 'Yesterday' },
-  { id: '3', name: 'App.tsx', size: '12 KB', type: 'code', date: 'Yesterday' },
-  { id: '4', name: 'budget_2024.xlsx', size: '1.1 MB', type: 'excel', date: 'Oct 12' },
-];
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
-export function FilesScreen({ isConnected, onOpenFile }: FilesScreenProps) {
+function formatDate(ts: number): string {
+  if (!ts || ts === 0) return 'Recent';
+  const date = new Date(ts * 1000);
+  const now = new Date();
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  if (diffDays === 1) {
+    return 'Yesterday';
+  }
+  if (diffDays < 7) {
+    return `${diffDays} days ago`;
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function getFileIcon(ext: string, is_dir?: boolean): { name: keyof typeof Ionicons.glyphMap; color: string } {
+  if (is_dir) {
+    return { name: 'folder', color: '#FFB020' };
+  }
+  const cleanExt = (ext || '').toLowerCase();
+  switch (cleanExt) {
+    case 'pdf':
+      return { name: 'document-text', color: '#EF4444' };
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'svg':
+    case 'webp':
+    case 'bmp':
+    case 'ico':
+      return { name: 'image', color: '#3B82F6' };
+    case 'mp4':
+    case 'mkv':
+    case 'mov':
+    case 'avi':
+    case 'webm':
+      return { name: 'film', color: '#8B5CF6' };
+    case 'mp3':
+    case 'wav':
+    case 'flac':
+    case 'ogg':
+    case 'm4a':
+      return { name: 'musical-notes', color: '#10B981' };
+    case 'zip':
+    case 'rar':
+    case '7z':
+    case 'tar':
+    case 'gz':
+      return { name: 'archive', color: '#F59E0B' };
+    case 'ts':
+    case 'tsx':
+    case 'js':
+    case 'jsx':
+    case 'py':
+    case 'rs':
+    case 'c':
+    case 'cpp':
+    case 'cs':
+    case 'java':
+    case 'go':
+    case 'html':
+    case 'css':
+    case 'json':
+      return { name: 'code-slash', color: '#06B6D4' };
+    case 'xls':
+    case 'xlsx':
+    case 'csv':
+      return { name: 'stats-chart', color: '#10B981' };
+    case 'doc':
+    case 'docx':
+    case 'txt':
+    case 'md':
+      return { name: 'document-text', color: '#6366F1' };
+    default:
+      return { name: 'document', color: colors.textSecondary };
+  }
+}
+
+export function FilesScreen({
+  isConnected,
+  quickAccessFolders = [],
+  currentDirectory = null,
+  recentFiles = [],
+  searchResults = [],
+  isLoading = false,
+  fsError = null,
+  onFetchQuickAccess,
+  onListDirectory,
+  onFetchRecentFiles,
+  onSearch,
+  onOpenFileOnPC,
+  onAskBlinky,
+}: FilesScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [navHistory, setNavHistory] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<FsEntry | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const searchTimeoutRef = useRef<any>(null);
 
-  const handlePressItem = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // In a real app, this would request the file over WebSocket or trigger PC to open it
+  // Sync initial directories on load
+  useEffect(() => {
+    if (isConnected) {
+      onFetchQuickAccess?.();
+      onFetchRecentFiles?.();
+    }
+  }, [isConnected]);
+
+  // Handle live search debounce
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    if (!text.trim()) {
+      onSearch?.('', currentDirectory?.currentPath);
+      return;
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      onSearch?.(text.trim(), currentDirectory?.currentPath);
+    }, 350);
   };
 
-  const getFileIcon = (type: string) => {
-    switch(type) {
-      case 'pdf': return 'document-outline';
-      case 'image': return 'image-outline';
-      case 'code': return 'code-slash-outline';
-      case 'excel': return 'stats-chart-outline';
-      default: return 'document-outline';
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    onSearch?.('', currentDirectory?.currentPath);
+  };
+
+  const handleOpenFolder = (path: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (currentDirectory?.currentPath) {
+      setNavHistory((prev) => [...prev, currentDirectory.currentPath]);
+    }
+    onListDirectory?.(path);
+  };
+
+  const handleGoBack = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (navHistory.length > 0) {
+      const prevPath = navHistory[navHistory.length - 1];
+      setNavHistory((prev) => prev.slice(0, prev.length - 1));
+      onListDirectory?.(prevPath);
+    } else if (currentDirectory?.parentPath) {
+      onListDirectory?.(currentDirectory.parentPath);
+    } else {
+      // Exit directory back to quick access
+      onListDirectory?.(undefined);
     }
   };
 
+  const handleExitDirectory = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setNavHistory([]);
+    onListDirectory?.(undefined);
+  };
+
+  const handlePressFile = (file: FsEntry) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedFile(file);
+  };
+
+  const handleOpenOnPC = (file: FsEntry) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onOpenFileOnPC?.(file.path);
+    setActionFeedback(`Opened on PC: ${file.name}`);
+    setTimeout(() => {
+      setActionFeedback(null);
+      setSelectedFile(null);
+    }, 1800);
+  };
+
+  const handleAskAboutFile = (file: FsEntry) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSelectedFile(null);
+    onAskBlinky?.(file);
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (currentDirectory?.currentPath) {
+      onListDirectory?.(currentDirectory.currentPath);
+    } else {
+      onFetchQuickAccess?.();
+      onFetchRecentFiles?.();
+    }
+    setTimeout(() => {
+      setIsRefreshing(false);
+    }, 700);
+  };
+
+  const displayFolders = quickAccessFolders.length > 0 ? quickAccessFolders : FALLBACK_FOLDERS;
+  const isInsideDirectory = Boolean(currentDirectory && currentDirectory.currentPath);
+  const isSearching = searchQuery.trim().length > 0;
+
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>PC Files</Text>
-        <TouchableOpacity style={styles.headerBtn}>
-          <Ionicons name="filter" size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
+        <View style={styles.headerLeft}>
+          {isInsideDirectory ? (
+            <TouchableOpacity style={styles.backBtn} onPress={handleGoBack} activeOpacity={0.7}>
+              <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerIconBox}>
+              <Ionicons name="folder-open" size={20} color={colors.accent} />
+            </View>
+          )}
+          <View>
+            <Text style={styles.headerTitle}>
+              {isInsideDirectory
+                ? currentDirectory?.currentPath.split(/[\\/]/).filter(Boolean).pop() || 'Folder'
+                : 'PC Files'}
+            </Text>
+            {isInsideDirectory && (
+              <Text style={styles.headerSubPath} numberOfLines={1}>
+                {currentDirectory?.currentPath}
+              </Text>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.headerRight}>
+          {isInsideDirectory && (
+            <TouchableOpacity
+              style={styles.headerActionBtn}
+              onPress={handleExitDirectory}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="home-outline" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.headerActionBtn}
+            onPress={handleRefresh}
+            activeOpacity={0.7}
+            disabled={!isConnected}
+          >
+            {isLoading || isRefreshing ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <Ionicons name="sync-outline" size={18} color={colors.textSecondary} />
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
+      {/* Search Bar */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color={colors.textMuted} style={styles.searchIcon} />
+        <Ionicons name="search" size={18} color={colors.textMuted} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search files on PC..."
+          placeholder={
+            isInsideDirectory
+              ? `Search in ${currentDirectory?.currentPath.split(/[\\/]/).filter(Boolean).pop() || 'folder'}...`
+              : 'Search all files on PC...'
+          }
           placeholderTextColor={colors.textMuted}
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           editable={isConnected}
+          returnKeyType="search"
         />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={handleClearSearch} style={styles.clearSearchBtn}>
+            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+        )}
       </View>
+
+      {/* Feedback Toast */}
+      {actionFeedback && (
+        <View style={styles.toastBox}>
+          <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+          <Text style={styles.toastText} numberOfLines={1}>
+            {actionFeedback}
+          </Text>
+        </View>
+      )}
+
+      {/* Error Banner */}
+      {fsError && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={16} color="#EF4444" style={{ marginRight: 6 }} />
+          <Text style={styles.errorBannerText} numberOfLines={2}>
+            {fsError}
+          </Text>
+        </View>
+      )}
 
       {!isConnected ? (
         <View style={styles.emptyState}>
-          <Ionicons name="cloud-offline-outline" size={48} color={colors.textMuted} style={{ marginBottom: spacing.md }} />
+          <Ionicons
+            name="cloud-offline-outline"
+            size={48}
+            color={colors.textMuted}
+            style={{ marginBottom: spacing.md }}
+          />
           <Text style={styles.emptyTitle}>PC Disconnected</Text>
-          <Text style={styles.emptySubtitle}>Connect to your desktop to browse its file system remotely.</Text>
+          <Text style={styles.emptySubtitle}>
+            Connect your mobile companion to your PC to browse, search, and launch desktop files remotely.
+          </Text>
         </View>
       ) : (
-        <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xxxl }}>
-          
-          <Text style={styles.sectionTitle}>QUICK ACCESS</Text>
-          <View style={styles.grid}>
-            {MOCK_FOLDERS.map((folder) => (
-              <TouchableOpacity key={folder.id} style={styles.folderCard} onPress={handlePressItem} activeOpacity={0.7}>
-                <View style={styles.folderIconBox}>
-                  <Ionicons name={folder.icon as any} size={24} color={colors.accent} />
-                </View>
-                <Text style={styles.folderName}>{folder.name}</Text>
-                <Text style={styles.folderCount}>{folder.count}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+        <ScrollView
+          style={styles.scrollArea}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: spacing.xxxl * 1.5 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.accent}
+              colors={[colors.accent]}
+            />
+          }
+        >
+          {/* SEARCH RESULTS VIEW */}
+          {isSearching ? (
+            <View style={styles.sectionContainer}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>
+                  SEARCH RESULTS ({searchResults.length})
+                </Text>
+                {isLoading && <ActivityIndicator size="small" color={colors.accent} />}
+              </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>RECENT FILES</Text>
-          <View style={styles.list}>
-            {MOCK_RECENT.map((file) => (
-              <TouchableOpacity key={file.id} style={styles.listItem} onPress={handlePressItem} activeOpacity={0.7}>
-                <View style={styles.fileIconBox}>
-                  <Ionicons name={getFileIcon(file.type)} size={22} color={colors.textSecondary} />
+              {searchResults.length === 0 && !isLoading ? (
+                <View style={styles.emptyFolderBox}>
+                  <Ionicons name="search-outline" size={36} color={colors.textMuted} />
+                  <Text style={styles.emptyFolderTitle}>No files found</Text>
+                  <Text style={styles.emptyFolderSubtitle}>Try checking your query or path.</Text>
                 </View>
-                <View style={styles.fileDetails}>
-                  <Text style={styles.fileName} numberOfLines={1}>{file.name}</Text>
-                  <Text style={styles.fileMeta}>{file.size} • {file.date}</Text>
+              ) : (
+                <View style={styles.list}>
+                  {searchResults.map((item, idx) => {
+                    const iconInfo = getFileIcon(item.ext, item.is_dir);
+                    return (
+                      <TouchableOpacity
+                        key={`${item.path}-${idx}`}
+                        style={styles.listItem}
+                        onPress={() => (item.is_dir ? handleOpenFolder(item.path) : handlePressFile(item))}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.fileIconBox, { backgroundColor: `${iconInfo.color}15` }]}>
+                          <Ionicons name={iconInfo.name} size={22} color={iconInfo.color} />
+                        </View>
+                        <View style={styles.fileDetails}>
+                          <Text style={styles.fileName} numberOfLines={1}>
+                            {item.name}
+                          </Text>
+                          <Text style={styles.fileMeta} numberOfLines={1}>
+                            {item.is_dir ? 'Folder' : `${formatBytes(item.size_bytes)} • ${formatDate(item.modified_ts)}`}
+                          </Text>
+                          <Text style={styles.filePathTiny} numberOfLines={1}>
+                            {item.path}
+                          </Text>
+                        </View>
+                        <Ionicons
+                          name={item.is_dir ? 'chevron-forward' : 'ellipsis-vertical'}
+                          size={16}
+                          color={colors.borderLight}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.borderLight} />
-              </TouchableOpacity>
-            ))}
-          </View>
+              )}
+            </View>
+          ) : isInsideDirectory ? (
+            /* DIRECTORY BROWSER VIEW */
+            <View style={styles.sectionContainer}>
+              <View style={styles.dirActionBar}>
+                <TouchableOpacity
+                  style={styles.upFolderBtn}
+                  onPress={handleGoBack}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="arrow-up" size={16} color={colors.textSecondary} />
+                  <Text style={styles.upFolderText}>Up one folder</Text>
+                </TouchableOpacity>
+                <Text style={styles.itemCountText}>
+                  {currentDirectory?.entries.length || 0} items
+                </Text>
+              </View>
 
+              {(!currentDirectory?.entries || currentDirectory.entries.length === 0) && !isLoading ? (
+                <View style={styles.emptyFolderBox}>
+                  <Ionicons name="folder-open-outline" size={36} color={colors.textMuted} />
+                  <Text style={styles.emptyFolderTitle}>This folder is empty</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {currentDirectory?.entries.map((item, idx) => {
+                    const iconInfo = getFileIcon(item.ext, item.is_dir);
+                    return (
+                      <TouchableOpacity
+                        key={`${item.path}-${idx}`}
+                        style={styles.listItem}
+                        onPress={() => (item.is_dir ? handleOpenFolder(item.path) : handlePressFile(item))}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.fileIconBox, { backgroundColor: `${iconInfo.color}15` }]}>
+                          <Ionicons name={iconInfo.name} size={22} color={iconInfo.color} />
+                        </View>
+                        <View style={styles.fileDetails}>
+                          <Text style={styles.fileName} numberOfLines={1}>
+                            {item.name}
+                          </Text>
+                          <Text style={styles.fileMeta}>
+                            {item.is_dir
+                              ? 'Folder'
+                              : `${formatBytes(item.size_bytes)} • ${formatDate(item.modified_ts)}`}
+                          </Text>
+                        </View>
+                        <Ionicons
+                          name={item.is_dir ? 'chevron-forward' : 'ellipsis-vertical'}
+                          size={16}
+                          color={colors.borderLight}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ) : (
+            /* HOME QUICK ACCESS + RECENT FILES VIEW */
+            <>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>QUICK ACCESS</Text>
+                <TouchableOpacity onPress={handleRefresh} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Text style={styles.sectionActionText}>Sync</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.grid}>
+                {displayFolders.map((folder) => (
+                  <TouchableOpacity
+                    key={folder.id}
+                    style={styles.folderCard}
+                    onPress={() => (folder.path ? handleOpenFolder(folder.path) : null)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.folderIconBox}>
+                      <Ionicons name={folder.icon as any} size={24} color={colors.accent} />
+                    </View>
+                    <Text style={styles.folderName} numberOfLines={1}>
+                      {folder.name}
+                    </Text>
+                    <Text style={styles.folderCount}>{folder.count}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={[styles.sectionHeaderRow, { marginTop: spacing.xl }]}>
+                <Text style={styles.sectionTitle}>RECENT FILES</Text>
+                <Text style={styles.sectionSubText}>{recentFiles.length} files</Text>
+              </View>
+
+              {recentFiles.length === 0 ? (
+                <View style={styles.emptyRecentBox}>
+                  <Text style={styles.emptyFolderSubtitle}>Pull down to sync recent files from PC</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {recentFiles.map((file, idx) => {
+                    const iconInfo = getFileIcon(file.ext, false);
+                    return (
+                      <TouchableOpacity
+                        key={`${file.path}-${idx}`}
+                        style={styles.listItem}
+                        onPress={() => handlePressFile(file)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.fileIconBox, { backgroundColor: `${iconInfo.color}15` }]}>
+                          <Ionicons name={iconInfo.name} size={22} color={iconInfo.color} />
+                        </View>
+                        <View style={styles.fileDetails}>
+                          <Text style={styles.fileName} numberOfLines={1}>
+                            {file.name}
+                          </Text>
+                          <Text style={styles.fileMeta}>
+                            {formatBytes(file.size_bytes)} • {formatDate(file.modified_ts)}
+                          </Text>
+                        </View>
+                        <Ionicons name="ellipsis-vertical" size={16} color={colors.borderLight} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
         </ScrollView>
       )}
+
+      {/* File Action Modal */}
+      <Modal
+        visible={Boolean(selectedFile)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedFile(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setSelectedFile(null)}
+        >
+          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+            {selectedFile && (
+              <>
+                <View style={styles.modalHeader}>
+                  <View
+                    style={[
+                      styles.modalIconBox,
+                      { backgroundColor: `${getFileIcon(selectedFile.ext, selectedFile.is_dir).color}20` },
+                    ]}
+                  >
+                    <Ionicons
+                      name={getFileIcon(selectedFile.ext, selectedFile.is_dir).name}
+                      size={28}
+                      color={getFileIcon(selectedFile.ext, selectedFile.is_dir).color}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalFileName} numberOfLines={2}>
+                      {selectedFile.name}
+                    </Text>
+                    <Text style={styles.modalFileMeta}>
+                      {formatBytes(selectedFile.size_bytes)} • {formatDate(selectedFile.modified_ts)}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.pathBadge}>
+                  <Ionicons name="desktop-outline" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
+                  <Text style={styles.pathBadgeText} numberOfLines={2}>
+                    {selectedFile.path}
+                  </Text>
+                </View>
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.primaryActionBtn}
+                    onPress={() => handleOpenOnPC(selectedFile)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="open-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryActionBtnText}>Open on PC</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.secondaryActionBtn}
+                    onPress={() => handleAskAboutFile(selectedFile)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="sparkles" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                    <Text style={styles.secondaryActionBtnText}>Ask Blinky about this file</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.cancelActionBtn}
+                    onPress={() => setSelectedFile(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cancelActionBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -119,14 +642,50 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
     paddingBottom: spacing.sm,
   },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  headerIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255, 90, 54, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.sm,
+  },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
   headerTitle: {
     ...typography.heading2,
     color: colors.textPrimary,
   },
-  headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  headerSubPath: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    maxWidth: 220,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  headerActionBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
@@ -151,7 +710,46 @@ const styles = StyleSheet.create({
     flex: 1,
     ...typography.bodyMedium,
     color: colors.textPrimary,
-    paddingVertical: 12,
+    paddingVertical: 10,
+  },
+  clearSearchBtn: {
+    padding: 4,
+  },
+  toastBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    gap: 8,
+  },
+  toastText: {
+    ...typography.bodySmall,
+    color: '#10B981',
+    fontWeight: '600',
+    flex: 1,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+  },
+  errorBannerText: {
+    ...typography.bodySmall,
+    color: '#EF4444',
+    flex: 1,
   },
   emptyState: {
     flex: 1,
@@ -173,11 +771,28 @@ const styles = StyleSheet.create({
   scrollArea: {
     flex: 1,
   },
+  sectionContainer: {
+    paddingHorizontal: spacing.md,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
   sectionTitle: {
     ...typography.label,
     color: colors.textMuted,
-    marginLeft: spacing.md,
-    marginBottom: spacing.sm,
+  },
+  sectionActionText: {
+    ...typography.label,
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  sectionSubText: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
   },
   grid: {
     flexDirection: 'row',
@@ -213,6 +828,28 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textMuted,
   },
+  dirActionBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+    paddingBottom: 4,
+  },
+  upFolderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+  },
+  upFolderText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  itemCountText: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+  },
   list: {
     paddingHorizontal: spacing.md,
   },
@@ -227,7 +864,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: radius.md,
-    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.md,
@@ -240,10 +876,127 @@ const styles = StyleSheet.create({
     ...typography.bodyMedium,
     color: colors.textPrimary,
     fontWeight: '500',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   fileMeta: {
     ...typography.bodySmall,
     color: colors.textMuted,
-  }
+  },
+  filePathTiny: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  emptyFolderBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    gap: 8,
+  },
+  emptyFolderTitle: {
+    ...typography.bodyMedium,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  emptyFolderSubtitle: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+  emptyRecentBox: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.lg,
+    borderTopWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  modalIconBox: {
+    width: 50,
+    height: 50,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
+  },
+  modalFileName: {
+    ...typography.heading3,
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  modalFileMeta: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+  },
+  pathBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  pathBadgeText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    fontSize: 11,
+    flex: 1,
+  },
+  modalActions: {
+    gap: spacing.sm,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: 14,
+  },
+  primaryActionBtnText: {
+    ...typography.bodyMedium,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  secondaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 90, 54, 0.1)',
+    borderRadius: radius.md,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 90, 54, 0.3)',
+  },
+  secondaryActionBtnText: {
+    ...typography.bodyMedium,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  cancelActionBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  cancelActionBtnText: {
+    ...typography.bodyMedium,
+    color: colors.textMuted,
+  },
 });

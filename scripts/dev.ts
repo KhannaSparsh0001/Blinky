@@ -87,14 +87,23 @@ async function tryStartDockerDaemon(dockerPath: string): Promise<boolean> {
     if (desktopExe) {
       console.log(`[Docker] 🐳 Docker is installed but daemon is not running. Launching Docker Desktop (${desktopExe})...`);
       try {
-        const startProc = spawn(["cmd.exe", "/c", "start", "", desktopExe], {
+        // Start Docker Desktop completely detached from terminal / console so Ctrl+C on Blinky never terminates Docker
+        const startProc = spawn(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", `Start-Process -FilePath "${desktopExe}"`], {
           detached: true,
           stdio: ["ignore", "ignore", "ignore"],
         });
         startProc.unref();
       } catch (err: any) {
-        console.warn(`[Docker] Failed to launch Docker Desktop: ${err?.message || err}`);
-        return false;
+        try {
+          const startProc = spawn(["cmd.exe", "/c", "start", "", desktopExe], {
+            detached: true,
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+          startProc.unref();
+        } catch {
+          console.warn(`[Docker] Failed to launch Docker Desktop: ${err?.message || err}`);
+          return false;
+        }
       }
     } else {
       console.log("[Docker] 🐳 Docker Desktop executable not found at standard paths. Trying com.docker.service...");
@@ -266,7 +275,7 @@ async function checkAndStartMobileIfUsbConnected(): Promise<Subprocess | null> {
     } else {
       if (process.platform === "win32") {
         try {
-          const killProc = spawn(["powershell", "-Command", "Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"]);
+          const killProc = spawn(["powershell", "-NoProfile", "-Command", "Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p -and $p.ProcessName -notmatch '(?i)docker|wsl|vmcompute|system') { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }"]);
           await killProc.exited;
         } catch {}
       }
@@ -368,7 +377,7 @@ if (process.platform === "win32" && !existsSync("common/python_runtime/Python313
 
 const customPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
 
-/** Stops stale Windows development processes and listeners. */
+/** Stops stale Windows development processes and listeners without terminating Docker, WSL, or system processes. */
 const killWindowsProcessTree = (pid?: number) => {
   if (process.platform !== "win32") return;
   try {
@@ -376,7 +385,12 @@ const killWindowsProcessTree = (pid?: number) => {
       Bun.spawnSync(["taskkill", "/F", "/T", "/PID", String(pid)]);
     }
     Bun.spawnSync(["taskkill", "/F", "/T", "/IM", "blinky.exe"]);
-    Bun.spawnSync(["powershell", "-NoProfile", "-Command", `Get-NetTCPConnection -LocalPort ${customPort},9001 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`]);
+    Bun.spawnSync([
+      "powershell",
+      "-NoProfile",
+      "-Command",
+      `Get-NetTCPConnection -LocalPort ${customPort},9001 -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p -and $p.ProcessName -notmatch '(?i)docker|wsl|vmcompute|system') { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }`,
+    ]);
   } catch {}
 };
 
@@ -452,7 +466,7 @@ if (process.stdin.isTTY) {
     process.stdin.on("data", (key: string) => {
       // Handle Ctrl+C
       if (key === "\u0003") {
-        console.log("\n[Blinky] 🛑 Shutting down dev servers and closing Blinky PC app...");
+        console.log("\n[Blinky] 🛑 Shutting down dev servers and closing Blinky PC app (Docker remains running in background)...");
         cleanup();
         process.exit(0);
       }

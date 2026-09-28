@@ -98,6 +98,29 @@ export interface AntigravityProgress {
   timestamp?: number;
 }
 
+export interface QuickAccessFolder {
+  id: string;
+  name: string;
+  path: string;
+  icon: string;
+  count: string;
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size_bytes: number;
+  modified_ts: number;
+  ext: string;
+}
+
+export interface FsDirContents {
+  currentPath: string;
+  parentPath: string | null;
+  entries: FsEntry[];
+}
+
 export type PowerCommand =
   | 'power_off'
   | 'restart'
@@ -122,6 +145,15 @@ export function usePCWebSocket() {
   const [antigravityApproval, setAntigravityApproval] = useState<AntigravityApproval | null>(null);
   const [antigravityComplete, setAntigravityComplete] = useState<AntigravityComplete | null>(null);
   const [antigravityProgress, setAntigravityProgress] = useState<AntigravityProgress | null>(null);
+
+  // Filesystem sync states
+  const [quickAccessFolders, setQuickAccessFolders] = useState<QuickAccessFolder[]>([]);
+  const [currentDirectory, setCurrentDirectory] = useState<FsDirContents | null>(null);
+  const [recentFiles, setRecentFiles] = useState<FsEntry[]>([]);
+  const [fsSearchResults, setFsSearchResults] = useState<FsEntry[]>([]);
+  const [fsLoading, setFsLoading] = useState<boolean>(false);
+  const [fsError, setFsError] = useState<string | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
   const nativeRef = useRef<NativeSecureSocket | null>(null);
 
@@ -140,6 +172,12 @@ export function usePCWebSocket() {
     setStatus(nextState.status);
     setErrorMsg(nextState.errorMsg);
     setLatestResponse(nextState.latestResponse);
+    setQuickAccessFolders([]);
+    setCurrentDirectory(null);
+    setRecentFiles([]);
+    setFsSearchResults([]);
+    setFsLoading(false);
+    setFsError(null);
   }, []);
 
   /** Opens a WebSocket connection and authenticates it when a token is provided. */
@@ -211,6 +249,8 @@ export function usePCWebSocket() {
               setTimeout(() => {
                 if (nativeRef.current?.authenticated) {
                   void nativeModule.sendText(socketId, 'get_system_info');
+                  void nativeModule.sendText(socketId, JSON.stringify({ type: 'fs_get_quick_access' }));
+                  void nativeModule.sendText(socketId, JSON.stringify({ type: 'fs_get_recent' }));
                 }
               }, 300);
             } else {
@@ -227,6 +267,30 @@ export function usePCWebSocket() {
               setAntigravityComplete(parsed as AntigravityComplete);
             } else if (parsed.type === 'antigravity_progress') {
               setAntigravityProgress(parsed as AntigravityProgress);
+            } else if (parsed.type === 'fs_quick_access') {
+              if (Array.isArray(parsed.folders)) {
+                setQuickAccessFolders(parsed.folders);
+              }
+            } else if (parsed.type === 'fs_dir_contents') {
+              setCurrentDirectory({
+                currentPath: parsed.currentPath || '',
+                parentPath: parsed.parentPath || null,
+                entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+              });
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_recent_files') {
+              if (Array.isArray(parsed.files)) {
+                setRecentFiles(parsed.files);
+              }
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_search_results') {
+              if (Array.isArray(parsed.results)) {
+                setFsSearchResults(parsed.results);
+              }
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_error') {
+              setFsError(parsed.message || 'Filesystem error');
+              setFsLoading(false);
             } else {
               setLatestResponse(parsed);
             }
@@ -298,10 +362,12 @@ export function usePCWebSocket() {
           setStatus('connected');
           setErrorMsg(null);
 
-          // Request initial telemetry upon connection
+          // Request initial telemetry and filesystem snapshot upon connection
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send('get_system_info');
+              ws.send(JSON.stringify({ type: 'fs_get_quick_access' }));
+              ws.send(JSON.stringify({ type: 'fs_get_recent' }));
             }
           }, 300);
         }
@@ -321,6 +387,30 @@ export function usePCWebSocket() {
               setAntigravityComplete(parsed as AntigravityComplete);
             } else if (parsed.type === 'antigravity_progress') {
               setAntigravityProgress(parsed as AntigravityProgress);
+            } else if (parsed.type === 'fs_quick_access') {
+              if (Array.isArray(parsed.folders)) {
+                setQuickAccessFolders(parsed.folders);
+              }
+            } else if (parsed.type === 'fs_dir_contents') {
+              setCurrentDirectory({
+                currentPath: parsed.currentPath || '',
+                parentPath: parsed.parentPath || null,
+                entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+              });
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_recent_files') {
+              if (Array.isArray(parsed.files)) {
+                setRecentFiles(parsed.files);
+              }
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_search_results') {
+              if (Array.isArray(parsed.results)) {
+                setFsSearchResults(parsed.results);
+              }
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_error') {
+              setFsError(parsed.message || 'Filesystem error');
+              setFsLoading(false);
             } else {
               setLatestResponse(parsed);
             }
@@ -427,6 +517,35 @@ export function usePCWebSocket() {
     setAntigravityComplete(null);
   }, []);
 
+  // Filesystem action dispatchers
+  const fetchQuickAccess = useCallback(() => {
+    setFsLoading(true);
+    sendCommand(JSON.stringify({ type: 'fs_get_quick_access' }));
+  }, [sendCommand]);
+
+  const listDirectory = useCallback((path?: string) => {
+    setFsLoading(true);
+    setFsError(null);
+    sendCommand(JSON.stringify({ type: 'fs_list_dir', path: path || '' }));
+  }, [sendCommand]);
+
+  const fetchRecentFiles = useCallback(() => {
+    sendCommand(JSON.stringify({ type: 'fs_get_recent' }));
+  }, [sendCommand]);
+
+  const searchFiles = useCallback((query: string, path?: string) => {
+    if (!query.trim()) {
+      setFsSearchResults([]);
+      return;
+    }
+    setFsLoading(true);
+    sendCommand(JSON.stringify({ type: 'fs_search', query: query.trim(), path: path || '' }));
+  }, [sendCommand]);
+
+  const openFileOnPC = useCallback((path: string) => {
+    sendCommand(JSON.stringify({ type: 'fs_open_file', path }));
+  }, [sendCommand]);
+
   return {
     status,
     errorMsg,
@@ -436,6 +555,19 @@ export function usePCWebSocket() {
     antigravityApproval,
     antigravityComplete,
     antigravityProgress,
+    // Filesystem sync
+    quickAccessFolders,
+    currentDirectory,
+    recentFiles,
+    fsSearchResults,
+    fsLoading,
+    fsError,
+    fetchQuickAccess,
+    listDirectory,
+    fetchRecentFiles,
+    searchFiles,
+    openFileOnPC,
+    // Connection & Actions
     connect,
     disconnect,
     sendCommand,

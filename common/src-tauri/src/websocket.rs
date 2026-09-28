@@ -963,6 +963,32 @@ where
                         resp.to_string().into(),
                     ))
                     .await;
+            } else if trimmed == "get_fs_quick_access" || trimmed == "fs_quick_access" {
+                let folders = crate::platform::fs_sync::get_quick_access_folders();
+                let resp = serde_json::json!({
+                    "type": "fs_quick_access",
+                    "folders": folders
+                });
+                let _ = ws_sender
+                    .lock()
+                    .await
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        resp.to_string().into(),
+                    ))
+                    .await;
+            } else if trimmed == "get_fs_recent" || trimmed == "fs_recent" {
+                let files = crate::platform::fs_sync::get_recent_files();
+                let resp = serde_json::json!({
+                    "type": "fs_recent_files",
+                    "files": files
+                });
+                let _ = ws_sender
+                    .lock()
+                    .await
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        resp.to_string().into(),
+                    ))
+                    .await;
             } else if trimmed.starts_with("query:") || trimmed.starts_with("{") {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
                     let msg_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -996,6 +1022,101 @@ where
                                     .await;
                             });
                         }
+                        continue;
+                    } else if msg_type == "fs_get_quick_access" {
+                        let folders = crate::platform::fs_sync::get_quick_access_folders();
+                        let resp = serde_json::json!({
+                            "type": "fs_quick_access",
+                            "folders": folders
+                        });
+                        let _ = ws_sender
+                            .lock()
+                            .await
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                resp.to_string().into(),
+                            ))
+                            .await;
+                        continue;
+                    } else if msg_type == "fs_list_dir" {
+                        let path = parsed.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                        match crate::platform::fs_sync::list_directory(path) {
+                            Ok(res) => {
+                                let resp = serde_json::json!({
+                                    "type": "fs_dir_contents",
+                                    "currentPath": res.current_path,
+                                    "parentPath": res.parent_path,
+                                    "entries": res.entries
+                                });
+                                let _ = ws_sender
+                                    .lock()
+                                    .await
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        resp.to_string().into(),
+                                    ))
+                                    .await;
+                            }
+                            Err(err) => {
+                                let resp = serde_json::json!({
+                                    "type": "fs_error",
+                                    "message": err
+                                });
+                                let _ = ws_sender
+                                    .lock()
+                                    .await
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        resp.to_string().into(),
+                                    ))
+                                    .await;
+                            }
+                        }
+                        continue;
+                    } else if msg_type == "fs_get_recent" {
+                        let files = crate::platform::fs_sync::get_recent_files();
+                        let resp = serde_json::json!({
+                            "type": "fs_recent_files",
+                            "files": files
+                        });
+                        let _ = ws_sender
+                            .lock()
+                            .await
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                resp.to_string().into(),
+                            ))
+                            .await;
+                        continue;
+                    } else if msg_type == "fs_search" {
+                        let query = parsed.get("query").and_then(|q| q.as_str()).unwrap_or("");
+                        let start_path = parsed.get("path").and_then(|p| p.as_str());
+                        let results = crate::platform::fs_sync::search_files(query, start_path);
+                        let resp = serde_json::json!({
+                            "type": "fs_search_results",
+                            "query": query,
+                            "results": results
+                        });
+                        let _ = ws_sender
+                            .lock()
+                            .await
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                resp.to_string().into(),
+                            ))
+                            .await;
+                        continue;
+                    } else if msg_type == "fs_open_file" {
+                        let path = parsed.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                        let res = crate::platform::fs_sync::open_file_on_pc(path);
+                        let resp = serde_json::json!({
+                            "type": "fs_open_result",
+                            "path": path,
+                            "success": res.is_ok(),
+                            "error": res.err()
+                        });
+                        let _ = ws_sender
+                            .lock()
+                            .await
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                resp.to_string().into(),
+                            ))
+                            .await;
                         continue;
                     }
                 }
