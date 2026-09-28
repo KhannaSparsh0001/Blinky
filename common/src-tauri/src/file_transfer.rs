@@ -1450,16 +1450,7 @@ async fn move_to_unique_path(
 ) -> std::io::Result<PathBuf> {
     let extension = extension.trim_start_matches('.');
     for index in 0..100_000 {
-        let name = if index == 0 {
-            stem.to_string()
-        } else {
-            format!("{stem} ({index})")
-        };
-        let candidate = if extension.is_empty() {
-            directory.join(name)
-        } else {
-            directory.join(format!("{name}.{extension}"))
-        };
+        let candidate = unique_destination(directory, stem, extension, index);
         match tokio::fs::hard_link(source, &candidate).await {
             Ok(()) => {
                 if let Err(error) = tokio::fs::remove_file(source).await {
@@ -1469,51 +1460,66 @@ async fn move_to_unique_path(
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
-                let mut nonce = [0u8; 16];
-                getrandom::fill(&mut nonce).map_err(std::io::Error::other)?;
-                let temporary = directory.join(format!(".blinky-finalize-{}.part", hex(&nonce)));
-                let mut input = tokio::fs::File::open(source).await?;
-                let mut output = match tokio::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temporary)
-                    .await
-                {
-                    Ok(file) => file,
-                    Err(error) => return Err(error),
-                };
-                let copied = async {
-                    tokio::io::copy(&mut input, &mut output).await?;
-                    output.sync_all().await?;
-                    Ok::<(), std::io::Error>(())
-                }
-                .await;
-                drop(output);
-                if let Err(error) = copied {
-                    let _ = tokio::fs::remove_file(&temporary).await;
-                    return Err(error);
-                }
-                let linked = tokio::fs::hard_link(&temporary, &candidate).await;
-                if let Err(error) = linked {
-                    let _ = tokio::fs::remove_file(&temporary).await;
-                    if error.kind() == std::io::ErrorKind::AlreadyExists {
-                        continue;
-                    }
-                    return Err(error);
-                }
-                if let Err(error) = tokio::fs::remove_file(&temporary).await {
-                    let _ = tokio::fs::remove_file(&candidate).await;
-                    return Err(error);
-                }
-                if let Err(error) = tokio::fs::remove_file(source).await {
-                    let _ = tokio::fs::remove_file(&candidate).await;
-                    return Err(error);
-                }
-                return Ok(candidate);
-            }
-            Err(error) => return Err(error),
+            // Cross-volume copies and filesystems without hard-link support use
+            // create_new below, so occupied names never overwrite user files.
+            Err(_) => return copy_to_unique_path(source, directory, stem, extension, index).await,
         }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not find an unused destination name",
+    ))
+}
+
+fn unique_destination(directory: &Path, stem: &str, extension: &str, index: usize) -> PathBuf {
+    let name = if index == 0 {
+        stem.to_string()
+    } else {
+        format!("{stem} ({index})")
+    };
+    if extension.is_empty() {
+        directory.join(name)
+    } else {
+        directory.join(format!("{name}.{extension}"))
+    }
+}
+
+async fn copy_to_unique_path(
+    source: &Path,
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+    first_index: usize,
+) -> std::io::Result<PathBuf> {
+    for index in first_index..100_000 {
+        let candidate = unique_destination(directory, stem, extension, index);
+        let mut output = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let copied = async {
+            let mut input = tokio::fs::File::open(source).await?;
+            tokio::io::copy(&mut input, &mut output).await?;
+            output.sync_all().await?;
+            Ok::<(), std::io::Error>(())
+        }
+        .await;
+        drop(output);
+        if let Err(error) = copied {
+            let _ = tokio::fs::remove_file(&candidate).await;
+            return Err(error);
+        }
+        if let Err(error) = tokio::fs::remove_file(source).await {
+            let _ = tokio::fs::remove_file(&candidate).await;
+            return Err(error);
+        }
+        return Ok(candidate);
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::AlreadyExists,
@@ -1688,6 +1694,33 @@ mod destination_tests {
         assert_eq!(
             std::fs::read(destination.join("clip.mp4")).unwrap(),
             b"old contents"
+        );
+        assert!(!source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(destination).unwrap();
+    }
+
+    #[tokio::test]
+    async fn copy_fallback_preserves_existing_files_and_removes_staging_source() {
+        let root = test_dir("copy-source");
+        let destination = test_dir("copy-target");
+        let source = root.join("upload.part");
+        std::fs::write(&source, b"new contents").unwrap();
+        std::fs::write(destination.join("clip.mp4"), b"first").unwrap();
+        std::fs::write(destination.join("clip (1).mp4"), b"second").unwrap();
+
+        let saved = copy_to_unique_path(&source, &destination, "clip", "mp4", 0)
+            .await
+            .unwrap();
+        assert_eq!(saved, destination.join("clip (2).mp4"));
+        assert_eq!(std::fs::read(&saved).unwrap(), b"new contents");
+        assert_eq!(
+            std::fs::read(destination.join("clip.mp4")).unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("clip (1).mp4")).unwrap(),
+            b"second"
         );
         assert!(!source.exists());
         std::fs::remove_dir_all(root).unwrap();

@@ -391,7 +391,18 @@ def resolve_aicut_request(
     has_trim = trim_times is not None
 
     add_song_pattern = r"\b(?:add|put|mix|insert|attach|set|apply|overlay|combine|merge)\b.*?\b(?:song|music|audio|track|sound|bgm|beats)\b|\b(?:background\s+music|bgm)\b|\b(?:song|music|audio)\b.*?\b(?:video|clip)\b|\b(?:video|clip)\b.*?\b(?:with|and)\b.*?\b(?:song|music|audio|sound|beats)\b|\b(?:with\s+audio|with\s+music|with\s+song|with\s+beats)\b"
-    has_audio_keyword = bool(re.search(add_song_pattern, q_lower)) or any(k in q_lower for k in ["song", "music", "audio", "beats", "bgm", "track"])
+    explicitly_added_audio = any(
+        re.search(
+            rf"\b(?:add|put|mix|insert|attach|set|apply|overlay|combine|merge)\s+(?:the\s+)?{re.escape(Path(path).name.lower())}(?!\w)",
+            q_lower,
+        )
+        for path in ref_audios
+    )
+    has_audio_keyword = (
+        bool(re.search(add_song_pattern, q_lower))
+        or any(k in q_lower for k in ["song", "music", "audio", "beats", "bgm", "track"])
+        or explicitly_added_audio
+    )
 
     # ── Candidate Resolution ──
     # Videos

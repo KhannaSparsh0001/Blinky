@@ -75,6 +75,16 @@ def test_explicit_audio_request_uses_uploaded_track(tmp_path, monkeypatch):
     assert requests[0]["song_path"] == sources[1]
 
 
+def test_explicit_uploaded_audio_filename_requests_adding_it(tmp_path, monkeypatch):
+    result, requests, sources = _run(
+        tmp_path, monkeypatch, ["clip.mp4", "beat.wav"],
+        "add beat.wav to clip.mp4",
+    )
+    assert result["success"] is True
+    assert requests[0]["action"] == "add_song"
+    assert requests[0]["song_path"] == sources[1]
+
+
 def test_edit_without_compatible_media_returns_clear_error(tmp_path, monkeypatch):
     result, requests, _ = _run(tmp_path, monkeypatch, ["notes.pdf", "cover.png"], "merge these files")
     assert result["success"] is False

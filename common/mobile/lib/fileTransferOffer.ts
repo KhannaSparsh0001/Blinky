@@ -11,6 +11,14 @@ export function transferIntent(instruction: string): 'upload' | 'edit' {
   return instruction.trim() ? 'edit' : 'upload';
 }
 
+/** Match a rendered picker card to its item after the upload order changes. */
+export function findTransferItem<T extends { file: { uri: string } }>(
+  items: readonly T[] | undefined,
+  file: { uri: string },
+): T | undefined {
+  return items?.find(item => item.file.uri === file.uri);
+}
+
 export function buildFileOffer(input: FileOfferInput): Record<string, unknown> {
   const destinationPath = input.destinationPath.trim();
   return {

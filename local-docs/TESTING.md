@@ -31,10 +31,10 @@ The Rust attempt created only ignored `common/src-tauri/target` output. AiCut wa
 
 ## Mobile transfer validation on 2026-09-28
 
-- The transfer entry and offer tests passed (3/3), and `bunx tsc --noEmit -p common/mobile/tsconfig.json` passed.
-- The AiCut resolver and transfer intent suite passed with the Linux-incompatible `test_run_trim_execution` case excluded (49 passed, 1 deselected). That excluded case tries to execute Windows `common/aicut/aicut.cmd` and fails with permission denied on Linux.
-- The full mobile unit suite had one reconnect timer assertion failure in `usePCWebSocket.test.ts` (13 passed, 1 failed); the transfer-specific tests passed.
-- `/usr/bin/rustfmt --check --edition 2021 common/src-tauri/src/file_transfer.rs` and `git diff --check` passed. The targeted Rust test was blocked by the Tauri build resource `common/python_runtime/Python313` missing from this checkout, before the transfer tests could run.
+- The transfer entry and offer tests passed (4/4), including a run from `common/mobile`, and `bunx tsc --noEmit -p common/mobile/tsconfig.json` passed.
+- The AiCut resolver and transfer intent suite passed with the Linux-incompatible `test_run_trim_execution` case excluded (50 passed, 1 deselected). That excluded case tries to execute Windows `common/aicut/aicut.cmd` and fails with permission denied on Linux.
+- The full mobile unit suite had one reconnect timer assertion failure in `usePCWebSocket.test.ts` (14 passed, 1 failed); the transfer-specific tests passed.
+- `/usr/bin/rustfmt --check --edition 2021 common/src-tauri/src/file_transfer.rs` and `git diff --check` passed. The initial targeted Rust test was blocked by the absent `common/python_runtime/Python313` bundle. Setting `TAURI_CONFIG='{"bundle":{"resources":[]}}'` bypassed that resource and exposed an existing Linux compile error: `platform_impl::click_element_impl` is not exported by the Linux platform module. The transfer tests still could not run.
 
 ## Required checks by change type
 
@@ -70,7 +70,7 @@ For the dated September WSS review results, native build evidence, and remaining
 ### Tauri/WebSocket/mobile
 
 - Rust tests after the Python bundle resource exists (or use an explicit development-safe test configuration)
-- `BLINKY_TRANSPORT_MODE=release TAURI_CONFIG='{"bundle":{"resources":[]}}' cargo test --locked tls_identity::tests::pinned_wss_round_trip_works -- --exact` verifies a real loopback TLS + WebSocket round trip with the generated SPKI pin
+- `BLINKY_TRANSPORT_MODE=release TAURI_CONFIG='{"bundle":{"resources":[]}}' cargo test --manifest-path common/src-tauri/Cargo.toml --locked tls_identity::tests::pinned_wss_round_trip_works -- --exact` verifies a real loopback TLS + WebSocket round trip with the generated SPKI pin
 - From generated `common/mobile/android`, `./gradlew :blinky-secure-socket:testReleaseUnitTest` verifies Android accepts the matching leaf SPKI pin and rejects wrong, malformed, or missing certificate data
 - `bun test common/mobile/tests` verifies mobile connection-state behavior, including retaining the authentication-rejection error after socket cleanup
 - JSON and legacy protocol smoke tests, invalid token, missing token, loopback, and LAN client cases

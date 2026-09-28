@@ -15,7 +15,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import type { FileTransferMessage } from './usePCWebSocket';
-import { buildFileOffer, transferIntent } from './lib/fileTransferOffer';
+import { buildFileOffer, findTransferItem, transferIntent } from './lib/fileTransferOffer';
 
 type TransferModule = typeof import('./modules/blinky-secure-socket');
 
@@ -656,7 +656,7 @@ export function FileTransferPanel({
 
                 <View style={styles.fileList}>
                   {selectedFiles.map((file, index) => {
-                    const sessionItem = session?.items[index];
+                    const sessionItem = findTransferItem(session?.items, file);
                     return (
                       <View key={`${file.uri}-${index}`} style={styles.fileCard}>
                         <Ionicons name={getFileIcon(file.name)} size={22} color="#B7A8FF" />

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { buildFileOffer, transferIntent } from '../lib/fileTransferOffer';
+import { buildFileOffer, findTransferItem, transferIntent } from '../lib/fileTransferOffer';
 
 test('a mixed batch without instruction remains an upload', () => {
   expect(transferIntent('')).toBe('upload');
@@ -21,4 +21,15 @@ test('an explicit edit instruction marks every file offer for an AiCut batch', (
     type: 'file_offer', requestId: 'offer-2', name: 'clip.mp4', size: 50,
     sha256: 'b'.repeat(64), purpose: 'edit',
   });
+});
+
+test('file-card status follows file identity after transfer priority reorders items', () => {
+  const pdf = { uri: 'content://notes', name: 'notes.pdf' };
+  const audio = { uri: 'content://beat', name: 'beat.wav' };
+  const items = [
+    { file: audio, phase: 'uploading' },
+    { file: pdf, phase: 'pending' },
+  ];
+  expect(findTransferItem(items, pdf)?.phase).toBe('pending');
+  expect(findTransferItem(items, audio)?.phase).toBe('uploading');
 });

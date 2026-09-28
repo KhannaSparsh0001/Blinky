@@ -41,7 +41,7 @@ The HTTP parser caps request headers at 16 KiB, applies a header deadline and up
 
 Offers validate the filename, an optional absolute destination folder, file-size cap, available disk space, chunk offsets, and final SHA-256. A destination must already exist and be writable. Authenticated remote clients may choose any such PC folder, so protect the remote token and grant it only to trusted devices. Upload data stays under `Downloads/Blinky/.staging` until complete. AiCut receives only uploaded paths with an empty Explorer context and writes output to the chosen folder. The process-local transfer state expires after 24 hours and is lost on either process restart. The temporary token is sent only over the WebSocket and native file requests; do not log it or expose it to unrelated UI state.
 
-Operational limit: a client with a valid temporary capability can hold one of the bounded connection slots by trickling upload data or not reading a download response. The listener is reachable on the LAN, so keep the release token and certificate pin private and use development transport only on trusted networks.
+Operational limit: a client with a valid temporary capability can hold one of the bounded connection slots by trickling upload data or not reading a download response. The listener is reachable on the LAN, so keep the release token confidential, protect the certificate pin against modification, and use development transport only on trusted networks. On destinations without hard-link support, the copy fallback reserves a unique final name before writing; a partially copied file can be visible until finalization succeeds or error cleanup removes it.
 
 ### Generated tools are executable source mutation
 
