@@ -13,8 +13,8 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 | File / Component | Purpose of Change | Status | Notes |
 | :--- | :--- | :---: | :--- |
 | [.env_example](file:///c:/Users/khann/Projects/Blinky/.env_example) | Environment variables for RevenueCat public key, entitlement ID, and promo codes. | ✅ **Implemented** | Added `EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY`, `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID`, and `EXPO_PUBLIC_PROMO_CODES`. |
-| [package.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/package.json) | Add `react-native-purchases` and `react-native-purchases-ui`. | ⏳ **Pending** | Needs `react-native-purchases` and `react-native-purchases-ui` installed. |
-| [app.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/app.json) / `app.config.js` | Register the `react-native-purchases` Expo config plugin. | ⏳ **Pending** | Needs `react-native-purchases` added to plugins array. |
+| [package.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/package.json) | Add `react-native-purchases` and `react-native-purchases-ui`. | ✅ **Implemented** | Installed `react-native-purchases@^10.10.2` and `react-native-purchases-ui@^10.10.2`. |
+| [app.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/app.json) / `app.config.js` | Register the `react-native-purchases` Expo config plugin. | ✅ **Implemented** | Added `react-native-purchases` to `plugins` array. |
 | `common/mobile/lib/purchases.ts` | RevenueCat service + Promo Code Engine: SDK init, entitlement verification (`hasPcAccess`), local promo code validation, and restore purchases handler. | ⏳ **Pending** | Not created yet. |
 | `common/mobile/components/PromoCodeModal.tsx` | Dark-themed modal for entering voucher / promo codes. | ⏳ **Pending** | Not created yet. |
 | [SystemScreen.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/SystemScreen.tsx) | Display locked card with "Unlock PC Controls", "Enter Promo Code", and "Restore Purchases" when unentitled. | ⏳ **Pending** | Needs locked state UI and trigger handlers. |
@@ -33,10 +33,11 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 
 ---
 
-### Phase 1: Native Dependencies & Config Plugin ⏳ (Pending)
-- [ ] Add `react-native-purchases` and `react-native-purchases-ui` to `common/mobile/package.json` (compatible with React Native 0.86 / Expo SDK 57).
-- [ ] Register `react-native-purchases` in the `plugins` array of `common/mobile/app.json`.
-- [ ] Add safe fallback environment configuration in `common/mobile` (or `.env`) so the app never crashes if keys are not yet configured.
+### Phase 1: Native Dependencies & Config Plugin ✅ (Completed)
+- [x] Add `react-native-purchases` and `react-native-purchases-ui` to `common/mobile/package.json` (compatible with React Native 0.86 / Expo SDK 57).
+- [x] Register `react-native-purchases` in the `plugins` array of `common/mobile/app.json`.
+- [x] Add safe fallback environment configuration in `common/mobile` (or `.env`) so the app never crashes if keys are not yet configured.
+- [x] Verify TypeScript type safety (`bun x tsc --noEmit` passed with 0 errors).
 
 ---
 
