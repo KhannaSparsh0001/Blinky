@@ -1146,6 +1146,41 @@ where
                             ))
                             .await;
                         continue;
+                    } else if msg_type == "fs_read_file" {
+                        let path = parsed.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                        match crate::platform::fs_sync::read_file_base64(path, 30 * 1024 * 1024) {
+                            Ok((name, b64, size)) => {
+                                let resp = serde_json::json!({
+                                    "type": "fs_file_data",
+                                    "path": path,
+                                    "name": name,
+                                    "size": size,
+                                    "base64": b64,
+                                    "success": true
+                                });
+                                let _ = ws_sender
+                                    .lock()
+                                    .await
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        resp.to_string().into(),
+                                    ))
+                                    .await;
+                            }
+                            Err(err) => {
+                                let resp = serde_json::json!({
+                                    "type": "fs_error",
+                                    "message": err
+                                });
+                                let _ = ws_sender
+                                    .lock()
+                                    .await
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        resp.to_string().into(),
+                                    ))
+                                    .await;
+                            }
+                        }
+                        continue;
                     }
                 }
 

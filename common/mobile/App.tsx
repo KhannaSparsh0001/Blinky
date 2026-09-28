@@ -588,11 +588,15 @@ export default function App() {
     fsSearchResults,
     fsLoading,
     fsError,
+    fsFileData,
     fetchQuickAccess,
     listDirectory,
     fetchRecentFiles,
     searchFiles,
     openFileOnPC,
+    readFileForMobile,
+    clearFsFileData,
+    resetDirectory,
     fileTransferMessage,
     connect,
     disconnect,
@@ -1896,11 +1900,15 @@ export default function App() {
               searchResults={fsSearchResults}
               isLoading={fsLoading}
               fsError={fsError}
+              fsFileData={fsFileData}
               onFetchQuickAccess={fetchQuickAccess}
               onListDirectory={listDirectory}
               onFetchRecentFiles={fetchRecentFiles}
               onSearch={searchFiles}
               onOpenFileOnPC={openFileOnPC}
+              onOpenFileOnMobile={readFileForMobile}
+              onClearFsFileData={clearFsFileData}
+              onResetDirectory={resetDirectory}
               onAskBlinky={(file) => {
                 setActiveTab('Chat');
                 setQueryText(`Can you examine this file on my PC: "${file.path}"?`);
@@ -1960,7 +1968,15 @@ export default function App() {
             onClose={() => setShowFileTransfer(false)}
           />
         </KeyboardAvoidingView>
-        <BottomNavigation activeTab={activeTab} onTabChange={setActiveTab} />
+        <BottomNavigation
+          activeTab={activeTab}
+          onTabChange={(tab) => {
+            if (tab === 'Files') {
+              resetDirectory();
+            }
+            setActiveTab(tab);
+          }}
+        />
       </View>
       {showSplash && <SplashScreen onDismiss={() => setShowSplash(false)} />}
       </View>

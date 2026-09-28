@@ -9,11 +9,17 @@ import {
   RefreshControl,
   ActivityIndicator,
   Modal,
+  Animated,
+  PanResponder,
+  Platform,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { colors, typography, radius, spacing } from '../theme/theme';
-import { QuickAccessFolder, FsEntry, FsDirContents } from '../usePCWebSocket';
+import { QuickAccessFolder, FsEntry, FsDirContents, FsFileData } from '../usePCWebSocket';
 
 interface FilesScreenProps {
   isConnected: boolean;
@@ -23,11 +29,15 @@ interface FilesScreenProps {
   searchResults?: FsEntry[];
   isLoading?: boolean;
   fsError?: string | null;
+  fsFileData?: FsFileData | null;
   onFetchQuickAccess?: () => void;
   onListDirectory?: (path?: string) => void;
   onFetchRecentFiles?: () => void;
   onSearch?: (query: string, path?: string) => void;
   onOpenFileOnPC?: (path: string) => void;
+  onOpenFileOnMobile?: (path: string) => void;
+  onClearFsFileData?: () => void;
+  onResetDirectory?: () => void;
   onAskBlinky?: (file: FsEntry) => void;
 }
 
@@ -136,11 +146,15 @@ export function FilesScreen({
   searchResults = [],
   isLoading = false,
   fsError = null,
+  fsFileData = null,
   onFetchQuickAccess,
   onListDirectory,
   onFetchRecentFiles,
   onSearch,
   onOpenFileOnPC,
+  onOpenFileOnMobile,
+  onClearFsFileData,
+  onResetDirectory,
   onAskBlinky,
 }: FilesScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,7 +162,47 @@ export function FilesScreen({
   const [selectedFile, setSelectedFile] = useState<FsEntry | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const searchTimeoutRef = useRef<any>(null);
+
+  // Pan gesture for sliding down bottom sheet toastbar
+  const panY = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => gestureState.dy > 5,
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          panY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 80 || gestureState.vy > 0.4) {
+          Animated.timing(panY, {
+            toValue: 600,
+            duration: 220,
+            useNativeDriver: true,
+          }).start(() => {
+            setSelectedFile(null);
+            panY.setValue(0);
+          });
+        } else {
+          Animated.spring(panY, {
+            toValue: 0,
+            bounciness: 4,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  useEffect(() => {
+    if (selectedFile) {
+      panY.setValue(0);
+    }
+  }, [selectedFile]);
 
   // Sync initial directories on load
   useEffect(() => {
@@ -157,6 +211,33 @@ export function FilesScreen({
       onFetchRecentFiles?.();
     }
   }, [isConnected]);
+
+  // Handle incoming mobile file data and open natively
+  useEffect(() => {
+    if (fsFileData && isDownloading) {
+      setIsDownloading(false);
+      (async () => {
+        try {
+          const localUri = `${FileSystem.cacheDirectory}${fsFileData.name}`;
+          await FileSystem.writeAsStringAsync(localUri, fsFileData.base64, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          setActionFeedback(`Opened on mobile: ${fsFileData.name}`);
+          onClearFsFileData?.();
+          setSelectedFile(null);
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(localUri, {
+              dialogTitle: `Open ${fsFileData.name}`,
+            });
+          }
+        } catch (err: any) {
+          setActionFeedback(`Error opening file: ${err?.message || err}`);
+        } finally {
+          setTimeout(() => setActionFeedback(null), 2500);
+        }
+      })();
+    }
+  }, [fsFileData, isDownloading]);
 
   // Handle live search debounce
   const handleSearchChange = (text: string) => {
@@ -181,7 +262,7 @@ export function FilesScreen({
   const handleOpenFolder = (path: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (currentDirectory?.currentPath) {
-      setNavHistory((prev) => [...prev, currentDirectory.currentPath]);
+      setNavHistory((prev: string[]) => [...prev, currentDirectory.currentPath]);
     }
     onListDirectory?.(path);
   };
@@ -190,20 +271,19 @@ export function FilesScreen({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (navHistory.length > 0) {
       const prevPath = navHistory[navHistory.length - 1];
-      setNavHistory((prev) => prev.slice(0, prev.length - 1));
+      setNavHistory((prev: string[]) => prev.slice(0, prev.length - 1));
       onListDirectory?.(prevPath);
-    } else if (currentDirectory?.parentPath) {
-      onListDirectory?.(currentDirectory.parentPath);
     } else {
-      // Exit directory back to quick access
-      onListDirectory?.(undefined);
+      // Exit directory back to default quick access / recent screen
+      handleExitDirectory();
     }
   };
 
   const handleExitDirectory = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setNavHistory([]);
-    onListDirectory?.(undefined);
+    setSearchQuery('');
+    onResetDirectory?.();
   };
 
   const handlePressFile = (file: FsEntry) => {
@@ -219,6 +299,16 @@ export function FilesScreen({
       setActionFeedback(null);
       setSelectedFile(null);
     }, 1800);
+  };
+
+  const handleOpenOnMobile = (file: FsEntry) => {
+    if (!isConnected) {
+      Alert.alert('Offline', 'Please connect to your PC to open this file.');
+      return;
+    }
+    setIsDownloading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onOpenFileOnMobile?.(file.path);
   };
 
   const handleAskAboutFile = (file: FsEntry) => {
@@ -548,11 +638,11 @@ export function FilesScreen({
         </ScrollView>
       )}
 
-      {/* File Action Modal */}
+      {/* File Action Toastbar with Slide-down to Close */}
       <Modal
         visible={Boolean(selectedFile)}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setSelectedFile(null)}
       >
         <TouchableOpacity
@@ -560,7 +650,20 @@ export function FilesScreen({
           activeOpacity={1}
           onPress={() => setSelectedFile(null)}
         >
-          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+          <Animated.View
+            style={[
+              styles.modalContent,
+              {
+                transform: [{ translateY: panY }],
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            {/* Slide Down Drag Handle */}
+            <View {...panResponder.panHandlers} style={styles.sheetHandleContainer}>
+              <View style={styles.sheetHandleBar} />
+            </View>
+
             {selectedFile && (
               <>
                 <View style={styles.modalHeader}>
@@ -594,15 +697,36 @@ export function FilesScreen({
                 </View>
 
                 <View style={styles.modalActions}>
+                  {/* Open on Mobile button */}
+                  {!selectedFile.is_dir && (
+                    <TouchableOpacity
+                      style={styles.mobileActionBtn}
+                      onPress={() => handleOpenOnMobile(selectedFile)}
+                      activeOpacity={0.8}
+                      disabled={isDownloading}
+                    >
+                      {isDownloading ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                      ) : (
+                        <Ionicons name="phone-portrait-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                      )}
+                      <Text style={styles.mobileActionBtnText}>
+                        {isDownloading ? 'Downloading from PC...' : 'Open on Mobile'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Open on PC button */}
                   <TouchableOpacity
                     style={styles.primaryActionBtn}
                     onPress={() => handleOpenOnPC(selectedFile)}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="open-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Ionicons name="open-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                     <Text style={styles.primaryActionBtnText}>Open on PC</Text>
                   </TouchableOpacity>
 
+                  {/* Ask Blinky button */}
                   <TouchableOpacity
                     style={styles.secondaryActionBtn}
                     onPress={() => handleAskAboutFile(selectedFile)}
@@ -612,6 +736,7 @@ export function FilesScreen({
                     <Text style={styles.secondaryActionBtnText}>Ask Blinky about this file</Text>
                   </TouchableOpacity>
 
+                  {/* Cancel button */}
                   <TouchableOpacity
                     style={styles.cancelActionBtn}
                     onPress={() => setSelectedFile(null)}
@@ -622,7 +747,7 @@ export function FilesScreen({
                 </View>
               </>
             )}
-          </View>
+          </Animated.View>
         </TouchableOpacity>
       </Modal>
     </View>
@@ -910,16 +1035,33 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: colors.surface,
+    backgroundColor: '#121216', // Solid 100% opaque dark background
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? spacing.xxl : spacing.xl,
     borderTopWidth: 1,
-    borderColor: colors.borderLight,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
+    elevation: 24,
+  },
+  sheetHandleContainer: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    width: '100%',
+  },
+  sheetHandleBar: {
+    width: 44,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -946,12 +1088,12 @@ const styles = StyleSheet.create({
   pathBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: radius.md,
     padding: spacing.sm,
     marginBottom: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.borderLight,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   pathBadgeText: {
     ...typography.bodySmall,
@@ -961,6 +1103,19 @@ const styles = StyleSheet.create({
   },
   modalActions: {
     gap: spacing.sm,
+  },
+  mobileActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    borderRadius: radius.md,
+    paddingVertical: 14,
+  },
+  mobileActionBtnText: {
+    ...typography.bodyMedium,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   primaryActionBtn: {
     flexDirection: 'row',

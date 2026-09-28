@@ -138,6 +138,13 @@ export interface FsDirContents {
   entries: FsEntry[];
 }
 
+export interface FsFileData {
+  path: string;
+  name: string;
+  size: number;
+  base64: string;
+}
+
 export type PowerCommand =
   | 'power_off'
   | 'restart'
@@ -169,6 +176,7 @@ export function usePCWebSocket() {
   const [fsSearchResults, setFsSearchResults] = useState<FsEntry[]>([]);
   const [fsLoading, setFsLoading] = useState<boolean>(false);
   const [fsError, setFsError] = useState<string | null>(null);
+  const [fsFileData, setFsFileData] = useState<FsFileData | null>(null);
   const [fileTransferMessage, setFileTransferMessage] = useState<FileTransferMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const nativeRef = useRef<NativeSecureSocket | null>(null);
@@ -306,6 +314,14 @@ export function usePCWebSocket() {
                 setFsSearchResults(parsed.results);
               }
               setFsLoading(false);
+            } else if (parsed.type === 'fs_file_data') {
+              setFsFileData({
+                path: parsed.path || '',
+                name: parsed.name || '',
+                size: parsed.size || 0,
+                base64: parsed.base64 || '',
+              });
+              setFsLoading(false);
             } else if (parsed.type === 'fs_error') {
               setFsError(parsed.message || 'Filesystem error');
               setFsLoading(false);
@@ -427,6 +443,14 @@ export function usePCWebSocket() {
               if (Array.isArray(parsed.results)) {
                 setFsSearchResults(parsed.results);
               }
+              setFsLoading(false);
+            } else if (parsed.type === 'fs_file_data') {
+              setFsFileData({
+                path: parsed.path || '',
+                name: parsed.name || '',
+                size: parsed.size || 0,
+                base64: parsed.base64 || '',
+              });
               setFsLoading(false);
             } else if (parsed.type === 'fs_error') {
               setFsError(parsed.message || 'Filesystem error');
@@ -578,6 +602,25 @@ export function usePCWebSocket() {
     sendCommand(JSON.stringify({ type: 'fs_open_file', path }));
   }, [sendCommand]);
 
+  const readFileForMobile = useCallback((path: string) => {
+    setFsLoading(true);
+    setFsError(null);
+    setFsFileData(null);
+    sendCommand(JSON.stringify({ type: 'fs_read_file', path }));
+  }, [sendCommand]);
+
+  const clearFsFileData = useCallback(() => {
+    setFsFileData(null);
+  }, []);
+
+  const resetDirectory = useCallback(() => {
+    setCurrentDirectory(null);
+    setFsSearchResults([]);
+    setFsError(null);
+    fetchQuickAccess();
+    fetchRecentFiles();
+  }, [fetchQuickAccess, fetchRecentFiles]);
+
   return {
     status,
     errorMsg,
@@ -594,11 +637,15 @@ export function usePCWebSocket() {
     fsSearchResults,
     fsLoading,
     fsError,
+    fsFileData,
     fetchQuickAccess,
     listDirectory,
     fetchRecentFiles,
     searchFiles,
     openFileOnPC,
+    readFileForMobile,
+    clearFsFileData,
+    resetDirectory,
     fileTransferMessage,
     connect,
     disconnect,
