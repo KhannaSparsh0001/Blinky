@@ -304,6 +304,7 @@ def resolve_aicut_request(
     *,
     context_files: list[str] | None = None,
     explorer_context: dict[str, Any] | None = None,
+    infer_operations_from_selection: bool = True,
 ) -> dict[str, Any] | None:
     """Deterministically parse and classify an AiCut video editor query, supporting multi-step pipelines."""
     if not query:
@@ -380,7 +381,11 @@ def resolve_aicut_request(
     has_subtitles = (bool(re.search(subtitle_pattern, q_lower)) or bool(manual_script)) and not is_transcribe_only
 
     merge_pattern = r"\b(?:merge|combine|join|stitch|concat|concatenate)\b"
-    has_merge = bool(re.search(merge_pattern, q_lower)) or (len(ref_videos) >= 2 and not re.search(r"\b(?:trim|cut)\b", q_lower))
+    has_merge = bool(re.search(merge_pattern, q_lower)) or (
+        infer_operations_from_selection
+        and len(ref_videos) >= 2
+        and not re.search(r"\b(?:trim|cut)\b", q_lower)
+    )
 
     trim_times = _extract_trim_times(q_lower)
     has_trim = trim_times is not None
@@ -424,13 +429,13 @@ def resolve_aicut_request(
     audio_match = None if context_files is not None else re.search(r"([^\s\"\']+\.(?:mp3|wav|aac|m4a|flac|ogg))", q_lower)
     has_explicit_media_in_query = bool(video_matches) or bool(ref_videos)
     if has_explicit_media_in_query:
-        has_audio = bool(audio_match) or bool(ref_audios) or has_audio_keyword
+        has_audio = bool(audio_match) or has_audio_keyword or (infer_operations_from_selection and bool(ref_audios))
     else:
         has_audio = (
             bool(audio_match)
-            or bool(ref_audios)
+            or (infer_operations_from_selection and bool(ref_audios))
             or has_audio_keyword
-            or (bool(selected_audios) and (has_merge or any(w in q_lower for w in ["all", "them all", "merged them", "everything", "both", "these", "with audio", "beats", "music", "song"])))
+            or (infer_operations_from_selection and bool(selected_audios) and (has_merge or any(w in q_lower for w in ["all", "them all", "merged them", "everything", "both", "these", "with audio", "beats", "music", "song"])))
         )
 
     resolved_audio: str | None = None
@@ -522,7 +527,7 @@ def resolve_aicut_request(
 
     # ── Single-Action Handlers (Backwards Compatibility) ──
     # 1. Referenced files high-priority add_song
-    if ref_videos and ref_audios and len(ref_videos) == 1 and not has_merge:
+    if ref_videos and ref_audios and len(ref_videos) == 1 and not has_merge and (infer_operations_from_selection or has_audio_keyword):
         return {
             "action": "add_song",
             "video_path": ref_videos[0],

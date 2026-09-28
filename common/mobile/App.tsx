@@ -1897,6 +1897,7 @@ export default function App() {
                   setPreviewImageUri(uri);
                 }}
                 onCaptureScreenshot={handleCaptureScreenshot}
+                onSendFilesToPC={() => setShowFileTransfer(true)}
                 isVoiceRecording={isVoiceRecording}
                 isVoiceTranscribing={isVoiceTranscribing}
                 onToggleVoice={toggleVoiceRecording}

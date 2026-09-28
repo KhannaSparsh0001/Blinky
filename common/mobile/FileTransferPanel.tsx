@@ -15,6 +15,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import type { FileTransferMessage } from './usePCWebSocket';
+import { buildFileOffer, transferIntent } from './lib/fileTransferOffer';
 
 type TransferModule = typeof import('./modules/blinky-secure-socket');
 
@@ -50,6 +51,7 @@ export type TransferSession = {
   items: FileTransferItem[];
   currentIndex: number;
   instruction: string;
+  destinationPath: string;
   isEdit: boolean;
   phase: BatchTransferPhase;
   totalBytes: number;
@@ -87,7 +89,7 @@ function formatBytes(size: number) {
 
 function getMediaType(name: string): 'video' | 'audio' | 'image' | 'other' {
   const ext = name.toLowerCase().split('.').pop() || '';
-  if (['mp4', 'mov', 'mkv', 'avi', 'webm', '3gp'].includes(ext)) return 'video';
+  if (['mp4', 'mov', 'mkv', 'avi', 'webm', 'flv', 'wmv', 'm4v'].includes(ext)) return 'video';
   if (['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg', 'wma'].includes(ext)) return 'audio';
   if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return 'image';
   return 'other';
@@ -141,6 +143,7 @@ export function FileTransferPanel({
 }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [instruction, setInstruction] = useState('');
+  const [destinationPath, setDestinationPath] = useState('');
   const [session, setSession] = useState<TransferSession | null>(null);
   const sessionRef = useRef<TransferSession | null>(null);
   const lastMessageRef = useRef<FileTransferMessage | null>(null);
@@ -166,20 +169,9 @@ export function FileTransferPanel({
     return selectedFiles.reduce((acc, f) => acc + (f.size || 0), 0);
   }, [selectedFiles]);
 
-  const mediaSummary = useMemo(() => {
-    let videos = 0;
-    let audios = 0;
-    for (const f of selectedFiles) {
-      const type = getMediaType(f.name);
-      if (type === 'video') videos++;
-      if (type === 'audio') audios++;
-    }
-    return { videos, audios };
-  }, [selectedFiles]);
-
   // Handle incoming websocket messages from the PC
   const handleServerMessage = useCallback((message: FileTransferMessage) => {
-    if (message.type === 'file_offer_result' && message.requestId) {
+    if ((message.type === 'file_offer_result' || message.type === 'file_error') && message.requestId) {
       const resolver = pendingOfferResolvers.current.get(message.requestId);
       if (resolver) {
         pendingOfferResolvers.current.delete(message.requestId);
@@ -188,7 +180,8 @@ export function FileTransferPanel({
       }
     }
 
-    if (message.type === 'file_edit_complete' || message.type === 'file_edit_error') {
+    if (message.type === 'file_edit_complete' || message.type === 'file_edit_error' ||
+        (message.type === 'file_error' && sessionRef.current?.phase === 'editing')) {
       if (editCompleteResolver.current) {
         const resolver = editCompleteResolver.current;
         editCompleteResolver.current = null;
@@ -277,7 +270,7 @@ export function FileTransferPanel({
     sessionRef.current = null;
   }, []);
 
-  const startBatchTransfer = useCallback(async (withEdit: boolean) => {
+  const startBatchTransfer = useCallback(async () => {
     if (!connected) {
       Alert.alert('PC disconnected', 'Connect to Blinky before sending files.');
       return;
@@ -295,17 +288,18 @@ export function FileTransferPanel({
       Alert.alert('Certificate pin required', 'Enter the PC release certificate pin in Local Link Setup.');
       return;
     }
+    const withEdit = transferIntent(instruction) === 'edit';
+    const batchDestination = destinationPath.trim();
 
     abortRef.current = false;
 
-    // Prioritize videos before audios/other so that the video file serves as
-    // the primary transfer session on PC (correct naming and video stream handling)
+    // Put editable media first so the primary transfer is a usable AiCut input.
     const sortedFiles = [...selectedFiles].sort((a, b) => {
-      const isVidA = getMediaType(a.name) === 'video';
-      const isVidB = getMediaType(b.name) === 'video';
-      if (isVidA && !isVidB) return -1;
-      if (!isVidA && isVidB) return 1;
-      return 0;
+      const priority = (name: string) => {
+        const type = getMediaType(name);
+        return type === 'video' ? 0 : type === 'audio' ? 1 : 2;
+      };
+      return priority(a.name) - priority(b.name);
     });
 
     const initialItems: FileTransferItem[] = sortedFiles.map((f, i) => ({
@@ -322,6 +316,7 @@ export function FileTransferPanel({
       items: initialItems,
       currentIndex: 0,
       instruction: instruction.trim(),
+      destinationPath: batchDestination || 'Downloads/Blinky',
       isEdit: withEdit,
       phase: 'preparing',
       totalBytes: totalRawSize,
@@ -370,19 +365,22 @@ export function FileTransferPanel({
           });
         });
 
-        const sent = sendMessage({
-          type: 'file_offer',
+        const sent = sendMessage(buildFileOffer({
           requestId: offerReqId,
           name: currentItem.file.name,
           size: digest.size,
           sha256: digest.sha256,
-          purpose: withEdit ? 'edit' : 'upload',
-        });
+          instruction,
+          destinationPath: batchDestination,
+        }));
         if (!sent) {
           throw new Error('Could not send file offer. Check PC connection.');
         }
 
         const offerResult = await offerPromise;
+        if (offerResult.destinationPath) {
+          updateSession(curr => ({ ...curr, destinationPath: offerResult.destinationPath! }));
+        }
         if (!offerResult.transferId || !offerResult.temporaryToken) {
           throw new Error(offerResult.message || `PC rejected transfer of ${currentItem.file.name}.`);
         }
@@ -447,17 +445,6 @@ export function FileTransferPanel({
           throw new Error('Transfer session details missing.');
         }
 
-        let effectiveInstruction = instruction.trim();
-        if (!effectiveInstruction) {
-          if (mediaSummary.videos >= 2) {
-            effectiveInstruction = 'merge these videos';
-          } else if (mediaSummary.videos === 1 && mediaSummary.audios >= 1) {
-            effectiveInstruction = 'add this song to the video';
-          } else {
-            effectiveInstruction = 'merge these files';
-          }
-        }
-
         updateSession(s => ({ ...s, phase: 'editing', error: undefined }));
 
         const editReqId = newRequestId();
@@ -484,14 +471,14 @@ export function FileTransferPanel({
           temporaryToken: primaryTok,
           additionalTransferIds,
           transferIds: allTransferIds,
-          instruction: effectiveInstruction,
+          instruction: instruction.trim(),
         });
         if (!sent) {
           throw new Error('Upload completed, but could not request AiCut edit from the PC.');
         }
 
         const editResult = await editPromise;
-        if (editResult.type === 'file_edit_error') {
+        if (editResult.type === 'file_edit_error' || editResult.type === 'file_error') {
           throw new Error(editResult.message || 'AiCut could not complete the edit.');
         }
         if (!editResult.name || !editResult.size || !editResult.sha256) {
@@ -542,9 +529,9 @@ export function FileTransferPanel({
   }, [
     certificatePin,
     connected,
+    destinationPath,
     getNativeModule,
     instruction,
-    mediaSummary,
     releaseTransport,
     selectedFiles,
     sendMessage,
@@ -583,10 +570,7 @@ export function FileTransferPanel({
       return `Uploading file ${currentNum} of ${totalCount}: ${currentItem?.file.name}…`;
     }
     if (session.phase === 'editing') {
-      if (session.items.length > 1) {
-        return 'AiCut is merging & processing files on the PC…';
-      }
-      return 'AiCut is editing video on the PC…';
+      return 'AiCut is processing your edit on the PC…';
     }
     if (session.phase === 'downloading') {
       return 'Downloading edited result to your device…';
@@ -594,8 +578,8 @@ export function FileTransferPanel({
     if (session.phase === 'done') {
       if (session.localUri) return 'Transfer & edit complete';
       return session.items.length > 1
-        ? `All ${session.items.length} files saved to Downloads/Blinky`
-        : 'File saved to Downloads/Blinky';
+        ? `All ${session.items.length} files saved to ${session.destinationPath}`
+        : `File saved to ${session.destinationPath}`;
     }
     return '';
   }, [session]);
@@ -617,18 +601,12 @@ export function FileTransferPanel({
     return session.totalBytes || totalRawSize || 1;
   }, [session, totalRawSize]);
 
-  // Default button label matching Windows CommandBar logic
   const primaryButtonLabel = useMemo(() => {
-    if (instruction.trim()) {
+    if (transferIntent(instruction) === 'edit') {
       return selectedFiles.length > 1 ? 'Upload & run edit' : 'Upload & edit';
     }
-    if (selectedFiles.length >= 2) {
-      if (mediaSummary.videos >= 2) return 'Upload & merge videos';
-      if (mediaSummary.videos === 1 && mediaSummary.audios >= 1) return 'Upload & combine audio';
-      return 'Upload & merge';
-    }
     return 'Upload to PC';
-  }, [instruction, mediaSummary, selectedFiles.length]);
+  }, [instruction, selectedFiles.length]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -730,6 +708,20 @@ export function FileTransferPanel({
               </View>
             )}
 
+            <Text style={styles.fieldLabel}>PC destination folder</Text>
+            <TextInput
+              value={destinationPath}
+              onChangeText={setDestinationPath}
+              placeholder="Downloads/Blinky (default) or absolute PC folder path"
+              placeholderTextColor="#817C98"
+              style={styles.instructionInput}
+              editable={!busy}
+              autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="PC destination folder"
+            />
+            <Text style={styles.helpText}>Enter an existing writable folder path on your PC. Leave blank for Downloads/Blinky.</Text>
+
             {/* Instruction input */}
             <Text style={styles.fieldLabel}>AiCut instruction (optional)</Text>
             <TextInput
@@ -746,11 +738,7 @@ export function FileTransferPanel({
               editable={!busy && session?.phase !== 'done'}
               autoCorrect
             />
-            <Text style={styles.helpText}>
-              {selectedFiles.length >= 2
-                ? 'Multiple files can be merged (videos + audios). Leave blank to merge them automatically with Windows AiCut logic.'
-                : 'Without an instruction, files are saved to PC Downloads/Blinky. With an instruction, AiCut edits the video on PC and returns it here.'}
-            </Text>
+            <Text style={styles.helpText}>Leave blank to upload every selected file. Enter a merge, trim, audio, or captions request to run AiCut on uploaded media. PDFs and images are still transferred.</Text>
 
             {/* Progress Card */}
             {session && busy && (
@@ -771,7 +759,7 @@ export function FileTransferPanel({
                 <Text style={styles.errorText}>{session.error}</Text>
                 <Pressable
                   style={styles.secondaryButton}
-                  onPress={() => void startBatchTransfer(session.isEdit)}
+                  onPress={() => void startBatchTransfer()}
                 >
                   <Text style={styles.secondaryButtonText}>Retry transfer</Text>
                 </Pressable>
@@ -787,8 +775,8 @@ export function FileTransferPanel({
                   <Text style={styles.fileSize} numberOfLines={1}>
                     {session.output?.name ||
                       (selectedFiles.length > 1
-                        ? `${selectedFiles.length} files saved to PC Downloads/Blinky`
-                        : `${selectedFiles[0]?.name} · Saved to PC Downloads/Blinky`)}
+                        ? `${selectedFiles.length} files saved to ${session.destinationPath}`
+                        : `${selectedFiles[0]?.name} · Saved to ${session.destinationPath}`)}
                   </Text>
                 </View>
                 {!!session.localUri && (
@@ -807,23 +795,12 @@ export function FileTransferPanel({
               <Text style={styles.secondaryButtonText}>Close</Text>
             </Pressable>
 
-            {/* When multiple files are selected, allow "Upload only" as an option alongside "Upload & merge" */}
-            {selectedFiles.length >= 2 && !instruction.trim() && (
-              <Pressable
-                style={[styles.secondaryButton, (!connected || busy) && styles.disabledButton]}
-                onPress={() => void startBatchTransfer(false)}
-                disabled={!connected || busy}
-              >
-                <Text style={styles.secondaryButtonText}>Upload only</Text>
-              </Pressable>
-            )}
-
             <Pressable
               style={[
                 styles.primaryButton,
                 (!connected || selectedFiles.length === 0 || busy) && styles.disabledButton,
               ]}
-              onPress={() => void startBatchTransfer(selectedFiles.length >= 2 || !!instruction.trim())}
+              onPress={() => void startBatchTransfer()}
               disabled={!connected || selectedFiles.length === 0 || busy}
             >
               <Text style={styles.primaryButtonText}>{primaryButtonLabel}</Text>
