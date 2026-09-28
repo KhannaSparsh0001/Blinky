@@ -366,7 +366,7 @@ export function usePCWebSocket() {
           setStatus('error');
           setErrorMsg(`Connection timed out (${formattedIp}). Ensure Blinky desktop app is running and port 9001 is open.`);
         }
-      }, 5000);
+      }, 10000);
 
       ws.onopen = () => {
         if (connectTimeout) clearTimeout(connectTimeout);

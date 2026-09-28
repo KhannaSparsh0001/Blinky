@@ -119,7 +119,7 @@ const getExpoHostIp = (): string | null => {
   return host || null;
 };
 
-const checkIpAddress = (rawIp: string, port = 9001, timeoutMs = 1500, certificatePin?: string): Promise<string> => {
+const checkIpAddress = (rawIp: string, port = 9001, timeoutMs = 3000, certificatePin?: string): Promise<string> => {
   const clean = rawIp.trim().replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/+$/, '');
   const [ipOnly, customPort] = clean.includes(':') ? clean.split(':') : [clean, undefined];
   const targetPort = customPort ? parseInt(customPort, 10) : port;
@@ -281,7 +281,7 @@ const probeCandidateIps = async (certificatePin?: string): Promise<string | null
   if (!candidates.includes('127.0.0.1')) candidates.push('127.0.0.1');
 
   const probePromises = candidates.map((ip) =>
-    checkIpAddress(ip, 9001, 1500, certificatePin)
+    checkIpAddress(ip, 9001, 3000, certificatePin)
       .then((found) => found)
       .catch(() => null)
   );
