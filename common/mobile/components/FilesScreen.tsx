@@ -221,7 +221,7 @@ export function FilesScreen({
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isSavingToGallery, setIsSavingToGallery] = useState(false);
+  const [mobileActionMode, setMobileActionMode] = useState<'open' | 'send' | 'save_gallery'>('open');
   const [textPreview, setTextPreview] = useState<{ name: string; content: string } | null>(null);
   const searchTimeoutRef = useRef<any>(null);
 
@@ -272,7 +272,7 @@ export function FilesScreen({
     }
   }, [isConnected]);
 
-  // Handle incoming mobile file data and open directly or send
+  // Handle incoming mobile file data and execute requested action
   useEffect(() => {
     if (fsFileData && isDownloading) {
       setIsDownloading(false);
@@ -284,12 +284,23 @@ export function FilesScreen({
           });
 
           const ext = (fsFileData.name.includes('.') ? fsFileData.name.split('.').pop() || '' : '').toLowerCase();
+          const targetMode = mobileActionMode;
           setSelectedFile(null);
           onClearFsFileData?.();
 
-          // 1. Direct Save to Gallery action (for images)
-          if (isSavingToGallery) {
-            setIsSavingToGallery(false);
+          // 1. Send / Share file mode (available for all files)
+          if (targetMode === 'send') {
+            if (await Sharing.isAvailableAsync()) {
+              await Sharing.shareAsync(localUri, {
+                dialogTitle: `Send ${fsFileData.name}`,
+              });
+              setActionFeedback(`Shared: ${fsFileData.name}`);
+            }
+            return;
+          }
+
+          // 2. Save to Gallery mode (for images)
+          if (targetMode === 'save_gallery') {
             try {
               await MediaLibrary.saveToLibraryAsync(localUri);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -300,7 +311,8 @@ export function FilesScreen({
             return;
           }
 
-          // 2. Direct Image Viewer in default system app (Google Photos, Gallery) via ACTION_VIEW
+          // 3. Open Mode:
+          // A. Images -> default image viewer via ACTION_VIEW
           if (isImageFile(ext)) {
             if (Platform.OS === 'android') {
               try {
@@ -323,7 +335,7 @@ export function FilesScreen({
             }
           }
 
-          // 3. Direct PDF & Document Viewer via Android ACTION_VIEW (default PDF viewer without Send)
+          // B. PDFs -> default PDF viewer via ACTION_VIEW
           if (ext === 'pdf') {
             if (Platform.OS === 'android') {
               try {
@@ -341,7 +353,7 @@ export function FilesScreen({
             }
           }
 
-          // 4. Direct Text / Code Reader (in-app modal)
+          // C. Text / Code -> in-app reader modal
           if (isTextFile(ext)) {
             setActionFeedback(`Opening reader: ${fsFileData.name}`);
             const textContent = await FileSystem.readAsStringAsync(localUri, {
@@ -351,22 +363,36 @@ export function FilesScreen({
             return;
           }
 
-          // 5. Send / Share sheet for other non-viewable files (like .exe, .zip, etc.) or fallback
+          // D. Other files (exe, zip, etc.) -> open with external app via ACTION_VIEW or Sharing
+          if (Platform.OS === 'android') {
+            try {
+              const contentUri = await FileSystem.getContentUriAsync(localUri);
+              await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: contentUri,
+                flags: 1,
+                type: getMimeType(ext),
+              });
+              setActionFeedback(`Opened: ${fsFileData.name}`);
+              return;
+            } catch (launcherErr) {
+              console.warn('[FilesScreen] IntentLauncher open fallback:', launcherErr);
+            }
+          }
+
           if (await Sharing.isAvailableAsync()) {
             await Sharing.shareAsync(localUri, {
-              dialogTitle: `Send ${fsFileData.name}`,
+              dialogTitle: `Open ${fsFileData.name}`,
             });
-            setActionFeedback(`Sent: ${fsFileData.name}`);
+            setActionFeedback(`Opened: ${fsFileData.name}`);
           }
         } catch (err: any) {
           setActionFeedback(`Error: ${err?.message || err}`);
         } finally {
-          setIsSavingToGallery(false);
           setTimeout(() => setActionFeedback(null), 2500);
         }
       })();
     }
-  }, [fsFileData, isDownloading, isSavingToGallery, onPreviewImage, onClearFsFileData]);
+  }, [fsFileData, isDownloading, mobileActionMode, onPreviewImage, onClearFsFileData]);
 
   // Handle live search debounce
   const handleSearchChange = (text: string) => {
@@ -430,35 +456,27 @@ export function FilesScreen({
     }, 1800);
   };
 
-  const handleOpenOnMobile = (file: FsEntry) => {
+  const handleAction = async (file: FsEntry, mode: 'open' | 'send' | 'save_gallery') => {
     if (!isConnected) {
-      Alert.alert('Offline', 'Please connect to your PC to open this file.');
+      Alert.alert('Offline', 'Please connect to your PC to access this file.');
       return;
     }
-    setIsSavingToGallery(false);
+    if (mode === 'save_gallery') {
+      try {
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Denied', 'Permission to access media library is required to save photos.');
+          return;
+        }
+      } catch (err: any) {
+        Alert.alert('Error', err?.message || 'Could not request permissions.');
+        return;
+      }
+    }
+    setMobileActionMode(mode);
     setIsDownloading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onOpenFileOnMobile?.(file.path);
-  };
-
-  const handleSaveToGallery = async (file: FsEntry) => {
-    if (!isConnected) {
-      Alert.alert('Offline', 'Please connect to your PC to save this image.');
-      return;
-    }
-    try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Permission to access media library is required to save photos.');
-        return;
-      }
-      setIsSavingToGallery(true);
-      setIsDownloading(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      onOpenFileOnMobile?.(file.path);
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Could not request permissions.');
-    }
   };
 
   const handleAskAboutFile = (file: FsEntry) => {
@@ -847,15 +865,15 @@ export function FilesScreen({
                 </View>
 
                 <View style={styles.modalActions}>
-                  {/* Viewable Files: Open / Read button */}
-                  {!selectedFile.is_dir && isViewableFile(selectedFile.ext) && (
+                  {/* 1. Open Button (Available for all files) */}
+                  {!selectedFile.is_dir && (
                     <TouchableOpacity
                       style={styles.mobileActionBtn}
-                      onPress={() => handleOpenOnMobile(selectedFile)}
+                      onPress={() => handleAction(selectedFile, 'open')}
                       activeOpacity={0.8}
                       disabled={isDownloading}
                     >
-                      {isDownloading && !isSavingToGallery ? (
+                      {isDownloading && mobileActionMode === 'open' ? (
                         <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
                       ) : (
                         <Ionicons
@@ -864,7 +882,9 @@ export function FilesScreen({
                               ? 'image-outline'
                               : selectedFile.ext.toLowerCase() === 'pdf'
                               ? 'document-text-outline'
-                              : 'reader-outline'
+                              : isTextFile(selectedFile.ext)
+                              ? 'reader-outline'
+                              : 'open-outline'
                           }
                           size={18}
                           color="#FFFFFF"
@@ -872,51 +892,53 @@ export function FilesScreen({
                         />
                       )}
                       <Text style={styles.mobileActionBtnText}>
-                        {isDownloading && !isSavingToGallery
+                        {isDownloading && mobileActionMode === 'open'
                           ? 'Opening...'
                           : isImageFile(selectedFile.ext)
                           ? 'Open in Image Viewer'
                           : selectedFile.ext.toLowerCase() === 'pdf'
                           ? 'Open PDF Directly'
-                          : 'Read File Directly'}
+                          : isTextFile(selectedFile.ext)
+                          ? 'Read File Directly'
+                          : 'Open File with...'}
                       </Text>
                     </TouchableOpacity>
                   )}
 
-                  {/* Save to Gallery option for images */}
-                  {!selectedFile.is_dir && isImageFile(selectedFile.ext) && (
-                    <TouchableOpacity
-                      style={styles.saveGalleryActionBtn}
-                      onPress={() => handleSaveToGallery(selectedFile)}
-                      activeOpacity={0.8}
-                      disabled={isDownloading}
-                    >
-                      {isDownloading && isSavingToGallery ? (
-                        <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
-                      ) : (
-                        <Ionicons name="download-outline" size={18} color="#10B981" style={{ marginRight: 8 }} />
-                      )}
-                      <Text style={styles.saveGalleryActionBtnText}>
-                        {isDownloading && isSavingToGallery ? 'Saving to Gallery...' : 'Save to Gallery'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Other files (exe, zip, etc.): Send button instead of open */}
-                  {!selectedFile.is_dir && !isViewableFile(selectedFile.ext) && (
+                  {/* 2. Send / Share File Button (Available for all files) */}
+                  {!selectedFile.is_dir && (
                     <TouchableOpacity
                       style={styles.sendActionBtn}
-                      onPress={() => handleOpenOnMobile(selectedFile)}
+                      onPress={() => handleAction(selectedFile, 'send')}
                       activeOpacity={0.8}
                       disabled={isDownloading}
                     >
-                      {isDownloading ? (
+                      {isDownloading && mobileActionMode === 'send' ? (
                         <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
                       ) : (
                         <Ionicons name="share-social-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                       )}
                       <Text style={styles.sendActionBtnText}>
-                        {isDownloading ? 'Preparing file...' : 'Send / Share File'}
+                        {isDownloading && mobileActionMode === 'send' ? 'Preparing to send...' : 'Send / Share File'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* 3. Save to Gallery option for images */}
+                  {!selectedFile.is_dir && isImageFile(selectedFile.ext) && (
+                    <TouchableOpacity
+                      style={styles.saveGalleryActionBtn}
+                      onPress={() => handleAction(selectedFile, 'save_gallery')}
+                      activeOpacity={0.8}
+                      disabled={isDownloading}
+                    >
+                      {isDownloading && mobileActionMode === 'save_gallery' ? (
+                        <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
+                      ) : (
+                        <Ionicons name="download-outline" size={18} color="#10B981" style={{ marginRight: 8 }} />
+                      )}
+                      <Text style={styles.saveGalleryActionBtnText}>
+                        {isDownloading && mobileActionMode === 'save_gallery' ? 'Saving to Gallery...' : 'Save to Gallery'}
                       </Text>
                     </TouchableOpacity>
                   )}
