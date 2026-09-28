@@ -95,10 +95,15 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 
 ---
 
-### Phase 5: Verification & Quality Assurance ⏳ (Pending)
-- [ ] Validate TypeScript build (`tsc --noEmit` or Metro type check) for `common/mobile`.
-- [ ] Test promo code redemption flow:
-  - Input `SHIPATHON` -> immediate unlock feedback & persistent storage.
-  - Invalid code test -> clean error message without crash.
-- [ ] Test persistence across restarts (verify `AsyncStorage` retrieval on app launch).
-- [ ] Verify that non-PC tabs (Chat, Files, Actions) remain 100% accessible and unaffected.
+### Phase 5: Verification & Quality Assurance ✅ (Completed)
+- [x] Validate TypeScript build (`bun x tsc --noEmit` passed with 0 errors).
+- [x] Created automated test suite in `common/mobile/tests/purchases.test.ts`:
+  - Verified default and configured promo code retrieval (`getAllowedPromoCodes`).
+  - Tested promo code redemption flow with case/whitespace tolerance (`shipathon` -> instant unlock).
+  - Tested invalid code rejection (empty string, non-matching code) with descriptive error messages.
+  - Tested real-time subscriber notification (`addPcAccessListener`) upon unlock and reset.
+  - Tested persistence in `AsyncStorage` (`@blinky_pc_promo_unlocked` survives and is readable on launch).
+  - Tested purchase restore flow reporting existing promo unlocks.
+  - Tested debug reset mechanism (`resetPromoUnlockForDebug`).
+- [x] Ran automated test suite via Bun: **8 tests passed, 0 failures, 26 assertions verified**.
+- [x] Verified non-PC tabs (Chat, Files, Actions) remain 100% accessible and completely unblocked.
