@@ -16,8 +16,8 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 | [package.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/package.json) | Add `react-native-purchases` and `react-native-purchases-ui`. | ✅ **Implemented** | Installed `react-native-purchases@^10.10.2` and `react-native-purchases-ui@^10.10.2`. |
 | [app.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/app.json) / `app.config.js` | Register the `react-native-purchases` Expo config plugin. | ✅ **Implemented** | Added `react-native-purchases` to `plugins` array. |
 | [purchases.ts](file:///c:/Users/khann/Projects/Blinky/common/mobile/lib/purchases.ts) | RevenueCat service + Promo Code Engine: SDK init, entitlement verification (`hasPcAccess`), local promo code validation, and restore purchases handler. | ✅ **Implemented** | Implemented safe init, unified entitlement checks, promo code redemption, paywall presentation, and listener subscription. |
-| `common/mobile/components/PromoCodeModal.tsx` | Dark-themed modal for entering voucher / promo codes. | ⏳ **Pending** | Not created yet. |
-| [SystemScreen.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/SystemScreen.tsx) | Display locked card with "Unlock PC Controls", "Enter Promo Code", and "Restore Purchases" when unentitled. | ⏳ **Pending** | Needs locked state UI and trigger handlers. |
+| [PromoCodeModal.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/PromoCodeModal.tsx) | Dark-themed modal for entering voucher / promo codes. | ✅ **Implemented** | Created modal with drag-to-dismiss, uppercase input, clear button, haptics, and instant unlock feedback. |
+| [SystemScreen.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/SystemScreen.tsx) | Display locked card with "Unlock PC Controls", "Enter Promo Code", and "Restore Purchases" when unentitled. | ✅ **Implemented** | Added PRO status badges, paywall hero card with action buttons, and blurred locked controls wrapper. |
 | [App.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/App.tsx) | Initialize RevenueCat on startup, intercept navigation to `'PC'` tab when locked, and present paywall or promo sheet. | ⏳ **Pending** | Needs initialization, entitlement state hook/subscription, and navigation intercept. |
 | [BottomNavigation.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/BottomNavigation.tsx) | Optional lock badge on the 'PC' icon when unentitled. | ⏳ **Pending** | Needs lock indicator when `!hasPcAccess`. |
 
@@ -62,19 +62,22 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 
 ---
 
-### Phase 3: Promo & Paywall UI Components ⏳ (Pending)
-- [ ] Create `common/mobile/components/PromoCodeModal.tsx`:
+### Phase 3: Promo & Paywall UI Components ✅ (Completed)
+- [x] Create `common/mobile/components/PromoCodeModal.tsx`:
   - Sleek, dark-themed modal matching Blinky's cyber/glassmorphism design aesthetic (`colors.card`, `colors.border`, `colors.primary`).
-  - Uppercase auto-capitalized input with clear button.
-  - Haptic feedback on success/failure.
-  - Instant unlock notification with success animations.
-- [ ] Update `common/mobile/components/SystemScreen.tsx`:
-  - When user lacks PC entitlement (`!hasPcAccess`):
-    - Render a locked banner / paywall card replacing or overlaying sensitive PC controls (Wake-on-LAN, Power actions, System metrics).
-    - Quick actions:
-      - ⚡ **"Unlock PC Controls (Pro)"** -> Triggers RevenueCat paywall.
-      - 🎟️ **"Redeem Promo Code"** -> Opens `PromoCodeModal`.
-      - 🔄 **"Restore Purchases"** -> Triggers `restorePurchases()`.
+  - Uppercase auto-capitalized input with clear button and keyboard handling.
+  - Haptic feedback on success/failure and drag-to-dismiss gesture handling.
+  - Instant unlock notification with success states.
+- [x] Update `common/mobile/components/SystemScreen.tsx`:
+  - When user lacks PC entitlement (`!hasPcAccess` / `isLocked`):
+    - Added `PRO LOCKED` / `PRO` status badge next to screen title.
+    - Rendered high-converting paywall hero card with feature highlights.
+    - Added quick-action buttons:
+      - ⚡ **"Unlock PC Controls (Pro)"** -> Triggers `onUnlockPress`.
+      - 🎟️ **"Redeem Promo Code"** -> Triggers `onPromoCodePress`.
+      - 🔄 **"Restore Purchases"** -> Triggers `onRestorePress` with loading state.
+    - Wrapped sensitive hardware metrics and power controls with semi-transparent disabled preview (`opacity: 0.35`, `pointerEvents: 'none'`).
+  - Verified zero TypeScript compilation errors.
 
 ---
 
