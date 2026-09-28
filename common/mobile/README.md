@@ -20,9 +20,10 @@ This directory contains the React Native Expo mobile application that connects t
 
 3. Build and install a new native app whenever Expo SDK, a native package (such as `expo-image-picker`), or native app configuration changes. For an internal Android APK, run:
    ```bash
+   bunx eas-cli init
    bun run build:release --platform android
    ```
-   Install the APK produced by EAS on the phone. The build profiles are defined in [eas.json](eas.json).
+   Run `init` once to link the existing EAS project, or set one up if this is the first build. Install the APK produced by EAS on the phone. The build profiles are defined in [eas.json](eas.json).
 
 ## Running the Application
 
