@@ -38,7 +38,7 @@ Model defaults are deliberately reported per source because they are not fully u
 | `BLINKY_SHORTCUT` | saved UI choice | created as `Space`; Rust fallback read uses `Enter`, but both global toggles are currently registered |
 | `BLINKY_REMOTE_TOKEN` | LAN WebSocket shared secret | empty preserves legacy development LAN behavior, including file offers; release mobile file transfer requires a configured token, so set a strong value |
 | `BLINKY_TRANSPORT_MODE` | Rust transport build mode | `development` by default; `release` enables WSS and fail-closed remote auth |
-| `BLINKY_FILE_TRANSFER_MAX_BYTES` | Maximum size of an individual mobile transfer | 20 GiB by default (`21474836480` bytes); invalid or non-positive values use the default |
+| `BLINKY_FILE_TRANSFER_MAX_BYTES` | Maximum size of one mobile transfer in either direction | 20 GiB by default (`21474836480` bytes); applies to mobile uploads and PC-to-mobile file downloads; invalid or non-positive values use the default |
 | `BLINKY_DISABLE_UI_OBSERVER` | skip observer child | false/unset starts observer |
 | `BLINKY_UI_OBSERVER_INTERVAL` | observer interval | read by observer/startup; use seconds |
 | `BLINKY_UI_OBSERVER_PARENT_PID` | observer parent liveness | normally set by Rust, not by users |

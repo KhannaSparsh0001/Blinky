@@ -1388,7 +1388,7 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn configured_max_size() -> u64 {
+pub(crate) fn configured_max_size() -> u64 {
     std::env::var("BLINKY_FILE_TRANSFER_MAX_BYTES")
         .ok()
         .or_else(|| {
@@ -1403,7 +1403,7 @@ fn configured_max_size() -> u64 {
         .unwrap_or(DEFAULT_MAX_BYTES)
 }
 
-fn human_bytes(bytes: u64) -> String {
+pub(crate) fn human_bytes(bytes: u64) -> String {
     const GIB: u64 = 1024 * 1024 * 1024;
     if bytes >= GIB {
         format!("{} GiB", (bytes as f64 / GIB as f64 * 10.0).round() / 10.0)
