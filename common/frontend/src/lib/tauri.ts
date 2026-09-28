@@ -9,7 +9,6 @@ export async function runTutor(
   conversationHistory?: TutorConversationMessage[],
   webSearchEnabled?: boolean,
   agentMode?: boolean,
-  attachedImage?: string,
 ): Promise<TutorResult> {
   return invoke<TutorResult>('run_tutor', {
     request: {
@@ -19,7 +18,6 @@ export async function runTutor(
       conversation_history: conversationHistory,
       web_search_enabled: webSearchEnabled,
       agent_mode: agentMode,
-      attached_image: attachedImage,
     },
   });
 }
@@ -120,8 +118,10 @@ export async function resizeAndMoveCommandWindow(x: number, y: number, width: nu
 
 export interface BlinkySettings {
   provider: string;
+  voice_provider?: string;
   shortcut: string;
   sarvam_api_key: string;
+  assemblyai_api_key?: string;
   groq_api_key: string;
   deepseek_api_key: string;
   custom_url: string;
@@ -141,9 +141,22 @@ export async function saveSettings(
   deepseekApiKey: string,
   customUrl: string = '',
   customModel: string = '',
-  customApiKey: string = ''
+  customApiKey: string = '',
+  assemblyaiApiKey: string = '',
+  voiceProvider: string = 'assemblyai'
 ): Promise<void> {
-  return invoke('save_settings', { provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey });
+  return invoke('save_settings', {
+    provider,
+    shortcut,
+    sarvamApiKey,
+    assemblyaiApiKey,
+    voiceProvider,
+    groqApiKey,
+    deepseekApiKey,
+    customUrl,
+    customModel,
+    customApiKey
+  });
 }
 
 export async function confirmRecipeSave(recipeId: string, save: boolean): Promise<void> {

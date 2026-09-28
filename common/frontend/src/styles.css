@@ -1204,14 +1204,14 @@ h3 {
   padding: 0;
 }
 
-.command-status > *:first-child,
+.command-status>*:first-child,
 .command-status p:first-child,
 .command-status ul:first-child,
 .command-status ol:first-child {
   margin-top: 0;
 }
 
-.command-status > *:last-child,
+.command-status>*:last-child,
 .command-status p:last-child,
 .command-status ul:last-child,
 .command-status ol:last-child {
@@ -1261,7 +1261,7 @@ h3 {
   padding-left: 2px;
 }
 
-.command-status li > p {
+.command-status li>p {
   margin: 4px 0;
 }
 
@@ -1378,10 +1378,13 @@ h3 {
 }
 
 @keyframes borderPulse {
-  0%, 100% {
+
+  0%,
+  100% {
     border-color: #10B981;
     box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
   }
+
   50% {
     border-color: rgba(16, 185, 129, 0.4);
     box-shadow: 0 0 5px rgba(16, 185, 129, 0.1);
@@ -1482,9 +1485,15 @@ h3 {
   position: absolute;
   top: 52px;
   right: 14px;
-  width: 260px;
+  width: 320px;
+  max-width: calc(100vw - 28px);
+  max-height: min(600px, calc(100vh - 64px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   background: var(--panel-strong);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--panel-border);
   border-radius: 16px;
   padding: 16px;
@@ -1492,8 +1501,100 @@ h3 {
   flex-direction: column;
   gap: 14px;
   z-index: 100;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.1);
   animation: slideDownIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.command-settings-dropdown::-webkit-scrollbar {
+  width: 5px;
+}
+
+.command-settings-dropdown::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+}
+
+.command-settings-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(255, 110, 95, 0.3);
+  border-radius: 6px;
+}
+
+.command-settings-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 110, 95, 0.6);
+}
+
+.voice-provider-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.voice-provider-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.voice-provider-tab:hover {
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.voice-provider-tab.active,
+.voice-provider-tab.active.aai {
+  background: rgba(255, 110, 95, 0.18);
+  border-color: rgba(255, 110, 95, 0.45);
+  color: #ff8b6a;
+  box-shadow: 0 0 12px rgba(255, 110, 95, 0.25);
+}
+
+.voice-mode-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.voice-mode-btn {
+  padding: 5px 8px;
+  font-size: 10.5px;
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.voice-mode-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-strong);
+}
+
+.voice-mode-btn.active {
+  border-color: rgba(255, 110, 95, 0.5);
+  background: rgba(255, 110, 95, 0.18);
+  color: #ff8b6a;
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(255, 110, 95, 0.2);
 }
 
 @keyframes slideDownIn {
@@ -1645,13 +1746,27 @@ h3 {
 }
 
 @keyframes pulseVolume {
-  0% { transform: scale(0.95); opacity: 0.7; }
-  100% { transform: scale(1.05); opacity: 1; }
+  0% {
+    transform: scale(0.95);
+    opacity: 0.7;
+  }
+
+  100% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
 }
 
 @keyframes slideUpFade {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .command-summary-text-container {
@@ -1953,6 +2068,8 @@ h3 {
 
 .settings-input {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 8px 12px;
   border-radius: 10px;
   background: var(--bg-0);
@@ -2090,19 +2207,39 @@ h3 {
 
 
 @keyframes micPulse {
-  0% { box-shadow: 0 0 0 0 rgba(255, 46, 99, 0.6); }
-  70% { box-shadow: 0 0 0 10px rgba(255, 46, 99, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(255, 46, 99, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 46, 99, 0.6);
+  }
+
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 46, 99, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 46, 99, 0);
+  }
 }
 
 @keyframes beaconPulse {
-  from { transform: scale(0.9); opacity: 0.8; }
-  to { transform: scale(1.15); opacity: 1; }
+  from {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+
+  to {
+    transform: scale(1.15);
+    opacity: 1;
+  }
 }
 
 @keyframes speakWobble {
-  from { transform: scale(1.0); }
-  to { transform: scale(1.08); }
+  from {
+    transform: scale(1.0);
+  }
+
+  to {
+    transform: scale(1.08);
+  }
 }
 
 @keyframes guideStepIn {
@@ -2231,10 +2368,12 @@ h3 {
     width: 0%;
     margin-left: 0%;
   }
+
   50% {
     width: 50%;
     margin-left: 25%;
   }
+
   100% {
     width: 0%;
     margin-left: 100%;
@@ -2361,7 +2500,8 @@ h3 {
   width: 100%;
 }
 
-.wa-help-text, .wa-scan-instruction {
+.wa-help-text,
+.wa-scan-instruction {
   font-size: 11.5px;
   color: var(--text-muted);
   line-height: 1.4;
@@ -2378,7 +2518,10 @@ h3 {
   padding: 8px 0;
 }
 
-.wa-disconnected, .wa-connected, .wa-qr-container, .wa-error-container {
+.wa-disconnected,
+.wa-connected,
+.wa-qr-container,
+.wa-error-container {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2416,13 +2559,17 @@ h3 {
   transform: translateY(-1px);
 }
 
-.wa-btn-cancel, .wa-btn-logout, .wa-btn-retry {
+.wa-btn-cancel,
+.wa-btn-logout,
+.wa-btn-retry {
   background: var(--bg-1);
   border: 1px solid var(--panel-border);
   color: var(--text-strong);
 }
 
-.wa-btn-cancel:hover, .wa-btn-logout:hover, .wa-btn-retry:hover {
+.wa-btn-cancel:hover,
+.wa-btn-logout:hover,
+.wa-btn-retry:hover {
   background: var(--panel-border);
 }
 
@@ -2480,13 +2627,25 @@ h3 {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes scaleUp {
-  from { transform: scale(0.95); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 /* Custom Select Styling */
@@ -2520,16 +2679,14 @@ h3 {
 .siri-edge-lighting-gradient {
   position: absolute;
   inset: -50%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    #ff6e5f 60deg,
-    #d946ef 120deg,
-    transparent 180deg,
-    #ff3366 240deg,
-    #ff8b6a 300deg,
-    transparent 360deg
-  );
+  background: conic-gradient(from 0deg,
+      transparent 0deg,
+      #ff6e5f 60deg,
+      #d946ef 120deg,
+      transparent 180deg,
+      #ff3366 240deg,
+      #ff8b6a 300deg,
+      transparent 360deg);
   filter: blur(20px);
   transform: scale(var(--glow-scale, 1));
   animation: spin var(--glow-speed, 4s) linear infinite;
@@ -2550,6 +2707,7 @@ h3 {
   from {
     transform: rotate(0deg) scale(var(--glow-scale, 1));
   }
+
   to {
     transform: rotate(360deg) scale(var(--glow-scale, 1));
   }
@@ -2564,7 +2722,7 @@ h3 {
   overflow: hidden;
   opacity: var(--vad-opacity, 0);
   transition: opacity 0.3s ease;
-  
+
   /* Mask to create a hollow center with a thin 12px glowing border */
   padding: 12px;
   -webkit-mask:
@@ -2578,17 +2736,16 @@ h3 {
   position: absolute;
   /* Make it larger than the screen so the conic center doesn't show */
   inset: -20%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    #ff6e5f 60deg,
-    #d946ef 120deg,
-    transparent 180deg,
-    #ff3366 240deg,
-    #ff8b6a 300deg,
-    transparent 360deg
-  );
-  filter: blur(40px); /* Reduced blur for a sharper edge glow */
+  background: conic-gradient(from 0deg,
+      transparent 0deg,
+      #ff6e5f 60deg,
+      #d946ef 120deg,
+      transparent 180deg,
+      #ff3366 240deg,
+      #ff8b6a 300deg,
+      transparent 360deg);
+  filter: blur(40px);
+  /* Reduced blur for a sharper edge glow */
   transform: scale(var(--glow-scale, 1));
   animation: spin var(--glow-speed, 4s) linear infinite;
   transition: transform 0.1s ease, filter 0.1s ease;
@@ -2596,7 +2753,7 @@ h3 {
 }
 
 /* Tradeoff A: hardware cursor hidden only via Win32 SetSystemCursor when AI visible, not via CSS */
- /* (removed body.agent-mode-active cursor:none to prevent native disappearing over overlay when AI hidden) */
+/* (removed body.agent-mode-active cursor:none to prevent native disappearing over overlay when AI hidden) */
 
 /* Agent Custom Companion Cursor (Clicky-style) and Visualizer */
 .agent-cursor-wrapper {
@@ -2632,6 +2789,7 @@ h3 {
     transform: translate(-50%, -50%) scale(0.2);
     opacity: 1;
   }
+
   100% {
     transform: translate(-50%, -50%) scale(2.2);
     opacity: 0;
@@ -2645,8 +2803,15 @@ h3 {
 }
 
 @keyframes cursorBob {
-  0%, 100% { transform: scale(1) translate(0, 0); }
-  50% { transform: scale(1.05) translate(-1px, -1px); }
+
+  0%,
+  100% {
+    transform: scale(1) translate(0, 0);
+  }
+
+  50% {
+    transform: scale(1.05) translate(-1px, -1px);
+  }
 }
 
 .agent-visualizer {
@@ -2663,6 +2828,7 @@ h3 {
     opacity: 0;
     transform: scale(0.6) translateX(-4px);
   }
+
   to {
     opacity: 1;
     transform: scale(1) translateX(0);
@@ -2696,6 +2862,7 @@ h3 {
   0% {
     transform: scaleY(0.7);
   }
+
   100% {
     transform: scaleY(1.35);
   }
@@ -2732,6 +2899,7 @@ h3 {
     border-color: rgba(255, 139, 106, 0.6);
     box-shadow: 0 0 20px rgba(255, 139, 106, 0.15);
   }
+
   to {
     border-color: rgba(255, 139, 106, 1);
     box-shadow: 0 0 35px rgba(255, 139, 106, 0.35);
