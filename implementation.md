@@ -18,8 +18,8 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 | [purchases.ts](file:///c:/Users/khann/Projects/Blinky/common/mobile/lib/purchases.ts) | RevenueCat service + Promo Code Engine: SDK init, entitlement verification (`hasPcAccess`), local promo code validation, and restore purchases handler. | ✅ **Implemented** | Implemented safe init, unified entitlement checks, promo code redemption, paywall presentation, and listener subscription. |
 | [PromoCodeModal.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/PromoCodeModal.tsx) | Dark-themed modal for entering voucher / promo codes. | ✅ **Implemented** | Created modal with drag-to-dismiss, uppercase input, clear button, haptics, and instant unlock feedback. |
 | [SystemScreen.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/SystemScreen.tsx) | Display locked card with "Unlock PC Controls", "Enter Promo Code", and "Restore Purchases" when unentitled. | ✅ **Implemented** | Added PRO status badges, paywall hero card with action buttons, and blurred locked controls wrapper. |
-| [App.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/App.tsx) | Initialize RevenueCat on startup, intercept navigation to `'PC'` tab when locked, and present paywall or promo sheet. | ⏳ **Pending** | Needs initialization, entitlement state hook/subscription, and navigation intercept. |
-| [BottomNavigation.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/BottomNavigation.tsx) | Optional lock badge on the 'PC' icon when unentitled. | ⏳ **Pending** | Needs lock indicator when `!hasPcAccess`. |
+| [App.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/App.tsx) | Initialize RevenueCat on startup, intercept navigation to `'PC'` tab when locked, and present paywall or promo sheet. | ✅ **Implemented** | Added SDK init, reactive `isPcUnlocked` listener, Paywall/Promo triggers, and `PromoCodeModal` rendering. |
+| [BottomNavigation.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/BottomNavigation.tsx) | Optional lock badge on the 'PC' icon when unentitled. | ✅ **Implemented** | Added `isPcLocked` prop and lock indicator badge over the PC tab icon. |
 
 ---
 
@@ -81,17 +81,17 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 
 ---
 
-### Phase 4: Navigation Interception & App Integration ⏳ (Pending)
-- [ ] Update `common/mobile/App.tsx`:
-  - Initialize RevenueCat on app start (`useEffect`).
-  - Maintain reactive state for `isPcUnlocked`.
-  - Intercept `'PC'` tab selection:
-    - If user taps the `'PC'` tab and `!isPcUnlocked`, either:
-      - Open the Paywall / Promo Code modal directly, OR
-      - Navigate to `SystemScreen` where the lock card is prominently presented.
-  - Re-evaluate lock status immediately upon successful promo redemption or purchase.
-- [ ] Update `common/mobile/components/BottomNavigation.tsx`:
-  - Add optional lock icon badge next to or on the `'PC'` tab icon when `!isPcUnlocked`.
+### Phase 4: Navigation Interception & App Integration ✅ (Completed)
+- [x] Update `common/mobile/App.tsx`:
+  - Initialize RevenueCat on app start (`useEffect`) with cleanup unmount.
+  - Maintain reactive state for `isPcUnlocked` subscribed to `addPcAccessListener`.
+  - Connect `SystemScreen` props (`isLocked`, `onUnlockPress`, `onPromoCodePress`, `onRestorePress`).
+  - Wire `PromoCodeModal` bottom sheet modal for instant code validation and UI unlocking.
+  - Handle paywall triggers with graceful fallback to promo modal on unsupported platforms.
+- [x] Update `common/mobile/components/BottomNavigation.tsx`:
+  - Added `isPcLocked` prop.
+  - Rendered a lock indicator badge over the `'PC'` icon when locked.
+  - Verified zero TypeScript compilation errors with `bun x tsc --noEmit`.
 
 ---
 

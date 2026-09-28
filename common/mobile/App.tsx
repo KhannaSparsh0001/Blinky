@@ -55,6 +55,14 @@ import { SystemScreen } from './components/SystemScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { FilesScreen } from './components/FilesScreen';
 import { BottomNavigation } from './components/BottomNavigation';
+import { PromoCodeModal } from './components/PromoCodeModal';
+import {
+  initializePurchases,
+  hasPcAccess,
+  addPcAccessListener,
+  presentPcPaywall,
+  restorePurchases,
+} from './lib/purchases';
 import { FileTransferPanel } from './FileTransferPanel';
 import { TabScreen, AttachedFile } from './types';
 import { colors } from './theme/theme';
@@ -642,6 +650,62 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
+
+  // PC Controls monetization & promo code state
+  const [isPcUnlocked, setIsPcUnlocked] = useState(false);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const [isRestoringPurchases, setIsRestoringPurchases] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    initializePurchases().finally(async () => {
+      if (!mounted) return;
+      const unlocked = await hasPcAccess();
+      setIsPcUnlocked(unlocked);
+    });
+
+    const unsubscribe = addPcAccessListener((hasAccess) => {
+      if (mounted) {
+        setIsPcUnlocked(hasAccess);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleUnlockPcPress = async () => {
+    try {
+      const res = await presentPcPaywall();
+      if (res.success) {
+        setIsPcUnlocked(true);
+      } else if (res.error) {
+        // Native paywall unavailable or unconfigured, open promo modal directly
+        setShowPromoModal(true);
+      }
+    } catch {
+      setShowPromoModal(true);
+    }
+  };
+
+  const handleRestorePurchasesPress = async () => {
+    setIsRestoringPurchases(true);
+    try {
+      const res = await restorePurchases();
+      if (res.hasAccess) {
+        setIsPcUnlocked(true);
+        Alert.alert('Purchases Restored', res.message);
+      } else {
+        Alert.alert('Restore Purchases', res.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Restore Error', e?.message || 'Failed to restore purchases.');
+    } finally {
+      setIsRestoringPurchases(false);
+    }
+  };
 
   // Sync PC files when opening Files tab
   useEffect(() => {
@@ -1888,6 +1952,11 @@ export default function App() {
               isSendingWol={isSendingWol}
               isWorkstationLocked={isWorkstationLocked}
               onRefresh={fetchSystemInfo}
+              isLocked={!isPcUnlocked}
+              onUnlockPress={handleUnlockPcPress}
+              onPromoCodePress={() => setShowPromoModal(true)}
+              onRestorePress={handleRestorePurchasesPress}
+              isRestoring={isRestoringPurchases}
             />
           )}
 
@@ -1968,9 +2037,17 @@ export default function App() {
             getNativeModule={getFileTransferModule}
             onClose={() => setShowFileTransfer(false)}
           />
+          <PromoCodeModal
+            visible={showPromoModal}
+            onClose={() => setShowPromoModal(false)}
+            onSuccess={() => {
+              setIsPcUnlocked(true);
+            }}
+          />
         </KeyboardAvoidingView>
         <BottomNavigation
           activeTab={activeTab}
+          isPcLocked={!isPcUnlocked}
           onTabChange={(tab) => {
             if (tab === 'Files') {
               resetDirectory();
