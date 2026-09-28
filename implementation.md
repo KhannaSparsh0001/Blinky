@@ -15,7 +15,7 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 | [.env_example](file:///c:/Users/khann/Projects/Blinky/.env_example) | Environment variables for RevenueCat public key, entitlement ID, and promo codes. | ✅ **Implemented** | Added `EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY`, `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID`, and `EXPO_PUBLIC_PROMO_CODES`. |
 | [package.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/package.json) | Add `react-native-purchases` and `react-native-purchases-ui`. | ✅ **Implemented** | Installed `react-native-purchases@^10.10.2` and `react-native-purchases-ui@^10.10.2`. |
 | [app.json](file:///c:/Users/khann/Projects/Blinky/common/mobile/app.json) / `app.config.js` | Register the `react-native-purchases` Expo config plugin. | ✅ **Implemented** | Added `react-native-purchases` to `plugins` array. |
-| `common/mobile/lib/purchases.ts` | RevenueCat service + Promo Code Engine: SDK init, entitlement verification (`hasPcAccess`), local promo code validation, and restore purchases handler. | ⏳ **Pending** | Not created yet. |
+| [purchases.ts](file:///c:/Users/khann/Projects/Blinky/common/mobile/lib/purchases.ts) | RevenueCat service + Promo Code Engine: SDK init, entitlement verification (`hasPcAccess`), local promo code validation, and restore purchases handler. | ✅ **Implemented** | Implemented safe init, unified entitlement checks, promo code redemption, paywall presentation, and listener subscription. |
 | `common/mobile/components/PromoCodeModal.tsx` | Dark-themed modal for entering voucher / promo codes. | ⏳ **Pending** | Not created yet. |
 | [SystemScreen.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/components/SystemScreen.tsx) | Display locked card with "Unlock PC Controls", "Enter Promo Code", and "Restore Purchases" when unentitled. | ⏳ **Pending** | Needs locked state UI and trigger handlers. |
 | [App.tsx](file:///c:/Users/khann/Projects/Blinky/common/mobile/App.tsx) | Initialize RevenueCat on startup, intercept navigation to `'PC'` tab when locked, and present paywall or promo sheet. | ⏳ **Pending** | Needs initialization, entitlement state hook/subscription, and navigation intercept. |
@@ -41,8 +41,8 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
 
 ---
 
-### Phase 2: Core Monetization & Promo Engine Service ⏳ (Pending)
-- [ ] Create `common/mobile/lib/purchases.ts`:
+### Phase 2: Core Monetization & Promo Engine Service ✅ (Completed)
+- [x] Create `common/mobile/lib/purchases.ts`:
   - **Safe Initialization (`initializePurchases`)**: Safe startup check; guards against missing keys or Expo Go/unsupported native environments without throwing errors.
   - **Entitlement Checker (`hasPcAccess`)**: Unified entitlement query checking both:
     1. RevenueCat active entitlements for `pc_access` (or configured entitlement ID).
@@ -57,6 +57,8 @@ Restrict the "PC" section of the Blinky Expo mobile application (`common/mobile`
     - Calls `Purchases.restorePurchases()` and synchronizes entitlement state.
   - **Listener / Subscription System**:
     - Subscribe to purchase/customer info updates to update React state across components.
+  - **Debug Helpers**: Added `resetPromoUnlockForDebug()` to easily toggle states during testing.
+  - **Type Safety**: Verified zero TypeScript errors with `bun x tsc --noEmit`.
 
 ---
 
