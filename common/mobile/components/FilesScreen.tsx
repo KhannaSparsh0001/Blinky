@@ -240,11 +240,10 @@ export function FilesScreen({
         if (gestureState.dy > 80 || gestureState.vy > 0.4) {
           Animated.timing(panY, {
             toValue: 600,
-            duration: 220,
+            duration: 200,
             useNativeDriver: true,
           }).start(() => {
             setSelectedFile(null);
-            panY.setValue(0);
           });
         } else {
           Animated.spring(panY, {
@@ -256,6 +255,16 @@ export function FilesScreen({
       },
     })
   ).current;
+
+  const handleDismissFileModal = () => {
+    Animated.timing(panY, {
+      toValue: 600,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setSelectedFile(null);
+    });
+  };
 
   useEffect(() => {
     if (selectedFile) {
@@ -817,13 +826,13 @@ export function FilesScreen({
       <Modal
         visible={Boolean(selectedFile)}
         transparent
-        animationType="slide"
-        onRequestClose={() => setSelectedFile(null)}
+        animationType="fade"
+        onRequestClose={handleDismissFileModal}
       >
         <TouchableOpacity
           style={styles.modalBackdrop}
           activeOpacity={1}
-          onPress={() => setSelectedFile(null)}
+          onPress={handleDismissFileModal}
         >
           <Animated.View
             style={[

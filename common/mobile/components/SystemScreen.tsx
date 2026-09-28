@@ -53,11 +53,10 @@ export function SystemScreen({
         if (gestureState.dy > 80 || gestureState.vy > 0.4) {
           Animated.timing(panY, {
             toValue: 600,
-            duration: 220,
+            duration: 200,
             useNativeDriver: true,
           }).start(() => {
             setPendingAction(null);
-            panY.setValue(0);
           });
         } else {
           Animated.spring(panY, {
@@ -69,6 +68,16 @@ export function SystemScreen({
       },
     })
   ).current;
+
+  const handleDismiss = () => {
+    Animated.timing(panY, {
+      toValue: 600,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setPendingAction(null);
+    });
+  };
 
   useEffect(() => {
     if (pendingAction) {
@@ -240,13 +249,13 @@ export function SystemScreen({
       <Modal
         visible={Boolean(pendingAction)}
         transparent
-        animationType="slide"
-        onRequestClose={() => setPendingAction(null)}
+        animationType="fade"
+        onRequestClose={handleDismiss}
       >
         <TouchableOpacity
           style={styles.modalBackdrop}
           activeOpacity={1}
-          onPress={() => setPendingAction(null)}
+          onPress={handleDismiss}
         >
           <Animated.View
             style={[

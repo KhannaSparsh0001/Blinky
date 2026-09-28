@@ -91,6 +91,20 @@ export interface PowerEvent {
   timestamp: number;
 }
 
+export interface LightEvent {
+  type: 'light_event';
+  action: string;
+  data: {
+    success?: boolean;
+    status?: string;
+    r?: number;
+    g?: number;
+    b?: number;
+    message?: string;
+    [key: string]: any;
+  };
+}
+
 export interface AntigravityApproval {
   type: 'antigravity_approval';
   actionId: string;
@@ -166,6 +180,7 @@ export function usePCWebSocket() {
   const [latestResponse, setLatestResponse] = useState<any>(null);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [latestPowerEvent, setLatestPowerEvent] = useState<PowerEvent | null>(null);
+  const [latestLightEvent, setLatestLightEvent] = useState<LightEvent | null>(null);
   const [antigravityApproval, setAntigravityApproval] = useState<AntigravityApproval | null>(null);
   const [antigravityComplete, setAntigravityComplete] = useState<AntigravityComplete | null>(null);
   const [antigravityProgress, setAntigravityProgress] = useState<AntigravityProgress | null>(null);
@@ -196,6 +211,7 @@ export function usePCWebSocket() {
     setStatus(nextState.status);
     setErrorMsg(nextState.errorMsg);
     setLatestResponse(nextState.latestResponse);
+    setLatestLightEvent(null);
     setQuickAccessFolders([]);
     setCurrentDirectory(null);
     setRecentFiles([]);
@@ -325,6 +341,8 @@ export function usePCWebSocket() {
             } else if (parsed.type === 'fs_error') {
               setFsError(parsed.message || 'Filesystem error');
               setFsLoading(false);
+            } else if (parsed.type === 'light_event') {
+              setLatestLightEvent(parsed as LightEvent);
             } else {
               setLatestResponse(parsed);
             }
@@ -372,19 +390,23 @@ export function usePCWebSocket() {
     let connectTimeout: any = null;
 
     try {
+      console.log(`[WS] Connecting to ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       connectTimeout = setTimeout(() => {
+        const stateStr = ws.readyState === WebSocket.CONNECTING ? 'CONNECTING' : ws.readyState === WebSocket.OPEN ? 'OPEN' : ws.readyState === WebSocket.CLOSING ? 'CLOSING' : 'CLOSED';
+        console.log(`[WS] Timeout triggered. readyState=${stateStr}, isCurrent=${wsRef.current === ws}`);
         if (wsRef.current === ws && ws.readyState !== WebSocket.OPEN) {
           try { ws.close(); } catch (e) {}
           wsRef.current = null;
           setStatus('error');
-          setErrorMsg(`Connection timed out (${formattedIp}). Ensure Blinky desktop app is running and port 9001 is open.`);
+          setErrorMsg(`Connection timed out (${formattedIp}, state=${stateStr}). Ensure Blinky desktop app is running and port 9001 is open.`);
         }
       }, 10000);
 
       ws.onopen = () => {
+        console.log(`[WS] ws.onopen successfully fired for ${wsUrl}`);
         if (connectTimeout) clearTimeout(connectTimeout);
         if (wsRef.current === ws) {
           // Authenticate the remote connection before any commands are sent.
@@ -417,6 +439,8 @@ export function usePCWebSocket() {
               setFileTransferMessage(parsed as FileTransferMessage);
             } else if (parsed.type === 'power_event') {
               setLatestPowerEvent(parsed as PowerEvent);
+            } else if (parsed.type === 'light_event') {
+              setLatestLightEvent(parsed as LightEvent);
             } else if (parsed.type === 'antigravity_approval') {
               setAntigravityApproval(parsed as AntigravityApproval);
             } else if (parsed.type === 'antigravity_complete') {
@@ -465,6 +489,7 @@ export function usePCWebSocket() {
       };
 
       ws.onclose = (e) => {
+        console.log(`[WS] ws.onclose fired: code=${e?.code}, reason=${e?.reason}`);
         if (connectTimeout) clearTimeout(connectTimeout);
         if (wsRef.current === ws) {
           setStatus('disconnected');
@@ -472,11 +497,12 @@ export function usePCWebSocket() {
         }
       };
 
-      ws.onerror = (e) => {
+      ws.onerror = (e: any) => {
+        console.log(`[WS] ws.onerror fired:`, e?.message || e);
         if (connectTimeout) clearTimeout(connectTimeout);
         if (wsRef.current === ws) {
           setStatus('error');
-          setErrorMsg(`Failed to connect to ${formattedIp}. Check Wi-Fi & PC firewall.`);
+          setErrorMsg(`Failed to connect to ${formattedIp}. ${e?.message || 'Check Wi-Fi & PC firewall.'}`);
           wsRef.current = null;
         }
       };
@@ -627,6 +653,7 @@ export function usePCWebSocket() {
     latestResponse,
     systemInfo,
     latestPowerEvent,
+    latestLightEvent,
     antigravityApproval,
     antigravityComplete,
     antigravityProgress,

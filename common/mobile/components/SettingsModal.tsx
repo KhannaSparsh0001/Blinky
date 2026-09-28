@@ -57,14 +57,13 @@ export function SettingsModal(props: SettingsModalProps) {
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 90 || gestureState.vy > 0.5) {
+        if (gestureState.dy > 80 || gestureState.vy > 0.4) {
           Animated.timing(panY, {
             toValue: 600,
-            duration: 220,
+            duration: 200,
             useNativeDriver: true,
           }).start(() => {
             props.onClose();
-            panY.setValue(0);
           });
         } else {
           Animated.spring(panY, {
@@ -77,6 +76,16 @@ export function SettingsModal(props: SettingsModalProps) {
     })
   ).current;
 
+  const handleDismiss = () => {
+    Animated.timing(panY, {
+      toValue: 600,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      props.onClose();
+    });
+  };
+
   useEffect(() => {
     if (props.visible) {
       panY.setValue(0);
@@ -86,7 +95,7 @@ export function SettingsModal(props: SettingsModalProps) {
   if (!props.visible) return null;
 
   return (
-    <Modal visible={props.visible} animationType="slide" transparent={true} onRequestClose={props.onClose}>
+    <Modal visible={props.visible} animationType="fade" transparent={true} onRequestClose={handleDismiss}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
         <Animated.View
           style={[
@@ -103,7 +112,7 @@ export function SettingsModal(props: SettingsModalProps) {
           
           <View style={styles.connectionHeaderRow}>
             <Text style={styles.connectionTitle}>Local Wi-Fi Link Setup</Text>
-            <TouchableOpacity onPress={props.onClose} style={styles.closeBtn}>
+            <TouchableOpacity onPress={handleDismiss} style={styles.closeBtn}>
               <Ionicons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -165,7 +174,7 @@ export function SettingsModal(props: SettingsModalProps) {
               <Ionicons name="lock-open-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="Windows Account Password"
+                placeholder="Windows Lockscreen Password or PIN"
                 placeholderTextColor={colors.textMuted}
                 value={props.workstationPin}
                 onChangeText={(val) => {
@@ -175,10 +184,13 @@ export function SettingsModal(props: SettingsModalProps) {
                 secureTextEntry
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoComplete="off"
+                textContentType="none"
+                importantForAutofill="no"
               />
             </View>
             <Text style={styles.helperText}>
-              Enter your Windows password (not Windows Hello PIN) to unlock remotely via the Unlock Provider.
+              Enter your Windows password or PIN (e.g. 1750) to automatically unlock when waking PC.
             </Text>
             
             <View style={styles.actionRow}>
