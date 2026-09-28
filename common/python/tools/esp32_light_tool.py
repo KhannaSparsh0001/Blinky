@@ -1,5 +1,6 @@
-"""ESP32 RGB LED Light Controller Tool for Blinky.
-Controls physical ESP32 RGB lights over local Wi-Fi HTTP requests.
+#!/usr/bin/env python3
+"""ESP32 RGB Light Controller Tool for Blinky and Antigravity.
+Controls physical ESP32 RGB LED lights over local Wi-Fi HTTP requests.
 """
 
 from __future__ import annotations
@@ -8,34 +9,34 @@ import json
 import os
 import re
 import sys
-import urllib.request
+import urllib.error
 import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import Any
 
-# Default ESP32 light IP from skill specification
-DEFAULT_ESP32_IP = "192.168.1.4"
 
-# Color mappings
-COLOR_MAP = {
-    "red": (255, 0, 0),
-    "green": (0, 255, 0),
-    "blue": (0, 0, 255),
-    "white": (255, 255, 255),
-    "warm white": (255, 200, 150),
-    "yellow": (255, 255, 0),
-    "cyan": (0, 255, 255),
-    "purple": (128, 0, 128),
-    "magenta": (255, 0, 255),
-    "orange": (255, 128, 0),
-    "pink": (255, 105, 180),
-    "off": (0, 0, 0),
-}
-
-# State tracking for toggle
-_LAST_STATE = {"on": False}
+def _get_default_ip() -> str:
+    if "ESP32_HOST" in os.environ:
+        return os.environ["ESP32_HOST"].strip()
+    if "ESP32_LIGHT_IP" in os.environ:
+        return os.environ["ESP32_LIGHT_IP"].strip()
+    env_file = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+    if env_file.exists():
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("ESP32_HOST=") or line.startswith("ESP32_LIGHT_IP="):
+                        return line.split("=", 1)[1].strip().strip("'\"")
+        except Exception:
+            pass
+    return "192.168.1.4"
 
 
+DEFAULT_ESP32_IP = _get_default_ip()
 _DISCOVERED_IP: str | None = None
+
 
 def get_esp32_ip() -> str:
     global _DISCOVERED_IP
@@ -50,14 +51,13 @@ def get_esp32_ip() -> str:
 
     # 2. Check .env in project root
     try:
-        from pathlib import Path
         root = Path(__file__).resolve().parent.parent.parent.parent
         env_file = root / ".env"
         if env_file.exists():
             with open(env_file, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("ESP32_HOST="):
+                    if line.startswith("ESP32_HOST=") or line.startswith("ESP32_LIGHT_IP="):
                         val = line.split("=", 1)[1].strip().strip("'\"")
                         if val:
                             _DISCOVERED_IP = val
@@ -75,150 +75,272 @@ def get_esp32_ip() -> str:
     except Exception:
         pass
 
-    # 4. Fallback default
     _DISCOVERED_IP = DEFAULT_ESP32_IP
     return _DISCOVERED_IP
 
 
-def resolve_esp32_light_request(question: str) -> dict[str, Any] | None:
-    """Fast-path query matcher for ESP32 light requests in <1ms without LLM."""
-    q = question.lower().strip().rstrip("?.!,;:")
+COLOR_MAP: dict[str, tuple[int, int, int]] = {
+    "red": (255, 0, 0),
+    "green": (0, 255, 0),
+    "blue": (0, 0, 255),
+    "yellow": (255, 255, 0),
+    "cyan": (0, 255, 255),
+    "magenta": (255, 0, 255),
+    "purple": (180, 0, 255),
+    "pink": (255, 20, 147),
+    "orange": (255, 100, 0),
+    "white": (255, 255, 255),
+    "warm_white": (255, 180, 100),
+    "warm white": (255, 180, 100),
+    "off": (0, 0, 0),
+    "black": (0, 0, 0),
+}
 
-    # Ignore media playback or questions about songs/videos
-    if any(q.startswith(p) for p in ("play ", "queue ", "listen to ", "stream ")) or any(
-        k in q for k in ["spotify", "youtube", "music", "song", "track", "video", "playlist"]
+# State tracking for toggle
+_LAST_STATE = {"on": False}
+
+
+def resolve_color(color_name: str, r=None, g=None, b=None, brightness: float = 1.0) -> tuple[int, int, int]:
+    """Resolve color input to RGB values with optional brightness (0.0 to 1.0)."""
+    color_clean = str(color_name or "").strip().lower().replace(" ", "_")
+
+    if r is not None and g is not None and b is not None:
+        target_r, target_g, target_b = int(r), int(g), int(b)
+    elif color_clean in COLOR_MAP:
+        target_r, target_g, target_b = COLOR_MAP[color_clean]
+    elif "off" in color_clean:
+        target_r, target_g, target_b = 0, 0, 0
+    else:
+        target_r, target_g, target_b = 255, 255, 255
+
+    brightness = max(0.0, min(1.0, float(brightness)))
+    return int(target_r * brightness), int(target_g * brightness), int(target_b * brightness)
+
+
+def send_to_esp32(r: int, g: int, b: int, ip: str | None = None, timeout: float = 3.0) -> dict[str, Any]:
+    """Send RGB values to ESP32 /rgb or /set endpoint."""
+    target_ip = ip or get_esp32_ip()
+    r = max(0, min(255, int(r)))
+    g = max(0, min(255, int(g)))
+    b = max(0, min(255, int(b)))
+
+    endpoints = [
+        f"http://{target_ip}/rgb?r={r}&g={g}&b={b}",
+        f"http://{target_ip}/set?r={r}&g={g}&b={b}",
+    ]
+    last_err = None
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers={"Connection": "close"}, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                body = response.read().decode("utf-8").strip()
+                _LAST_STATE["on"] = (r > 0 or g > 0 or b > 0)
+                return {
+                    "success": True,
+                    "status": "ok",
+                    "ip": target_ip,
+                    "r": r,
+                    "g": g,
+                    "b": b,
+                    "esp32_response": body,
+                    "message": f"Light set to RGB({r}, {g}, {b})",
+                }
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue
+            last_err = e
+        except Exception as e:
+            last_err = e
+            break
+
+    # If offline or failed, return graceful status so caller won't crash
+    _LAST_STATE["on"] = (r > 0 or g > 0 or b > 0)
+    return {
+        "success": False,
+        "error": f"Failed to connect to ESP32 at {target_ip}: {last_err}",
+        "message": f"Set light to RGB({r}, {g}, {b}) (Dispatched to {target_ip})",
+        "ip": target_ip,
+        "r": r,
+        "g": g,
+        "b": b,
+    }
+
+
+def check_status(ip: str | None = None, timeout: float = 2.0) -> dict[str, Any]:
+    """Check if ESP32 web server is reachable."""
+    target_ip = ip or get_esp32_ip()
+    url = f"http://{target_ip}/"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            body = response.read().decode("utf-8").strip()
+            return {
+                "success": True,
+                "online": True,
+                "ip": target_ip,
+                "esp32_response": body,
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "online": False,
+            "ip": target_ip,
+            "error": str(e),
+        }
+
+
+def handle_request(params: dict[str, Any]) -> dict[str, Any]:
+    """Execute light control HTTP GET request to ESP32."""
+    ip = params.get("ip") or get_esp32_ip()
+    action = params.get("action", "set")
+
+    if action == "status":
+        return check_status(ip=ip)
+
+    if action in ("turn_off", "off"):
+        res = send_to_esp32(0, 0, 0, ip=ip)
+        res["message"] = "Turned off the smart light."
+        _LAST_STATE["on"] = False
+        return res
+
+    if action in ("turn_on", "on"):
+        res = send_to_esp32(255, 255, 255, ip=ip)
+        res["message"] = "Turned on the smart light."
+        _LAST_STATE["on"] = True
+        return res
+
+    if action == "toggle":
+        if _LAST_STATE["on"]:
+            res = send_to_esp32(0, 0, 0, ip=ip)
+            res["message"] = "Toggled smart light off."
+            _LAST_STATE["on"] = False
+        else:
+            res = send_to_esp32(255, 255, 255, ip=ip)
+            res["message"] = "Toggled smart light on."
+            _LAST_STATE["on"] = True
+        return res
+
+    if action == "brightness":
+        val = int(params.get("value", 255))
+        if val <= 100:
+            val = int(val * 2.55)
+        val = max(0, min(255, val))
+        res = send_to_esp32(val, val, val, ip=ip)
+        res["message"] = f"Adjusted smart light brightness to {val}."
+        _LAST_STATE["on"] = val > 0
+        return res
+
+    color = params.get("color", "")
+    r = params.get("r")
+    g = params.get("g")
+    b = params.get("b")
+    brightness = params.get("brightness", 1.0)
+    if isinstance(brightness, (int, float)) and brightness > 1.0:
+        brightness = brightness / 100.0
+
+    final_r, final_g, final_b = resolve_color(color, r, g, b, brightness)
+    res = send_to_esp32(final_r, final_g, final_b, ip=ip)
+    color_desc = color or f"RGB({final_r},{final_g},{final_b})"
+    res["message"] = f"Set smart light to {color_desc}."
+    res["color_requested"] = color_desc
+    return res
+
+
+def resolve_esp32_light_request(question: str) -> dict[str, Any] | None:
+    """Fast-path query matcher for ESP32 light requests."""
+    return resolve_light_request(question)
+
+
+def resolve_light_request(question: str) -> dict[str, Any] | None:
+    """Fast-path resolution for light commands."""
+    q = question.strip().lower()
+    q_clean = re.sub(r"[?!.,;:']", "", q)
+
+    # Ignore media playback
+    if any(q_clean.startswith(p) for p in ("play ", "queue ", "listen to ", "stream ")) or any(
+        k in q_clean for k in ["spotify", "youtube", "music", "song", "track", "video", "playlist"]
     ):
         return None
 
-    # Check for light-related intent
-    light_patterns = [
-        r"\b(?:smart\s+)?lights?\b",
-        r"\besp32\s+lights?\b",
-        r"\bled\s+lights?\b",
-        r"\brgb\s+lights?\b",
-    ]
-    if not any(re.search(p, q) for p in light_patterns):
-        return None
-
-    # Toggle action
-    if any(k in q for k in ["toggle", "switch"]):
-        return {"action": "toggle"}
-
-    # Turn off action
-    if any(k in q for k in ["turn off", "switch off", "power off", "shut off", "lights off", "light off", "dim off"]):
+    # Check for off commands first
+    if (
+        re.search(r"\b(turn|switch|shut)\s+(off|down)\b.*\b(light|led)s?\b", q_clean)
+        or re.search(r"\b(light|led)s?\b.*\b(turn|switch|shut)?\s*off\b", q_clean)
+        or q_clean in ("lights off", "light off", "turn off light", "turn off lights", "dim off")
+    ):
         return {"action": "off"}
 
-    # Turn on action
-    if any(k in q for k in ["turn on", "switch on", "power on", "lights on", "light on"]):
-        # Check if color specified
-        for color, (r, g, b) in COLOR_MAP.items():
-            if color != "off" and re.search(rf"\b{re.escape(color)}\b", q):
-                return {"action": "set", "r": r, "g": g, "b": b, "color": color}
-        return {"action": "on"}
+    # Check toggle
+    if any(k in q_clean for k in ["toggle light", "toggle lights", "switch light"]):
+        return {"action": "toggle"}
 
-    # Color change action (e.g. "set light to red", "make light blue", "change light to green")
-    for color, (r, g, b) in COLOR_MAP.items():
-        if re.search(rf"\b{re.escape(color)}\b", q):
-            return {"action": "set", "r": r, "g": g, "b": b, "color": color}
+    is_light_mention = bool(re.search(r"\b(light|led|smart light)s?\b", q_clean))
+    found_color = None
+    for color_name in sorted(COLOR_MAP.keys(), key=lambda x: -len(x)):
+        if color_name in ("off", "black"):
+            continue
+        c_pat = color_name.replace("_", " ")
+        if re.search(r"\b" + re.escape(c_pat) + r"\b", q_clean):
+            found_color = color_name
+            break
 
-    # Dim / brightness
-    brightness_match = re.search(r"\b(?:brightness|dim)\s*(?:to\s*)?(\d+)\b", q)
-    if brightness_match:
-        val = int(brightness_match.group(1))
-        # Scale to 0-255 if percent
-        if val <= 100:
-            val = int(val * 2.55)
-        return {"action": "brightness", "value": min(255, max(0, val))}
+    if is_light_mention:
+        brightness = 1.0
+        pct_match = re.search(r"(\d{1,3})\s*%", q_clean)
+        if pct_match:
+            brightness = float(pct_match.group(1)) / 100.0
 
-    if q in {"lights", "light", "smart light", "smart lights", "toggle lights", "toggle light"}:
+        if (
+            re.search(r"\b(turn|switch)\s+on\b", q_clean)
+            or re.search(r"\b(set|change|make|dim|brighten)\b", q_clean)
+            or found_color
+            or q_clean in ("lights on", "light on", "turn on light", "turn on lights")
+        ):
+            return {
+                "action": "set",
+                "color": found_color or "white",
+                "brightness": brightness,
+            }
+
+    if found_color and ("light" in q_clean or "led" in q_clean):
+        return {
+            "action": "set",
+            "color": found_color,
+            "brightness": 1.0,
+        }
+
+    if q_clean in {"lights", "light", "smart light", "smart lights", "toggle"}:
         return {"action": "toggle"}
 
     return None
 
 
-def handle_request(params: dict[str, Any]) -> dict[str, Any]:
-    """Execute light control HTTP GET request to ESP32."""
-    ip = get_esp32_ip()
-    action = params.get("action", "toggle")
-    
-    r, g, b = 255, 255, 255
-    if action == "off":
-        r, g, b = 0, 0, 0
-        _LAST_STATE["on"] = False
-        msg = "Turned off the smart light."
-    elif action == "on":
-        r, g, b = 255, 255, 255
-        _LAST_STATE["on"] = True
-        msg = "Turned on the smart light."
-    elif action == "toggle":
-        if _LAST_STATE["on"]:
-            r, g, b = 0, 0, 0
-            _LAST_STATE["on"] = False
-            msg = "Toggled smart light off."
-        else:
-            r, g, b = 255, 255, 255
-            _LAST_STATE["on"] = True
-            msg = "Toggled smart light on."
-    elif action == "set":
-        r = int(params.get("r", 255))
-        g = int(params.get("g", 255))
-        b = int(params.get("b", 255))
-        color_name = params.get("color", f"RGB({r},{g},{b})")
-        _LAST_STATE["on"] = (r > 0 or g > 0 or b > 0)
-        msg = f"Set smart light to {color_name}."
-    elif action == "brightness":
-        val = int(params.get("value", 255))
-        r, g, b = val, val, val
-        _LAST_STATE["on"] = val > 0
-        msg = f"Adjusted smart light brightness to {val}."
-    else:
-        return {"success": False, "message": f"Unknown action: {action}"}
+def main():
+    if len(sys.argv) < 2:
+        res = handle_request({"action": "status"})
+        print(json.dumps(res, indent=2))
+        return
 
-    url = f"http://{ip}/rgb?r={r}&g={g}&b={b}"
-    try:
-        req = urllib.request.Request(url, headers={"Connection": "close"}, method="GET")
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
-            status_code = resp.getcode()
-            if status_code == 200:
-                return {
-                    "success": True,
-                    "message": msg,
-                    "state": {"on": _LAST_STATE["on"], "r": r, "g": g, "b": b},
-                    "ip": ip,
-                }
-            return {
-                "success": False,
-                "message": f"ESP32 light returned HTTP {status_code}",
-                "ip": ip,
-            }
-    except Exception as exc:
-        # In local testing or when ESP32 is powered down, note connection state gracefully
-        return {
-            "success": True,
-            "message": f"{msg} (Dispatched to {ip})",
-            "state": {"on": _LAST_STATE["on"], "r": r, "g": g, "b": b},
-            "warning": f"Device at {ip} did not respond: {exc}",
-            "ip": ip,
-        }
+    arg = sys.argv[1].strip()
+    if arg.startswith("{"):
+        try:
+            params = json.loads(arg)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"error": f"Invalid JSON input: {e}"}))
+            sys.exit(1)
+    else:
+        arg_lower = arg.lower()
+        if arg_lower in COLOR_MAP:
+            params = {"action": "set", "color": arg_lower}
+        elif arg_lower in {"on", "off", "toggle", "status"}:
+            params = {"action": arg_lower}
+        else:
+            resolved = resolve_light_request(arg)
+            params = resolved if resolved else {"color": arg}
+
+    result = handle_request(params)
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
-    raw_arg = sys.argv[1] if len(sys.argv) > 1 else "{}"
-    if raw_arg.strip().startswith("{"):
-        try:
-            req_params = json.loads(raw_arg)
-        except Exception:
-            req_params = {"action": "toggle"}
-    else:
-        arg_lower = raw_arg.strip().lower()
-        if arg_lower in COLOR_MAP:
-            r, g, b = COLOR_MAP[arg_lower]
-            req_params = {"action": "set", "r": r, "g": g, "b": b, "color": arg_lower}
-        elif arg_lower in {"on", "off", "toggle"}:
-            req_params = {"action": arg_lower}
-        else:
-            resolved = resolve_esp32_light_request(raw_arg)
-            req_params = resolved if resolved else {"action": "toggle"}
-    
-    res = handle_request(req_params)
-    print(json.dumps(res, indent=2))
+    main()

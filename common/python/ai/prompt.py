@@ -52,9 +52,12 @@ Intents to choose from:
     - "music_volume": background music volume (float between 0.0 and 1.0)
     - "input_paths": list of video paths when merging clips
     - "subtitles": boolean whether subtitles/captions should be burned (default false unless captions requested)
-9. `DESKTOP_AUTOMATION`: Any step-by-step guidance on the user's active desktop screen/application UI (e.g. "how do I install python extension?", "click the install button", "where is the settings tab?").
+9. `ESP32_LIGHT`: The user wants to control, toggle, turn on, turn off, or change colors/brightness of physical room or desk lights connected to an ESP32 micro-controller (e.g. "turn on red light", "turn off the light", "set light to blue", "make the light warm white", "dim light", "toggle lights"). Extract:
+    - "action": "set_color", "turn_off", "toggle", "on", "off", "set", or "brightness"
+    - "color": color name like "red", "green", "blue", "yellow", "cyan", "purple", "white", "warm_white" (or null if turning off)
+    - "brightness": float between 0.0 and 1.0 (or null)
 10. `SCREENSHOT`: The user asks to capture a screenshot, take a screenshot, capture their screen, or get a screenshot of their desktop screen (e.g. "capture screenshot", "take screenshot", "screenshot of my screen").
-11. `ESP32_LIGHT`: The user asks to control, toggle, turn on, turn off, or change colors/brightness of physical ESP32 smart LED lights (e.g. "turn on the light", "turn off light", "toggle smart lights", "set light to blue"). Extract: "action" ("on", "off", "toggle", "set", "brightness"), and "color" (if specified).
+11. `DESKTOP_AUTOMATION`: Any step-by-step guidance on the user's active desktop screen/application UI (e.g. "how do I install python extension?", "click the install button", "where is the settings tab?").
 
 Compound-request rule (IMPORTANT):
 - If the request combines OPENING an app WITH a follow-up action inside it

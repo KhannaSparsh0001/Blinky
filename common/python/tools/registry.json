@@ -79,21 +79,22 @@
       "action": "explorer_context"
     }
   },
-  "esp32_light_tool": {
-    "name": "esp32_light_tool",
+  "esp32_light": {
+    "name": "esp32_light",
     "description": "Control physical ESP32 RGB LED lights over local Wi-Fi HTTP requests to turn on, turn off, toggle, or change light colors and brightness.",
     "filepath": "python/tools/esp32_light_tool.py",
     "arguments": [
       "action",
+      "color",
       "r",
       "g",
       "b",
-      "color",
+      "brightness",
       "value"
     ],
     "status": "generalized",
     "verification_args": {
-      "action": "toggle"
+      "color": "red"
     }
   }
 }

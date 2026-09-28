@@ -108,7 +108,7 @@ impl AgentDaemon {
     }
 }
 
-fn project_root() -> PathBuf {
+pub(crate) fn project_root() -> PathBuf {
     // Walk up from CWD to find the project root (directory containing common/python/)
     if let Ok(cwd) = std::env::current_dir() {
         let mut dir = Some(cwd.as_path());
@@ -142,7 +142,7 @@ fn project_root() -> PathBuf {
     PathBuf::from(".")
 }
 
-fn python_executable(root: &PathBuf) -> PathBuf {
+pub(crate) fn python_executable(root: &PathBuf) -> PathBuf {
     let mut candidates = vec![
         root.join("python_runtime").join("Python313"),
         root.join(".venv"),
@@ -191,7 +191,7 @@ fn python_executable(root: &PathBuf) -> PathBuf {
     }
 }
 
-fn read_env_file(root: &PathBuf) -> Vec<(String, String)> {
+pub(crate) fn read_env_file(root: &PathBuf) -> Vec<(String, String)> {
     let env_path = root.join(".env");
     let Ok(contents) = std::fs::read_to_string(env_path) else {
         return Vec::new();
@@ -252,9 +252,9 @@ fn get_pending_hooks() -> &'static Mutex<HashMap<String, tokio::sync::oneshot::S
     PENDING_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Runs a local HTTP loopback server (port 9002) to bridge Antigravity IDE lifecycle hooks to Blinky Mobile.
+/// Runs a local HTTP loopback server (port 9003) for Antigravity IDE lifecycle hooks.
 async fn start_antigravity_hook_server(app: AppHandle) {
-    let addr = "127.0.0.1:9002";
+    let addr = "127.0.0.1:9003";
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -397,6 +397,12 @@ pub async fn start_websocket_server(app: AppHandle) {
         start_antigravity_hook_server(app_hook).await;
     });
 
+    let transfer_app = app.clone();
+    let transfer_tls_acceptor = tls_acceptor.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::file_transfer::start_server(transfer_app, mode, transfer_tls_acceptor).await;
+    });
+
     let _ = app.listen("blinky://mobile-status", |event| {
         let payload = event.payload().to_string();
         tokio::spawn(async move {
@@ -438,6 +444,11 @@ pub fn secure_transport_info(
             "wss://127.0.0.1:9001"
         } else {
             "ws://127.0.0.1:9001"
+        },
+        "file_transfer_url": if mode.is_release() {
+            "https://127.0.0.1:9002"
+        } else {
+            "http://127.0.0.1:9002"
         },
         "certificate_pin": pin,
     }))
@@ -723,6 +734,10 @@ where
             .as_deref()
             .map(|token| token_equals(token, &server_token))
             .unwrap_or(false);
+    let mut has_presented_token = uri_token
+        .as_deref()
+        .map(|token| token_equals(token, &server_token))
+        .unwrap_or(false);
 
     let (ws_sender, mut ws_receiver) = ws_stream.split();
     let ws_sender = std::sync::Arc::new(tokio::sync::Mutex::new(ws_sender));
@@ -730,7 +745,7 @@ where
     let (client_tx, mut client_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     {
         let mut clients = get_active_clients().lock().await;
-        clients.push(client_tx);
+        clients.push(client_tx.clone());
     }
 
     let ws_sender_writer = ws_sender.clone();
@@ -790,6 +805,7 @@ where
             let trimmed = text.trim();
 
             if let Some(provided) = auth_token_from_frame(trimmed, mode) {
+                has_presented_token = token_equals(provided.trim(), &server_token);
                 authenticated =
                     !remote_auth_required || token_equals(provided.trim(), &server_token);
                 if authenticated {
@@ -992,6 +1008,18 @@ where
             } else if trimmed.starts_with("query:") || trimmed.starts_with("{") {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
                     let msg_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    if matches!(msg_type, "file_offer" | "file_resume" | "file_cancel" | "file_edit") {
+                        crate::file_transfer::handle_control_message(
+                            app.clone(),
+                            &parsed,
+                            client_tx.clone(),
+                            has_presented_token,
+                            !server_token.is_empty(),
+                            mode,
+                        )
+                        .await;
+                        continue;
+                    }
                     if msg_type == "antigravity_action" {
                         if let (Some(action_id), Some(decision)) = (
                             parsed.get("actionId").and_then(|a| a.as_str()),
