@@ -19,7 +19,6 @@ import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
-import * as MediaLibrary from 'expo-media-library';
 import { colors, typography, radius, spacing } from '../theme/theme';
 import { QuickAccessFolder, FsEntry, FsDirContents, FsFileData } from '../usePCWebSocket';
 
@@ -221,7 +220,7 @@ export function FilesScreen({
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [mobileActionMode, setMobileActionMode] = useState<'open' | 'send' | 'save_gallery'>('open');
+  const [mobileActionMode, setMobileActionMode] = useState<'open' | 'send' | 'save_device'>('open');
   const [textPreview, setTextPreview] = useState<{ name: string; content: string } | null>(null);
   const searchTimeoutRef = useRef<any>(null);
 
@@ -299,14 +298,34 @@ export function FilesScreen({
             return;
           }
 
-          // 2. Save to Gallery mode (for images)
-          if (targetMode === 'save_gallery') {
+          // 2. Save to Device / Downloads
+          if (targetMode === 'save_device') {
             try {
-              await MediaLibrary.saveToLibraryAsync(localUri);
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              setActionFeedback(`Saved to Gallery: ${fsFileData.name}`);
+              if (Platform.OS === 'android' && FileSystem.StorageAccessFramework) {
+                const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+                if (permissions.granted) {
+                  const newFileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+                    permissions.directoryUri,
+                    fsFileData.name,
+                    getMimeType(ext)
+                  );
+                  await FileSystem.writeAsStringAsync(newFileUri, fsFileData.base64, {
+                    encoding: FileSystem.EncodingType.Base64,
+                  });
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  setActionFeedback(`Saved: ${fsFileData.name}`);
+                  return;
+                }
+              }
+              // Fallback for iOS or if directory picker is dismissed
+              if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(localUri, {
+                  dialogTitle: `Save ${fsFileData.name}`,
+                });
+                setActionFeedback(`Saved: ${fsFileData.name}`);
+              }
             } catch (saveErr: any) {
-              Alert.alert('Save Failed', saveErr?.message || 'Could not save image to gallery.');
+              Alert.alert('Save Failed', saveErr?.message || 'Could not save file to device.');
             }
             return;
           }
@@ -456,22 +475,10 @@ export function FilesScreen({
     }, 1800);
   };
 
-  const handleAction = async (file: FsEntry, mode: 'open' | 'send' | 'save_gallery') => {
+  const handleAction = (file: FsEntry, mode: 'open' | 'send' | 'save_device') => {
     if (!isConnected) {
       Alert.alert('Offline', 'Please connect to your PC to access this file.');
       return;
-    }
-    if (mode === 'save_gallery') {
-      try {
-        const { status } = await MediaLibrary.requestPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Permission Denied', 'Permission to access media library is required to save photos.');
-          return;
-        }
-      } catch (err: any) {
-        Alert.alert('Error', err?.message || 'Could not request permissions.');
-        return;
-      }
     }
     setMobileActionMode(mode);
     setIsDownloading(true);
@@ -924,21 +931,21 @@ export function FilesScreen({
                     </TouchableOpacity>
                   )}
 
-                  {/* 3. Save to Gallery option for images */}
+                  {/* 3. Save to Device option for images */}
                   {!selectedFile.is_dir && isImageFile(selectedFile.ext) && (
                     <TouchableOpacity
                       style={styles.saveGalleryActionBtn}
-                      onPress={() => handleAction(selectedFile, 'save_gallery')}
+                      onPress={() => handleAction(selectedFile, 'save_device')}
                       activeOpacity={0.8}
                       disabled={isDownloading}
                     >
-                      {isDownloading && mobileActionMode === 'save_gallery' ? (
+                      {isDownloading && mobileActionMode === 'save_device' ? (
                         <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
                       ) : (
                         <Ionicons name="download-outline" size={18} color="#10B981" style={{ marginRight: 8 }} />
                       )}
                       <Text style={styles.saveGalleryActionBtnText}>
-                        {isDownloading && mobileActionMode === 'save_gallery' ? 'Saving to Gallery...' : 'Save to Gallery'}
+                        {isDownloading && mobileActionMode === 'save_device' ? 'Saving to Device...' : 'Save to Device'}
                       </Text>
                     </TouchableOpacity>
                   )}
