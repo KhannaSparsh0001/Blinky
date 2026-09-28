@@ -128,11 +128,11 @@ async function tryStartDockerDaemon(dockerPath: string): Promise<boolean> {
     // Linux
     console.log("[Docker] 🐳 Attempting to start Docker daemon service...");
     try {
-      const startProc = spawn(["systemctl", "--user", "start", "docker"], { stdio: "ignore" });
+      const startProc = spawn(["systemctl", "--user", "start", "docker"], { stdio: ["ignore", "ignore", "ignore"] });
       await Promise.race([startProc.exited, new Promise((r) => setTimeout(r, 3000))]);
     } catch {
       try {
-        const sysStart = spawn(["sudo", "systemctl", "start", "docker"], { stdio: "ignore" });
+        const sysStart = spawn(["sudo", "systemctl", "start", "docker"], { stdio: ["ignore", "ignore", "ignore"] });
         await Promise.race([sysStart.exited, new Promise((r) => setTimeout(r, 3000))]);
       } catch {}
     }
