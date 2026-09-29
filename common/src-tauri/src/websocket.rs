@@ -1195,7 +1195,10 @@ where
                         continue;
                     } else if msg_type == "fs_read_file" {
                         let path = parsed.get("path").and_then(|p| p.as_str()).unwrap_or("");
-                        match crate::platform::fs_sync::read_file_base64(path, 30 * 1024 * 1024) {
+                        match crate::platform::fs_sync::read_file_base64(
+                            path,
+                            crate::file_transfer::configured_max_size(),
+                        ) {
                             Ok((name, b64, size)) => {
                                 let resp = serde_json::json!({
                                     "type": "fs_file_data",

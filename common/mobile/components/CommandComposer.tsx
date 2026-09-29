@@ -32,6 +32,7 @@ interface CommandComposerProps {
   isConnected: boolean;
   onPeekImage?: (uri: string) => void;
   onCaptureScreenshot?: () => void;
+  onSendFilesToPC: () => void;
 
   // Voice recording
   isVoiceRecording: boolean;
@@ -49,6 +50,7 @@ export function CommandComposer({
   isConnected,
   onPeekImage,
   onCaptureScreenshot,
+  onSendFilesToPC,
   isVoiceRecording,
   isVoiceTranscribing,
   onToggleVoice
@@ -235,6 +237,21 @@ export function CommandComposer({
             <AttachOption icon="camera-outline" label="Camera" sublabel="Take a photo" onPress={() => handleAttachOption('Camera')} />
             <AttachOption icon="desktop-outline" label="Screenshot" sublabel="Capture screen" onPress={() => handleAttachOption('Screenshot')} />
           </View>
+          <TouchableOpacity
+            style={styles.sendToPCOption}
+            onPress={() => {
+              setShowAttachMenu(false);
+              onSendFilesToPC();
+            }}
+            accessibilityLabel="Send files to PC"
+            activeOpacity={0.7}
+          >
+            <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
+            <View>
+              <Text style={styles.sendToPCTitle}>Send files to PC</Text>
+              <Text style={styles.sendToPCSubtitle}>Transfer and edit files on your PC</Text>
+            </View>
+          </TouchableOpacity>
         </Animated.View>
       )}
 
@@ -548,6 +565,23 @@ const styles = StyleSheet.create({
   attachMenuRow: {
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  sendToPCOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  sendToPCTitle: {
+    ...typography.bodySmall,
+    color: colors.textPrimary,
+  },
+  sendToPCSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
   },
   attachOption: {
     alignItems: 'center',

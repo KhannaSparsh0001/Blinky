@@ -55,7 +55,7 @@ import { SystemScreen } from './components/SystemScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { FilesScreen } from './components/FilesScreen';
 import { BottomNavigation } from './components/BottomNavigation';
-import { FileTransferPanel } from './FileTransferPanel';
+import { FileTransferPanel, FileTransferPanelRef, SelectedFile } from './FileTransferPanel';
 import { TabScreen, AttachedFile } from './types';
 import { colors } from './theme/theme';
 import { useFonts } from 'expo-font';
@@ -626,6 +626,9 @@ export default function App() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryProgress, setDiscoveryProgress] = useState<string | null>(null);
   const [showFileTransfer, setShowFileTransfer] = useState(false);
+  const fileTransferPanelRef = useRef<FileTransferPanelRef>(null);
+  // Tracks the chat message ID showing live transfer status
+  const transferStatusMsgIdRef = useRef<string | null>(null);
 
   const [queryText, setQueryText] = useState('');
   const [runningQuery, setRunningQuery] = useState('');
@@ -1017,11 +1020,73 @@ export default function App() {
     });
   };
 
+  /** Detect whether the query text is asking to send/upload a file to the PC. */
+  const detectSendToPCIntent = (text: string): boolean => {
+    return /send\s+(it\s+)?to\s+(pc|computer|laptop|desktop|blinky)/i.test(text) ||
+      /upload\s+(it\s+)?to\s+(pc|computer|blinky)/i.test(text) ||
+      /transfer\s+(it\s+)?to\s+(pc|computer|blinky)/i.test(text) ||
+      /\bsend\s+to\s+pc\b/i.test(text) ||
+      /\bsend\s+file\s+to\b/i.test(text);
+  };
+
+  /**
+   * Extract the AiCut instruction from a chat message that also requests a PC transfer.
+   * e.g. "trim from 3 to 20 seconds and send to pc" → "trim from 3 to 20 seconds"
+   */
+  const extractTransferInstruction = (text: string): string => {
+    return text
+      .replace(/,?\s*(and\s+)?((send|upload|transfer)\s+(it\s+)?to\s+(pc|computer|laptop|desktop|blinky))/gi, '')
+      .replace(/^,?\s*(and\s+)?/, '')
+      .trim();
+  };
+
   const handleQuery = (attachedFile?: AttachedFile | null) => {
     let query = queryText.trim();
     if (!query && !attachedFile) {
       triggerHaptic('selection');
       Alert.alert('Empty query', 'Please enter a search/browsing query or attach a file first.');
+      return;
+    }
+
+    // --- "Send to PC" intent: start a file transfer silently from the chat bar ---
+    if (attachedFile && detectSendToPCIntent(query)) {
+      const instruction = extractTransferInstruction(query);
+      const fileToSend: SelectedFile = {
+        uri: attachedFile.uri,
+        name: attachedFile.name,
+        size: attachedFile.size ? Math.round(attachedFile.size * 1024 * 1024) : undefined,
+      };
+
+      // Show a user message in chat
+      const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const userMsgId = generateUuid();
+      const statusMsgId = generateUuid();
+      transferStatusMsgIdRef.current = statusMsgId;
+
+      const displayText = instruction
+        ? `Sending ${attachedFile.name} to PC — ${instruction}`
+        : `Sending ${attachedFile.name} to PC…`;
+
+      setMessages(prev => [
+        ...prev,
+        { id: userMsgId, sender: 'user' as const, text: displayText, timestamp: currentTime, attachedFile },
+        {
+          id: statusMsgId,
+          sender: 'blinky' as const,
+          text: '📤 Starting file transfer…',
+          timestamp: currentTime,
+          progress: { percent: 0, statusText: 'Preparing…', duration: 0 },
+        },
+      ]);
+
+      setQueryText('');
+      triggerHaptic('medium');
+
+      // Trigger the transfer in the background via the panel ref.
+      // Pass empty destination so the Rust backend resolves its own default
+      // absolute Downloads/Blinky path — sending a relative string like
+      // "Downloads/Blinky" causes the backend to reject it as non-absolute.
+      fileTransferPanelRef.current?.startTransfer([fileToSend], instruction, '');
       return;
     }
 
@@ -1897,6 +1962,7 @@ export default function App() {
                   setPreviewImageUri(uri);
                 }}
                 onCaptureScreenshot={handleCaptureScreenshot}
+                onSendFilesToPC={() => setShowFileTransfer(true)}
                 isVoiceRecording={isVoiceRecording}
                 isVoiceTranscribing={isVoiceTranscribing}
                 onToggleVoice={toggleVoiceRecording}
@@ -2148,6 +2214,7 @@ export default function App() {
             )}
           </Modal>
           <FileTransferPanel
+            ref={fileTransferPanelRef}
             visible={showFileTransfer}
             connected={isConnected}
             hostAddress={ipAddress}
@@ -2157,6 +2224,33 @@ export default function App() {
             sendMessage={sendFileTransferMessage}
             getNativeModule={getFileTransferModule}
             onClose={() => setShowFileTransfer(false)}
+            onTransferStatusChange={(status) => {
+              const msgId = transferStatusMsgIdRef.current;
+              if (!msgId) return;
+              setMessages(prev => prev.map(m => {
+                if (m.id !== msgId) return m;
+                return {
+                  ...m,
+                  text: status ? `📤 ${status}` : m.text,
+                  progress: status
+                    ? { percent: 50, statusText: status, duration: 0 }
+                    : m.progress,
+                };
+              }));
+            }}
+            onTransferDone={(success, message) => {
+              const msgId = transferStatusMsgIdRef.current;
+              transferStatusMsgIdRef.current = null;
+              if (!msgId) return;
+              setMessages(prev => prev.map(m => {
+                if (m.id !== msgId) return m;
+                return {
+                  ...m,
+                  text: message,
+                  progress: undefined,
+                };
+              }));
+            }}
           />
         </KeyboardAvoidingView>
         <BottomNavigation

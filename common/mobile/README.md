@@ -1,34 +1,40 @@
 # Blinky Remote Mobile Client
 
-This directory contains the React Native Expo mobile application that connects to the Blinky desktop client over local Wi-Fi. It can send power actions and remote browser-agent queries to the desktop WebSocket server.
+This directory contains the React Native Expo mobile application that connects to the Blinky desktop client over local Wi-Fi. It can send remote commands and transfer files to the PC.
 
 ## Prerequisites
 
-1. **Expo Go App**: Install the **Expo Go** application on your physical device via the Google Play Store (Android) or Apple App Store (iOS).
-   * *Note: This project is configured to run on **Expo SDK 54**.*
+1. Install a **custom Blinky development or release build** on the device. The app uses Expo SDK 57 and project-local native modules for secure connections and file transfer. Expo Go cannot run the complete app.
 
 ## Setup and Installation
 
-1. Open your terminal and navigate to the `mobile` directory:
+1. Open your terminal and navigate to the mobile directory from the repository root:
    ```bash
-   cd mobile
+   cd common/mobile
    ```
 
-2. Install the package dependencies using `npm` (ensuring legacy peer dependencies are handled correctly):
+2. Install the locked dependencies:
    ```bash
-   npm install --legacy-peer-deps
+   bun install --frozen-lockfile
    ```
+
+3. Build and install a new native app whenever Expo SDK, a native package (such as `expo-image-picker`), or native app configuration changes. For an internal Android APK, run:
+   ```bash
+   bunx eas-cli init
+   bun run build:release --platform android
+   ```
+   Run `init` once to link the existing EAS project, or set one up if this is the first build. Install the APK produced by EAS on the phone. The build profiles are defined in [eas.json](eas.json).
 
 ## Running the Application
 
 1. Ensure your computer and mobile device are connected to the **same local Wi-Fi network**.
-2. Run the following command inside the `mobile` directory to spin up the Expo development server:
+2. For a custom development build, run the following command inside `common/mobile` to start Metro:
    ```bash
-   npm start
+   bun run start:clear
    ```
-3. A QR code will display in your terminal:
-   * **Android**: Open the **Expo Go** app and scan the terminal's QR code.
-   * **iOS**: Scan the QR code using your phone's default Camera app, which will prompt you to open the link inside Expo Go.
+3. Open the Metro link in the installed Blinky development build. A release APK uses its bundled JavaScript and does not need Metro.
+
+If the app shows `Cannot find native module 'ExponentImagePicker'`, the JavaScript is running in an older build or Expo Go without that native module. Install a new custom build made from this checkout, then reopen the app. Clearing Metro's cache alone does not add native modules to an installed app.
 
 ## Connecting to Blinky
 
@@ -43,7 +49,8 @@ This directory contains the React Native Expo mobile application that connects t
 ## What Mobile Can Control
 
 - Power actions: Sleep, Restart, Shut Down.
-- Remote AI/browser queries through `ws://<pc>:9001`.
+- Remote AI/browser queries over the desktop WebSocket connection on port 9001 (WS in development, WSS in release).
 - Streamed status and final agent responses.
+- Transfer multiple files to a selected PC folder and optionally request AiCut edits for video or audio files.
 
 The mobile app does not render the desktop overlay and does not run the command bar autopilot loop. Screen reading, highlighting, and safe desktop clicks are desktop command-bar features.
