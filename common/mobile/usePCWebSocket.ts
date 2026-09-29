@@ -22,6 +22,7 @@ export type FileTransferMessage = {
   uploadOffset?: number;
   chunkSize?: number;
   expiresInSeconds?: number;
+  destinationPath?: string;
   complete?: boolean;
   editing?: boolean;
   edited?: boolean;

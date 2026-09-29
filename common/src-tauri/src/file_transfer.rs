@@ -41,6 +41,7 @@ struct TransferRecord {
     uploaded_bytes: u64,
     hasher: Sha256,
     staging_path: PathBuf,
+    destination_dir: PathBuf,
     source_path: Option<PathBuf>,
     output_path: Option<PathBuf>,
     output_filename: Option<String>,
@@ -212,6 +213,18 @@ async fn offer_file(app: &AppHandle, message: &Value, sender: ClientSender) {
         ));
         return;
     }
+    let destination_dir = match resolve_destination(
+        message.get("destinationPath").and_then(Value::as_str),
+        &root,
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            fail(&format!(
+                "The PC destination folder is unavailable: {error}"
+            ));
+            return;
+        }
+    };
     let edit_requested = message.get("purpose").and_then(Value::as_str) == Some("edit");
     let required_space = if edit_requested {
         size.saturating_mul(2)
@@ -230,6 +243,21 @@ async fn offer_file(app: &AppHandle, message: &Value, sender: ClientSender) {
         }
         Err(error) => {
             fail(&format!("Could not check free disk space: {error}"));
+            return;
+        }
+    }
+    match available_space(&destination_dir) {
+        Ok(free) if free >= required_space => {}
+        Ok(free) => {
+            fail(&format!(
+                "Not enough space in the destination folder. This transfer needs about {}, but {} is available.",
+                human_bytes(required_space),
+                human_bytes(free)
+            ));
+            return;
+        }
+        Err(error) => {
+            fail(&format!("Could not check destination free space: {error}"));
             return;
         }
     }
@@ -267,6 +295,7 @@ async fn offer_file(app: &AppHandle, message: &Value, sender: ClientSender) {
             uploaded_bytes: 0,
             hasher: Sha256::new(),
             staging_path,
+            destination_dir: destination_dir.clone(),
             source_path: None,
             output_path: None,
             output_filename: None,
@@ -289,6 +318,7 @@ async fn offer_file(app: &AppHandle, message: &Value, sender: ClientSender) {
             "uploadOffset": 0,
             "chunkSize": MAX_CHUNK_BYTES,
             "expiresInSeconds": SESSION_TTL.as_secs(),
+            "destinationPath": destination_dir.to_string_lossy(),
         }),
     );
 }
@@ -481,7 +511,7 @@ async fn start_edit(app: &AppHandle, message: &Value, sender: ClientSender) {
             }
         }
 
-        if instruction.is_empty() && sources.len() <= 1 {
+        if instruction.is_empty() {
             send_json(
                 &sender,
                 json!({"type":"file_error","requestId":request_id,"message":"Enter an AiCut edit instruction of at most 8,000 characters."}),
@@ -552,7 +582,7 @@ async fn start_edit(app: &AppHandle, message: &Value, sender: ClientSender) {
 }
 
 async fn run_aicut_job(
-    app: &AppHandle,
+    _app: &AppHandle,
     transfer_id: &str,
     source_path: &Path,
     all_sources: &[PathBuf],
@@ -560,8 +590,13 @@ async fn run_aicut_job(
 ) -> Result<(PathBuf, String, u64, String), Box<dyn std::error::Error + Send + Sync>> {
     let root = crate::websocket::project_root();
     let python = crate::websocket::python_executable(&root);
-    let output_dir = app.path().download_dir()?.join("Blinky").join("Edited");
-    tokio::fs::create_dir_all(&output_dir).await?;
+    let output_dir = transfers()
+        .lock()
+        .await
+        .get(transfer_id)
+        .map(|record| record.destination_dir.clone())
+        .ok_or("Transfer session expired while AiCut was starting")?;
+    let output_dir = output_dir.canonicalize()?;
 
     let script = root
         .join("common")
@@ -615,7 +650,7 @@ async fn run_aicut_job(
     let path = PathBuf::from(path).canonicalize()?;
     let output_root = output_dir.canonicalize()?;
     if !path.starts_with(&output_root) || !path.is_file() {
-        return Err("AiCut output escaped the Blinky Edited folder".into());
+        return Err("AiCut output escaped the chosen destination folder".into());
     }
 
     let original_name = transfers()
@@ -936,6 +971,7 @@ struct ChunkFailure {
 
 struct ChunkReservation {
     staging_path: PathBuf,
+    destination_dir: PathBuf,
     filename: String,
     expected_size: u64,
     expected_sha256: String,
@@ -1067,6 +1103,7 @@ async fn accept_chunk(
         record.writing = true;
         ChunkReservation {
             staging_path: record.staging_path.clone(),
+            destination_dir: record.destination_dir.clone(),
             filename: record.filename.clone(),
             expected_size: record.expected_size,
             expected_sha256: record.expected_sha256.clone(),
@@ -1217,17 +1254,10 @@ async fn write_upload_chunk(
     }
 
     let destination = if end == reservation.expected_size {
-        let (parent, filename) =
-            destination_for_upload(&reservation.staging_path, &reservation.filename).map_err(
-                |error| ChunkFailure {
-                    status: 500,
-                    message: error.to_string(),
-                    offset: Some(end),
-                },
-            )?;
+        let filename = &reservation.filename;
         let path = move_to_unique_path(
             &reservation.staging_path,
-            &parent,
+            &reservation.destination_dir,
             Path::new(&filename)
                 .file_stem()
                 .and_then(|value| value.to_str())
@@ -1246,7 +1276,7 @@ async fn write_upload_chunk(
         let safe_name = path
             .file_name()
             .and_then(|value| value.to_str())
-            .unwrap_or(&filename)
+            .unwrap_or(filename)
             .to_string();
         Some((path, safe_name))
     } else {
@@ -1358,7 +1388,7 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn configured_max_size() -> u64 {
+pub(crate) fn configured_max_size() -> u64 {
     std::env::var("BLINKY_FILE_TRANSFER_MAX_BYTES")
         .ok()
         .or_else(|| {
@@ -1373,7 +1403,7 @@ fn configured_max_size() -> u64 {
         .unwrap_or(DEFAULT_MAX_BYTES)
 }
 
-fn human_bytes(bytes: u64) -> String {
+pub(crate) fn human_bytes(bytes: u64) -> String {
     const GIB: u64 = 1024 * 1024 * 1024;
     if bytes >= GIB {
         format!("{} GiB", (bytes as f64 / GIB as f64 * 10.0).round() / 10.0)
@@ -1385,20 +1415,31 @@ fn human_bytes(bytes: u64) -> String {
     }
 }
 
-fn destination_for_upload(
-    staging_path: &Path,
-    filename: &str,
-) -> std::io::Result<(PathBuf, String)> {
-    let directory = staging_path
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "transfer folder does not exist",
-            )
-        })?;
-    Ok((directory.to_path_buf(), filename.to_string()))
+fn resolve_destination(requested: Option<&str>, default_dir: &Path) -> std::io::Result<PathBuf> {
+    let raw = requested.map(str::trim).filter(|value| !value.is_empty());
+    let path = raw.map(Path::new).unwrap_or(default_dir);
+    if !path.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "enter an absolute PC folder path",
+        ));
+    }
+    let path = path.canonicalize()?;
+    if !path.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the path is not a folder",
+        ));
+    }
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(std::io::Error::other)?;
+    let probe = path.join(format!(".blinky-write-check-{}", hex(&nonce)));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)?;
+    std::fs::remove_file(probe)?;
+    Ok(path)
 }
 
 async fn move_to_unique_path(
@@ -1409,16 +1450,7 @@ async fn move_to_unique_path(
 ) -> std::io::Result<PathBuf> {
     let extension = extension.trim_start_matches('.');
     for index in 0..100_000 {
-        let name = if index == 0 {
-            stem.to_string()
-        } else {
-            format!("{stem} ({index})")
-        };
-        let candidate = if extension.is_empty() {
-            directory.join(name)
-        } else {
-            directory.join(format!("{name}.{extension}"))
-        };
+        let candidate = unique_destination(directory, stem, extension, index);
         match tokio::fs::hard_link(source, &candidate).await {
             Ok(()) => {
                 if let Err(error) = tokio::fs::remove_file(source).await {
@@ -1428,8 +1460,66 @@ async fn move_to_unique_path(
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
+            // Cross-volume copies and filesystems without hard-link support use
+            // create_new below, so occupied names never overwrite user files.
+            Err(_) => return copy_to_unique_path(source, directory, stem, extension, index).await,
         }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not find an unused destination name",
+    ))
+}
+
+fn unique_destination(directory: &Path, stem: &str, extension: &str, index: usize) -> PathBuf {
+    let name = if index == 0 {
+        stem.to_string()
+    } else {
+        format!("{stem} ({index})")
+    };
+    if extension.is_empty() {
+        directory.join(name)
+    } else {
+        directory.join(format!("{name}.{extension}"))
+    }
+}
+
+async fn copy_to_unique_path(
+    source: &Path,
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+    first_index: usize,
+) -> std::io::Result<PathBuf> {
+    for index in first_index..100_000 {
+        let candidate = unique_destination(directory, stem, extension, index);
+        let mut output = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let copied = async {
+            let mut input = tokio::fs::File::open(source).await?;
+            tokio::io::copy(&mut input, &mut output).await?;
+            output.sync_all().await?;
+            Ok::<(), std::io::Error>(())
+        }
+        .await;
+        drop(output);
+        if let Err(error) = copied {
+            let _ = tokio::fs::remove_file(&candidate).await;
+            return Err(error);
+        }
+        if let Err(error) = tokio::fs::remove_file(source).await {
+            let _ = tokio::fs::remove_file(&candidate).await;
+            return Err(error);
+        }
+        return Ok(candidate);
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::AlreadyExists,
@@ -1561,4 +1651,79 @@ where
 
 fn send_json(sender: &ClientSender, value: Value) {
     let _ = sender.send(value.to_string());
+}
+
+#[cfg(test)]
+mod destination_tests {
+    use super::*;
+
+    fn test_dir(label: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("blinky-transfer-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn destination_requires_existing_absolute_directory() {
+        let root = test_dir("destination");
+        assert_eq!(
+            resolve_destination(None, &root).unwrap(),
+            root.canonicalize().unwrap()
+        );
+        assert!(resolve_destination(Some("relative/folder"), &root).is_err());
+        assert!(resolve_destination(Some(root.join("missing").to_str().unwrap()), &root).is_err());
+        let file = root.join("not-a-folder");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(resolve_destination(Some(file.to_str().unwrap()), &root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_upload_uses_unique_name_in_requested_folder() {
+        let root = test_dir("source");
+        let destination = test_dir("target");
+        let source = root.join("upload.part");
+        std::fs::write(&source, b"new contents").unwrap();
+        std::fs::write(destination.join("clip.mp4"), b"old contents").unwrap();
+        let saved = move_to_unique_path(&source, &destination, "clip", "mp4")
+            .await
+            .unwrap();
+        assert_eq!(saved, destination.join("clip (1).mp4"));
+        assert_eq!(std::fs::read(saved).unwrap(), b"new contents");
+        assert_eq!(
+            std::fs::read(destination.join("clip.mp4")).unwrap(),
+            b"old contents"
+        );
+        assert!(!source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(destination).unwrap();
+    }
+
+    #[tokio::test]
+    async fn copy_fallback_preserves_existing_files_and_removes_staging_source() {
+        let root = test_dir("copy-source");
+        let destination = test_dir("copy-target");
+        let source = root.join("upload.part");
+        std::fs::write(&source, b"new contents").unwrap();
+        std::fs::write(destination.join("clip.mp4"), b"first").unwrap();
+        std::fs::write(destination.join("clip (1).mp4"), b"second").unwrap();
+
+        let saved = copy_to_unique_path(&source, &destination, "clip", "mp4", 0)
+            .await
+            .unwrap();
+        assert_eq!(saved, destination.join("clip (2).mp4"));
+        assert_eq!(std::fs::read(&saved).unwrap(), b"new contents");
+        assert_eq!(
+            std::fs::read(destination.join("clip.mp4")).unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("clip (1).mp4")).unwrap(),
+            b"second"
+        );
+        assert!(!source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(destination).unwrap();
+    }
 }

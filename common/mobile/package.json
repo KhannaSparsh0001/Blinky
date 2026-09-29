@@ -19,6 +19,9 @@
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
+    "react-native-purchases": "^10.10.2",
+    "react-native-purchases-ui": "^10.10.2",
+    "react-native-safe-area-context": "~5.7.0",
     "react-native-volume-manager": "^2.0.8",
     "react-native-wol": "^1.0.2"
   },

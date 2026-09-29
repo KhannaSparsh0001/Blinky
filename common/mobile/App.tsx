@@ -45,7 +45,29 @@ import { usePCWebSocket, ConnectionStatus } from './usePCWebSocket';
 import { sendWakeOnLan, MAC_STORAGE_KEY, WOL_BROADCAST_STORAGE_KEY } from './lib/wol';
 import { triggerHaptic } from './lib/haptics';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { FileTransferPanel } from './FileTransferPanel';
+import SplashScreen from './SplashScreen';
+import { BrandHeader } from './components/BrandHeader';
+import { MessageBubble } from './components/MessageBubble';
+import { ChatHome } from './components/ChatHome';
+import { CommandComposer } from './components/CommandComposer';
+import { SlashCommandMenu, SlashCommandDef } from './components/SlashCommandMenu';
+import { ActionsScreen } from './components/ActionsScreen';
+import { SystemScreen } from './components/SystemScreen';
+import { SettingsModal } from './components/SettingsModal';
+import { FilesScreen } from './components/FilesScreen';
+import { BottomNavigation } from './components/BottomNavigation';
+import { PromoCodeModal } from './components/PromoCodeModal';
+import {
+  initializePurchases,
+  hasPcAccess,
+  addPcAccessListener,
+  presentPcPaywall,
+  restorePurchases,
+} from './lib/purchases';
+import { FileTransferPanel, FileTransferPanelRef, SelectedFile } from './FileTransferPanel';
+import { TabScreen, AttachedFile } from './types';
+import { colors } from './theme/theme';
+import { useFonts } from 'expo-font';
 export { triggerHaptic };
 
 const STORAGE_KEY = '@blinky_pc_ip';
@@ -583,6 +605,9 @@ export default function App() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryProgress, setDiscoveryProgress] = useState<string | null>(null);
   const [showFileTransfer, setShowFileTransfer] = useState(false);
+  const fileTransferPanelRef = useRef<FileTransferPanelRef>(null);
+  // Tracks the chat message ID showing live transfer status
+  const transferStatusMsgIdRef = useRef<string | null>(null);
 
   const [queryText, setQueryText] = useState('');
   const [runningQuery, setRunningQuery] = useState('');
@@ -605,6 +630,79 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
+
+  // PC Controls monetization & promo code state
+  const [isPcUnlocked, setIsPcUnlocked] = useState(false);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const [isRestoringPurchases, setIsRestoringPurchases] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    initializePurchases().finally(async () => {
+      if (!mounted) return;
+      const unlocked = await hasPcAccess();
+      setIsPcUnlocked(unlocked);
+    });
+
+    const unsubscribe = addPcAccessListener((hasAccess) => {
+      if (mounted) {
+        setIsPcUnlocked(hasAccess);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleUnlockPcPress = async () => {
+    try {
+      const res = await presentPcPaywall();
+      if (res.success) {
+        setIsPcUnlocked(true);
+      } else if (res.error) {
+        // Native paywall unavailable or unconfigured, open promo modal directly
+        setShowPromoModal(true);
+      }
+    } catch {
+      setShowPromoModal(true);
+    }
+  };
+
+  const handleRestorePurchasesPress = async () => {
+    setIsRestoringPurchases(true);
+    try {
+      const res = await restorePurchases();
+      if (res.hasAccess) {
+        setIsPcUnlocked(true);
+        Alert.alert('Purchases Restored', res.message);
+      } else {
+        Alert.alert('Restore Purchases', res.message);
+      }
+    } catch (e: any) {
+      Alert.alert('Restore Error', e?.message || 'Failed to restore purchases.');
+    } finally {
+      setIsRestoringPurchases(false);
+    }
+  };
+
+  // Sync PC files when opening Files tab
+  useEffect(() => {
+    if (isConnected && activeTab === 'Files') {
+      fetchQuickAccess();
+      fetchRecentFiles();
+    }
+  }, [isConnected, activeTab, fetchQuickAccess, fetchRecentFiles]);
+
+  // Handle light status event updates from PC Desktop
+  useEffect(() => {
+    if (latestLightEvent?.data) {
+      const data = latestLightEvent.data;
+      const on = (data.r ?? 0) > 0 || (data.g ?? 0) > 0 || (data.b ?? 0) > 0;
+      setIsLightOn(on);
+    }
+  }, [latestLightEvent]);
 
   // Haptic feedback for Antigravity events
   useEffect(() => {
@@ -965,10 +1063,73 @@ export default function App() {
     });
   };
 
-  const handleQuery = () => {
-    if (!queryText.trim()) {
+  /** Detect whether the query text is asking to send/upload a file to the PC. */
+  const detectSendToPCIntent = (text: string): boolean => {
+    return /send\s+(it\s+)?to\s+(pc|computer|laptop|desktop|blinky)/i.test(text) ||
+      /upload\s+(it\s+)?to\s+(pc|computer|blinky)/i.test(text) ||
+      /transfer\s+(it\s+)?to\s+(pc|computer|blinky)/i.test(text) ||
+      /\bsend\s+to\s+pc\b/i.test(text) ||
+      /\bsend\s+file\s+to\b/i.test(text);
+  };
+
+  /**
+   * Extract the AiCut instruction from a chat message that also requests a PC transfer.
+   * e.g. "trim from 3 to 20 seconds and send to pc" → "trim from 3 to 20 seconds"
+   */
+  const extractTransferInstruction = (text: string): string => {
+    return text
+      .replace(/,?\s*(and\s+)?((send|upload|transfer)\s+(it\s+)?to\s+(pc|computer|laptop|desktop|blinky))/gi, '')
+      .replace(/^,?\s*(and\s+)?/, '')
+      .trim();
+  };
+
+  const handleQuery = (attachedFile?: AttachedFile | null) => {
+    let query = queryText.trim();
+    if (!query && !attachedFile) {
       triggerHaptic('selection');
       Alert.alert('Empty query', 'Please enter a search/browsing query first.');
+      return;
+    }
+
+    // --- "Send to PC" intent: start a file transfer silently from the chat bar ---
+    if (attachedFile && detectSendToPCIntent(query)) {
+      const instruction = extractTransferInstruction(query);
+      const fileToSend: SelectedFile = {
+        uri: attachedFile.uri,
+        name: attachedFile.name,
+        size: attachedFile.size ? Math.round(attachedFile.size * 1024 * 1024) : undefined,
+      };
+
+      // Show a user message in chat
+      const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const userMsgId = generateUuid();
+      const statusMsgId = generateUuid();
+      transferStatusMsgIdRef.current = statusMsgId;
+
+      const displayText = instruction
+        ? `Sending ${attachedFile.name} to PC — ${instruction}`
+        : `Sending ${attachedFile.name} to PC…`;
+
+      setMessages(prev => [
+        ...prev,
+        { id: userMsgId, sender: 'user' as const, text: displayText, timestamp: currentTime, attachedFile },
+        {
+          id: statusMsgId,
+          sender: 'blinky' as const,
+          text: '📤 Starting file transfer…',
+          timestamp: currentTime,
+          progress: { percent: 0, statusText: 'Preparing…', duration: 0 },
+        },
+      ]);
+
+      setQueryText('');
+      triggerHaptic('medium');
+
+      // Trigger the transfer in the background via the panel ref.
+      // Pass empty destination so the Rust backend resolves its own default
+      // absolute Downloads/Blinky path — sending a relative string like
+      // "Downloads/Blinky" causes the backend to reject it as non-absolute.
+      fileTransferPanelRef.current?.startTransfer([fileToSend], instruction, '');
       return;
     }
 
@@ -2027,12 +2188,166 @@ export default function App() {
             </View>
           )}
 
-          {/* Main Messaging Feed */}
-          <ScrollView
-            ref={scrollViewRef}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.chatScrollContent}
-            keyboardShouldPersistTaps="handled"
+          {/* TAB ROUTING */}
+          {activeTab === 'Chat' && (
+            <View style={{ flex: 1 }}>
+              {/* Main Messaging Feed */}
+              <ScrollView
+                ref={scrollViewRef}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[styles.chatScrollContent, { paddingBottom: 24 }]}
+                keyboardShouldPersistTaps="handled"
+              >
+                {messages.length <= 1 && (
+                  <ChatHome
+                    onQuickAction={(action) => {
+                      if (action === 'Screenshot') handleCaptureScreenshot();
+                      else if (action === 'Open app') setQueryText('Open ');
+                      else if (action === 'Run command') setQueryText('Run ');
+                    }}
+                  />
+                )}
+                {messages.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    formatTime={formatTime}
+                    onEnlargeScreenshot={(uri) => {
+                      triggerHaptic('light');
+                      setPreviewImageUri(uri);
+                    }}
+                  />
+                ))}
+              </ScrollView>
+
+              {/* Slash Commands Dropdown Menu */}
+              <SlashCommandMenu
+                queryText={queryText}
+                onSelectCommand={setQueryText}
+                commands={SLASH_COMMANDS}
+              />
+
+              {/* Command Composer */}
+              <CommandComposer
+                queryText={queryText}
+                setQueryText={setQueryText}
+                onSubmit={handleQuery}
+                onStop={handleStopQuery}
+                status={agentStatus}
+                isConnected={isConnected}
+                onPeekImage={(uri) => {
+                  triggerHaptic('light');
+                  setPreviewImageUri(uri);
+                }}
+                onCaptureScreenshot={handleCaptureScreenshot}
+                onSendFilesToPC={() => setShowFileTransfer(true)}
+                isVoiceRecording={isVoiceRecording}
+                isVoiceTranscribing={isVoiceTranscribing}
+                onToggleVoice={toggleVoiceRecording}
+              />
+            </View>
+          )}
+
+          {activeTab === 'Actions' && (
+            <ActionsScreen 
+              isConnected={isConnected}
+              isLightOn={isLightOn}
+              onExecuteAction={(cmd) => {
+                if (cmd === 'screenshot') {
+                  setActiveTab('Chat');
+                  handleCaptureScreenshot();
+                  return;
+                }
+                sendCommand(cmd);
+                if (cmd === 'toggle_lights') {
+                  setIsLightOn(prev => !prev);
+                }
+              }}
+            />
+          )}
+
+          {activeTab === 'PC' && (
+            <SystemScreen 
+              systemInfo={systemInfo}
+              isConnected={isConnected}
+              onPowerAction={(action) => {
+                sendCommand(action);
+                setActionFeedback(`Power command dispatched: ${action}`);
+                setTimeout(() => setActionFeedback(null), 2500);
+              }}
+              onWakePc={onWakePcPressed}
+              isSendingWol={isSendingWol}
+              isWorkstationLocked={isWorkstationLocked}
+              onRefresh={fetchSystemInfo}
+              isLocked={!isPcUnlocked}
+              onUnlockPress={handleUnlockPcPress}
+              onPromoCodePress={() => setShowPromoModal(true)}
+              onRestorePress={handleRestorePurchasesPress}
+              isRestoring={isRestoringPurchases}
+            />
+          )}
+
+          {activeTab === 'Files' && (
+            <FilesScreen
+              isConnected={isConnected}
+              quickAccessFolders={quickAccessFolders}
+              currentDirectory={currentDirectory}
+              recentFiles={recentFiles}
+              searchResults={fsSearchResults}
+              isLoading={fsLoading}
+              fsError={fsError}
+              fsFileData={fsFileData}
+              onFetchQuickAccess={fetchQuickAccess}
+              onListDirectory={listDirectory}
+              onFetchRecentFiles={fetchRecentFiles}
+              onSearch={searchFiles}
+              onOpenFileOnPC={openFileOnPC}
+              onOpenFileOnMobile={readFileForMobile}
+              onClearFsFileData={clearFsFileData}
+              onResetDirectory={resetDirectory}
+              onPreviewImage={setPreviewImageUri}
+              onAskBlinky={(file) => {
+                setActiveTab('Chat');
+                setQueryText(`Can you examine this file on my PC: "${file.path}"?`);
+              }}
+            />
+          )}
+
+          <SettingsModal 
+            visible={showSettings}
+            onClose={() => setShowSettings(false)}
+            isConnected={isConnected}
+            status={status}
+            ipAddress={ipAddress}
+            setIpAddress={setIpAddress}
+            remoteToken={remoteToken}
+            setRemoteToken={setRemoteToken}
+            certificatePin={certificatePin}
+            setCertificatePin={setCertificatePin}
+            workstationPin={workstationPin}
+            setWorkstationPin={setWorkstationPin}
+            macAddress={macAddress}
+            setMacAddress={setMacAddress}
+            systemInfo={systemInfo}
+            isDiscovering={isDiscovering}
+            handleConnect={handleConnect}
+            handleAutoDiscover={handleAutoDiscover}
+            disconnect={disconnect}
+            discoveryProgress={discoveryProgress}
+            errorMsg={errorMsg}
+            RELEASE_TRANSPORT={RELEASE_TRANSPORT}
+            WORKSTATION_PIN_STORAGE_KEY={WORKSTATION_PIN_STORAGE_KEY}
+          />
+
+          {/* Windows PIN / Password Entry Modal */}
+          <Modal
+            visible={showPinPromptModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => {
+              setShowPinPromptModal(false);
+              setInputPin('');
+            }}
           >
             {messages.map((message) => {
               const isUser = message.sender === 'user';
@@ -2277,6 +2592,7 @@ export default function App() {
             )}
           </Modal>
           <FileTransferPanel
+            ref={fileTransferPanelRef}
             visible={showFileTransfer}
             connected={isConnected}
             hostAddress={ipAddress}
@@ -2286,8 +2602,54 @@ export default function App() {
             sendMessage={sendFileTransferMessage}
             getNativeModule={getFileTransferModule}
             onClose={() => setShowFileTransfer(false)}
+            onTransferStatusChange={(status) => {
+              const msgId = transferStatusMsgIdRef.current;
+              if (!msgId) return;
+              setMessages(prev => prev.map(m => {
+                if (m.id !== msgId) return m;
+                return {
+                  ...m,
+                  text: status ? `📤 ${status}` : m.text,
+                  progress: status
+                    ? { percent: 50, statusText: status, duration: 0 }
+                    : m.progress,
+                };
+              }));
+            }}
+            onTransferDone={(success, message) => {
+              const msgId = transferStatusMsgIdRef.current;
+              transferStatusMsgIdRef.current = null;
+              if (!msgId) return;
+              setMessages(prev => prev.map(m => {
+                if (m.id !== msgId) return m;
+                return {
+                  ...m,
+                  text: message,
+                  progress: undefined,
+                };
+              }));
+            }}
+          />
+          <PromoCodeModal
+            visible={showPromoModal}
+            onClose={() => setShowPromoModal(false)}
+            onSuccess={() => {
+              setIsPcUnlocked(true);
+            }}
           />
         </KeyboardAvoidingView>
+        <BottomNavigation
+          activeTab={activeTab}
+          isPcLocked={!isPcUnlocked}
+          onTabChange={(tab) => {
+            if (tab === 'Files') {
+              resetDirectory();
+            }
+            setActiveTab(tab);
+          }}
+        />
+      </View>
+      {showSplash && <SplashScreen onDismiss={() => setShowSplash(false)} />}
       </View>
     </LinearGradient>
     </GestureHandlerRootView>

@@ -2,20 +2,20 @@
 
 <div align="center">
 
-# 🧠 Blinky — AI Desktop Tutor & Agent
+# 🧠 Blinky — AI Desktop Tutor, Autonomous Agent & Workstation Companion
 
-> An offline-first, privacy-respecting AI desktop tutor that reads your screen and guides you visually or runs autopilot computer automation. Built for the **AssemblyAI - Voice Agent Hackathon**.
+> An offline-first, privacy-respecting AI desktop tutor and remote workstation companion that reads your screen, guides you visually, runs background headless computer automation via Hermes `cua-driver`, bridges to mobile over encrypted WebSocket, and synchronizes with physical IoT hardware.
 
 <br>
 
-### _Ask. Learn. Click. Done._
+### _Ask. Learn. Automate. Control from Anywhere._
 
 <br>
 
 <p align="center">
 <img src="https://img.shields.io/badge/Hackathon-AssemblyAI%20Voice%20Agent-blueviolet?style=for-the-badge">
 <img src="https://img.shields.io/badge/Tauri-2.x-orange?style=for-the-badge">
-<img src="https://img.shields.io/badge/React-TypeScript-61dafb?style=for-the-badge">
+<img src="https://img.shields.io/badge/React-19-61dafb?style=for-the-badge">
 <img src="https://img.shields.io/badge/Bun-1.3.14-f9f1e1?style=for-the-badge">
 <img src="https://img.shields.io/badge/Python-3.11-yellow?style=for-the-badge">
 </p>
@@ -29,7 +29,7 @@
 
 <br>
 
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Android-blue)
 ![License](https://img.shields.io/badge/license-MIT-purple)
 
 </div>
@@ -51,7 +51,7 @@ Blinky leverages modern voice AI patterns to create an immersive, screen-aware v
 
 ## 📌 Problem & Domain
 
-Learning complex software (like VS Code, Blender, or system configurations) typically involves a lot of context switching between tutorials, videos, static documentation, and the application itself. This creates "tutorial hell" and slows down software onboarding.
+Learning complex software (like VS Code, Blender, CAD, or system configurations) typically involves constant context switching between tutorials, video timestamps, static manuals, and the application workspace. This induces "tutorial hell" and stalls productivity.
 
 Blinky brings the learning experience directly into the active application. By capturing the screen, running local OCR + Windows UIA, and leveraging local or cloud LLMs alongside powerful voice features, Blinky guides users step-by-step with real-time visual highlights directly on their screen.
 
@@ -152,18 +152,25 @@ Before any screenshot is taken, Blinky runs a fast **preflight classifier** that
 ## 🧪 How to Run the Project
 
 ### Prerequisites
-- Bun 1.3+
-- Rust Stable
-- Python 3.11+
-- Ollama
-- Tesseract OCR (on Linux, for text extraction)
+- **Bun** 1.3+
+- **Rust** Stable
+- **Python** 3.11+
+- **Node.js** & **Expo CLI** (for mobile companion)
+- **Ollama** (optional, for local offline inference)
+- **Docker** (optional, for local SearXNG search)
 
-### 1️⃣ Install Dependencies
-**Windows (recommended):**
+---
+
+### 1️⃣ Setup Desktop Core (One-Click)
+
+#### Windows (Recommended):
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup.ps1
+# or: bun run setup
 ```
-**Linux:**
+*Checks Bun/Rust/Python, installs npm packages, builds Python `.venv`, installs Playwright browsers, and initializes `.env`.*
+
+#### Linux:
 ```bash
 chmod +x setup.sh && ./setup.sh
 ```
@@ -173,33 +180,97 @@ chmod +x setup.sh && ./setup.sh
 bun run dev
 ```
 
-### ⌨️ Open Blinky
 - **Main Hotkey**: `CTRL + SHIFT + SPACE`
+- **Fallback Hotkey**: `CTRL + SHIFT + ENTER`
+
+*(Optional) Start local SearXNG search engine:*
+```bash
+docker compose -f common/docker-compose.yml up -d
+```
+
+---
+
+### 3️⃣ Start Mobile Companion (`common/mobile`)
+
+```bash
+cd common/mobile
+bun install
+bun run start
+```
+- Scan the QR code using Expo Go or run on a connected Android phone:
+```bash
+# Connect via USB port forwarding
+connect_usb.bat
+
+# Install standalone APK directly
+install_apk.bat
+```
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-common/
-├── src-tauri/             # Rust desktop shell, Global hotkeys, Overlay window
-├── frontend/src/          # React 19 UI, CommandBar, Voice logic
-├── python/
-│   ├── main.py            # Screen tutor orchestrator + intent router
-│   ├── computer_use/      # Intent regex router & tools
-│   ├── ocr/               # OCR extraction
-│   └── ai/                # Preflight routers, LLM clients
-├── mobile/                # Expo remote controller UI
-└── searxng/               # Local Web Search Configurations
+Blinky/
+├── common/
+│   ├── src-tauri/                   Tauri 2 Rust shell, WS gateway (:9001), Windows Credential DLL
+│   │   ├── src/lib.rs               Window affinity, hotkeys, and secure WebSocket server
+│   │   └── tauri.conf.json          Tauri window and strict CSP security configuration
+│   │
+│   ├── frontend/src/                React 19 desktop webview UI
+│   │   ├── CommandBar.tsx           Primary floating command hub & voice synthesizer
+│   │   ├── Overlay.tsx              Transparent screen highlight & companion cursor layer
+│   │   └── lib/autopilot.ts         Observe-act bounded autopilot execution loop
+│   │
+│   ├── mobile/                      Expo SDK 57 / React Native 0.86 companion app
+│   │   ├── App.tsx                  Dashboard, tab router, and WebSocket subscriber
+│   │   ├── components/              Modular UI screens
+│   │   │   ├── SystemScreen.tsx     Sentinel hardware telemetry, power controls, and WoL
+│   │   │   ├── FilesScreen.tsx      Remote PC file explorer & camera roll sync
+│   │   │   ├── PromoCodeModal.tsx   Offline voucher bypass sheet
+│   │   │   ├── SlashCommandMenu.tsx Antigravity IDE slash command bar
+│   │   │   └── BottomNavigation.tsx Tab navigation with Pro lock indicators
+│   │   ├── lib/purchases.ts         RevenueCat SDK + Offline Promo Code Engine
+│   │   ├── usePCWebSocket.ts        Duplex WSS transport with ?token= authentication
+│   │   └── eas.json                 EAS standalone Android APK build profiles
+│   │
+│   └── python/                      Python 3.11 AI & automation daemon
+│       ├── main.py                  Screen tutor orchestrator and preflight intent classifier
+│       ├── computer_use/            Actuation engine
+│       │   ├── backends/cua_driver.py cua-driver (Hermes) background desktop actuator
+│       │   ├── backends/base.py     Platform-neutral computer-use abstractions
+│       │   └── tools.py             Desktop automation tools (app launch, shortcuts, Spotify)
+│       ├── ai/                      Model provider routing (Groq Llama 3.3 / Ollama gemma4)
+│       ├── ocr/                     Microsoft OmniParser and WinRT OCR extraction
+│       └── whatsapp_backend/        Headless Chromium WhatsApp Web automation
+│
+├── esp32_firmware/                  ESP32 universal micro-daemon for ambient lighting sync
+├── docs/                            Comprehensive architecture, Hermes plan, and security guides
+│   ├── HERMES-INTEGRATION-PLAN.md   Detailed cua-driver actuator documentation
+│   ├── LINUX-PORT-ROADMAP.md        Wayland/X11 Linux porting progress
+│   ├── SECURITY-REMEDIATION.md      WebSocket auth hardening & CSP policy
+│   ├── history.md                   Full post-100 commits architectural evolution
+│   └── REVENUECAT-AND-ANDROID-DISTRIBUTION-GUIDE.md  RevenueCat audit & APK packaging guide
+│
+├── setup.ps1                        Automated Windows installation script
+└── setup.sh                         Automated Linux installation script
 ```
 
 ---
 
-## 🔒 Privacy & Production Notes
-- **Local Processing**: Fully local Ollama inference and local SearXNG search ensure data privacy.
-- **Tauri Integration**: Avoids local web servers. Tauri launches the Python sidecar directly and communicates using JSON over stdout/stdin for maximum performance.
+## 🔒 Security & Privacy
+
+- **Authenticated WebSocket Transport**: Every command sent from the mobile companion requires secret token verification (`?token=`), hardened against unauthorized LAN access.
+- **Strict Content Security Policy (CSP)**: Tauri webview CSP strictly prevents credential exfiltration.
+- **Automated Firewall Rules**: Windows NSIS installer automatically configures restrictive inbound firewall rules for port `9001`.
+- **Local Processing**: Offline-first screen OCR via Windows WinRT and local LLM inference via Ollama ensure zero screenshots leave your machine unless cloud Groq inference is explicitly enabled.
 
 ---
 
-## 🏁 Final Words
-Blinky has been a thrilling journey of integrating Rust (Tauri), React, and Python into a single, cohesive desktop voice assistant. Building for the **AssemblyAI Hackathon** pushed us to make voice the central interaction paradigm, completely transforming the learning experience.
+## 📎 Resources & Credits
+
+- **Actuation**: Built on [cua-driver](https://github.com/nousresearch) by Nous Research.
+- **Voice**: [Sarvam AI](https://sarvam.ai) for multilingual speech-to-text (`saaras:v3`) and text-to-speech (`bulbul:v3`).
+- **Vision**: Microsoft OmniParser for bounding-box grounding and DirectX `dxcam` for high-speed capture.
+- **Mobile**: Built with [Expo](https://expo.dev) and [React Native](https://reactnative.dev).
+- **Desktop**: Powered by [Tauri 2](https://v2.tauri.app) and [React 19](https://react.dev).
