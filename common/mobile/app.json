@@ -26,8 +26,7 @@
     "plugins": [
       "expo-audio",
       "expo-status-bar",
-      "expo-asset",
-      "react-native-purchases"
+      "expo-asset"
     ]
   }
 }

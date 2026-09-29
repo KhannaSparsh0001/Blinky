@@ -32,7 +32,7 @@
         "react-native-gesture-handler": "~2.32.0",
         "react-native-purchases": "^10.10.2",
         "react-native-purchases-ui": "^10.10.2",
-        "react-native-safe-area-context": "^5.10.0",
+        "react-native-safe-area-context": "~5.7.0",
         "react-native-volume-manager": "^2.0.8",
         "react-native-web": "^0.21.2",
         "react-native-wol": "^1.0.2",
@@ -908,7 +908,7 @@
 
     "react-native-purchases-ui": ["react-native-purchases-ui@10.10.2", "", { "dependencies": { "@revenuecat/purchases-typescript-internal": "19.3.1" }, "peerDependencies": { "react": "*", "react-native": ">= 0.73.0", "react-native-purchases": "10.10.2", "react-native-web": "*" }, "optionalPeers": ["react-native-web"] }, "sha512-AcugkoNLFx9kFDdmSE6cUDmRlTOASmR/4z5YCa6XHOEapczArx2LLDr7EF0CNAIP19HDwn4H0mMo/Zs1XG5Fqw=="],
 
-    "react-native-safe-area-context": ["react-native-safe-area-context@5.10.0", "", { "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-U655+G0KItefqpTKZenr0aBNulY/49TUKSZkWGVtESlFK5qmML7BejQjPDCRU+GzC24g2KeWFJguWP5LR52dqA=="],
+    "react-native-safe-area-context": ["react-native-safe-area-context@5.7.0", "", { "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-/9/MtQz8ODphjsLdZ+GZAIcC/RtoqW9EeShf7Uvnfgm/pzYrJ75y3PV/J1wuAV1T5Dye5ygq4EAW20RoBq0ABQ=="],
 
     "react-native-volume-manager": ["react-native-volume-manager@2.2.0", "", { "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-rFCFcI3Voda0bhTvQ6j/42zgnuF3e3gjl2+QrfQE7Yp/qHrhewchhSwXN+QC4u2vKurGqO+6791suHQ4ppZ1UA=="],
 
