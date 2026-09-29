@@ -70,3 +70,5 @@ config.h
 esp32_firmware/**/config.h
 scratch/
 
+docs/history.md
+ skills/
