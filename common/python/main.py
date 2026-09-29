@@ -16,14 +16,6 @@ if _COMMON_PY not in sys.path:
 
 # Add platform-specific python directory with higher priority
 if sys.platform == "win32":
-    try:
-        import ctypes
-        _user32 = ctypes.windll.user32
-        _hdesk = _user32.OpenDesktopW("Default", 0, False, 0x01FF)
-        if _hdesk:
-            _user32.SetThreadDesktop(_hdesk)
-    except Exception:
-        pass
     _PLATFORM_PY = str(_SCRIPT_DIR.parent.parent / "windows" / "python")
 else:
     _PLATFORM_PY = str(_SCRIPT_DIR.parent.parent / "linux" / "python")
@@ -278,15 +270,13 @@ def run(
     web_search_enabled: bool = False,
     agent_mode: bool = False,
     ignored_rects: list[dict] | None = None,
-    attached_image: str | None = None,
 ) -> dict:
     """
     RULE: Screenshots/OCR are ONLY taken when BOTH web_search_enabled=False
     AND agent_mode=False. The priority order is:
-      1. attached_image    → Gemini Vision multimodal analysis (no screen OCR)
-      2. web_search_enabled → SearXNG pipeline (no OCR, no screenshots)
-      3. agent_mode        → MCP desktop automation (no OCR, no screenshots)
-      4. default           → vision pipeline with screenshots + OCR
+      1. web_search_enabled → SearXNG pipeline (no OCR, no screenshots)
+      2. agent_mode        → MCP desktop automation (no OCR, no screenshots)
+      3. default           → vision pipeline with screenshots + OCR
     """
     started = time.perf_counter()
     warnings: list[str] = []
@@ -294,34 +284,6 @@ def run(
     # Clean wake word prefixes from the incoming question (e.g., "Hey Blinky", "Blinky")
     question = question.strip()
     question = re.sub(r"^(?:hey\s+)?blinky[\s,.:;!?]*", "", question, flags=re.IGNORECASE).strip()
-
-    # PATH 0: Attached Image (Mobile Camera/Gallery or Desktop Upload) -> Gemini Vision
-    if attached_image:
-        LOGGER.info("Attached image provided (%d chars) — analyzing with Gemini Vision", len(attached_image))
-        _emit_status("analyzing", "Inspecting photo with Gemini Vision...")
-        try:
-            from ai.gemini_client import ask_gemini_vision
-            clean_question = re.sub(r"^\[Referenced Files:[^\]]+\]\s*", "", question, flags=re.IGNORECASE).strip()
-            prompt = clean_question or "What is in this image? Describe what you see in detail."
-            vision_result = ask_gemini_vision(prompt=prompt, image_input=attached_image)
-            answer_text = vision_result.get("text", "")
-            return {
-                "summary": answer_text,
-                "steps": [],
-                "warnings": warnings,
-                "screenshot_b64": attached_image,
-                "computer_use": True,
-            }
-        except Exception as e:
-            LOGGER.exception("Gemini Vision failed on attached image")
-            warnings.append(f"Gemini Vision error: {e}")
-            return {
-                "summary": f"Could not analyze image with Gemini Vision: {e}",
-                "steps": [],
-                "warnings": warnings,
-                "screenshot_b64": attached_image,
-                "computer_use": True,
-            }
 
     if ignored_rects:
         from utils.window import set_ignored_overlay_rects
@@ -383,9 +345,6 @@ def run(
         wa_action = str(extracted_params.get("wa_action") or "status").lower().strip()
         wa_chat_name = extracted_params.get("wa_chat_name") or None
         return run_whatsapp_tool(wa_action, wa_chat_name, started, warnings)
-    elif intent == "SCREENSHOT":
-        LOGGER.info("Routing to SCREENSHOT fast-path")
-        return run_screenshot_tool(started, warnings)
     elif intent == "ESP32_LIGHT":
         LOGGER.info("Routing to ESP32 Light tool for intent: ESP32_LIGHT")
         return run_esp32_light_tool(extracted_params, started, warnings)
@@ -1024,35 +983,6 @@ def classify_request(
         LOGGER.debug("Fast-path ESP32 light resolution failed: %s", exc)
 
 
-    # Fast-path Screenshot / Screen capture
-    cleaned_lower = question.lower().strip().rstrip("?.!,;:")
-    if any(k in cleaned_lower for k in {
-        "capture screenshot", "take screenshot", "get screenshot", 
-        "capture current pc screen", "capture screen", "pc screenshot",
-        "take a screenshot", "screenshot of current pc screen", "take a screenshot of my screen",
-        "capture pc screen", "screenshot"
-    }):
-        return {
-            "intent": "SCREENSHOT",
-            "needs_screen": False,
-            "is_continuation": False,
-            "extracted_params": {},
-        }
-
-    # Fast-path ESP32 Smart Light
-    try:
-        from tools.esp32_light_tool import resolve_esp32_light_request
-        esp32_match = resolve_esp32_light_request(question)
-        if esp32_match:
-            return {
-                "intent": "ESP32_LIGHT",
-                "needs_screen": False,
-                "is_continuation": False,
-                "extracted_params": esp32_match,
-            }
-    except Exception as exc:
-        LOGGER.debug("Fast-path ESP32 light resolution failed: %s", exc)
-
     try:
         payload = ask_text_model(build_preflight_prompt(question, previous_question, conversation_history))
     except Exception as exc:
@@ -1209,36 +1139,6 @@ def run_whatsapp_tool(
     }
 
 
-def run_screenshot_tool(started: float, warnings: list[str]) -> dict:
-    """Capture desktop screenshot immediately and return base64 without screen scanning/OCR."""
-    import base64
-    from capture import capture_screen
-
-    _emit_status("screenshot", "Capturing PC screen...")
-    shot = capture_screen()
-    b64_data = ""
-    try:
-        with open(shot.path, "rb") as f:
-            b64_data = base64.b64encode(f.read()).decode("utf-8")
-    except Exception as exc:
-        LOGGER.warning("Failed to encode screenshot: %s", exc)
-        warnings.append(f"Screenshot encode error: {exc}")
-
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    return {
-        "summary": "Captured screenshot of current PC screen.",
-        "steps": [],
-        "screenshot": str(shot.path),
-        "screenshot_b64": b64_data,
-        "active_app": {"title": "", "process": "", "supported": False},
-        "ocr": {"count": 0, "items": []},
-        "elapsed_ms": elapsed_ms,
-        "provider": get_provider_label(),
-        "warnings": warnings,
-        "is_continuation": False,
-    }
-
-
 def run_esp32_light_tool(
     params: dict,
     started: float,
@@ -1252,8 +1152,7 @@ def run_esp32_light_tool(
         summary = res.get("message", "Light updated successfully.")
     else:
         summary = f"Failed to control light: {res.get('error', 'ESP32 unreachable')}"
-    if "warning" in res:
-        warnings.append(res["warning"])
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
         "summary": summary,
@@ -1879,20 +1778,10 @@ def main() -> None:
         web_search_enabled = bool(payload.get("web_search_enabled", False))
         agent_mode = bool(payload.get("agent_mode", False))
         ignored_rects = payload.get("ignored_rects")
-        attached_image = payload.get("attached_image") or payload.get("attachedImage")
-        if not question and not attached_image:
-            raise ValueError("Question or attached image is required.")
+        if not question:
+            raise ValueError("Question is required.")
 
-        result = run(
-            question,
-            previous_question,
-            progress,
-            conversation_history,
-            web_search_enabled,
-            agent_mode,
-            ignored_rects,
-            attached_image=attached_image,
-        )
+        result = run(question, previous_question, progress, conversation_history, web_search_enabled, agent_mode, ignored_rects)
         print(json.dumps(result, ensure_ascii=True))
     except Exception as exc:
         LOGGER.exception("Worker failed")

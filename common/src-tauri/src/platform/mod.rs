@@ -33,7 +33,3 @@ pub use power_impl::*;
 
 pub mod system_info;
 pub use system_info::*;
-
-pub mod fs_sync;
-#[allow(unused_imports)]
-pub use fs_sync::*;

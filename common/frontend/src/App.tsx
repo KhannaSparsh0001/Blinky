@@ -72,7 +72,11 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [provider, setProvider] = useState('groq');
   const [shortcut, setShortcut] = useState('Enter');
+  const defaultAaiKey = (import.meta as any).env?.VITE_ASSEMBLY_AI_API_KEY || '';
   const [sarvamApiKey, setSarvamApiKey] = useState('');
+  const [assemblyaiApiKey, setAssemblyaiApiKey] = useState(defaultAaiKey);
+  const [voiceProvider, setVoiceProvider] = useState<'assemblyai' | 'sarvam'>('assemblyai');
+  const [assemblyaiVoiceMode, setAssemblyaiVoiceMode] = useState<'agent' | 'realtime_stt'>('agent');
   const [groqApiKey, setGroqApiKey] = useState('');
   const [deepseekApiKey, setDeepseekApiKey] = useState('');
   const [customUrl, setCustomUrl] = useState('');
@@ -85,7 +89,20 @@ export function App() {
         const s = await getSettings();
         if (s.provider) setProvider(s.provider);
         if (s.shortcut) setShortcut(s.shortcut);
+        if (s.voice_provider === 'sarvam' || s.voice_provider === 'assemblyai') {
+          setVoiceProvider(s.voice_provider);
+        } else {
+          const cached = localStorage.getItem('blinky_voice_provider') as 'assemblyai' | 'sarvam' | null;
+          if (cached === 'sarvam' || cached === 'assemblyai') {
+            setVoiceProvider(cached);
+          }
+        }
         if (s.sarvam_api_key) setSarvamApiKey(s.sarvam_api_key);
+        if (s.assemblyai_api_key) {
+          setAssemblyaiApiKey(s.assemblyai_api_key);
+        } else if (defaultAaiKey) {
+          setAssemblyaiApiKey(defaultAaiKey);
+        }
         if (s.groq_api_key) setGroqApiKey(s.groq_api_key);
         if (s.deepseek_api_key) setDeepseekApiKey(s.deepseek_api_key);
         if (s.custom_url) setCustomUrl(s.custom_url);
@@ -269,6 +286,7 @@ export function App() {
         setProvider(settings.provider);
         setShortcut(settings.shortcut);
         setSarvamApiKey(settings.sarvam_api_key || '');
+        setAssemblyaiApiKey(settings.assemblyai_api_key || '');
         setGroqApiKey(settings.groq_api_key || '');
         setDeepseekApiKey(settings.deepseek_api_key || '');
         setCustomUrl(settings.custom_url || '');
@@ -290,11 +308,32 @@ export function App() {
     };
   }, []);
 
+  const updateVoiceProvider = async (newVoiceProvider: 'assemblyai' | 'sarvam') => {
+    setVoiceProvider(newVoiceProvider);
+    localStorage.setItem('blinky_voice_provider', newVoiceProvider);
+    try {
+      await saveSettings(
+        provider,
+        shortcut,
+        sarvamApiKey,
+        groqApiKey,
+        deepseekApiKey,
+        customUrl,
+        customModel,
+        customApiKey,
+        assemblyaiApiKey,
+        newVoiceProvider
+      );
+    } catch (err) {
+      console.error('Failed to save voice provider:', err);
+    }
+  };
+
   const updateProvider = async (newProvider: string) => {
     const cleanProvider = newProvider.toLowerCase().trim();
     setProvider(cleanProvider);
     try {
-      await saveSettings(cleanProvider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey);
+      await saveSettings(cleanProvider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save provider:', err);
     }
@@ -303,7 +342,7 @@ export function App() {
   const updateShortcut = async (newShortcut: string) => {
     setShortcut(newShortcut);
     try {
-      await saveSettings(provider, newShortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey);
+      await saveSettings(provider, newShortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save shortcut:', err);
     }
@@ -312,16 +351,25 @@ export function App() {
   const updateSarvamApiKey = async (newKey: string) => {
     setSarvamApiKey(newKey);
     try {
-      await saveSettings(provider, shortcut, newKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey);
+      await saveSettings(provider, shortcut, newKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save Sarvam API key:', err);
+    }
+  };
+
+  const updateAssemblyaiApiKey = async (newKey: string) => {
+    setAssemblyaiApiKey(newKey);
+    try {
+      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, customApiKey, newKey, voiceProvider);
+    } catch (err) {
+      console.error('Failed to save AssemblyAI API key:', err);
     }
   };
 
   const updateGroqApiKey = async (newKey: string) => {
     setGroqApiKey(newKey);
     try {
-      await saveSettings(provider, shortcut, sarvamApiKey, newKey, deepseekApiKey, customUrl, customModel, customApiKey);
+      await saveSettings(provider, shortcut, sarvamApiKey, newKey, deepseekApiKey, customUrl, customModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save Groq API key:', err);
     }
@@ -330,7 +378,7 @@ export function App() {
   const updateDeepseekApiKey = async (newKey: string) => {
     setDeepseekApiKey(newKey);
     try {
-      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, newKey, customUrl, customModel, customApiKey);
+      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, newKey, customUrl, customModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save DeepSeek API key:', err);
     }
@@ -339,7 +387,7 @@ export function App() {
   const updateCustomUrl = async (newUrl: string) => {
     setCustomUrl(newUrl);
     try {
-      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, newUrl, customModel, customApiKey);
+      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, newUrl, customModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save custom URL:', err);
     }
@@ -348,7 +396,7 @@ export function App() {
   const updateCustomModel = async (newModel: string) => {
     setCustomModel(newModel);
     try {
-      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, newModel, customApiKey);
+      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, newModel, customApiKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save custom model:', err);
     }
@@ -357,7 +405,7 @@ export function App() {
   const updateCustomApiKey = async (newKey: string) => {
     setCustomApiKey(newKey);
     try {
-      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, newKey);
+      await saveSettings(provider, shortcut, sarvamApiKey, groqApiKey, deepseekApiKey, customUrl, customModel, newKey, assemblyaiApiKey, voiceProvider);
     } catch (err) {
       console.error('Failed to save custom API key:', err);
     }
@@ -690,15 +738,74 @@ export function App() {
             )}
 
             <div className="dropdown-section">
-              <h4>Sarvam AI API Key</h4>
-              <input
-                type="password"
-                className="settings-input"
-                value={sarvamApiKey}
-                onChange={(e) => updateSarvamApiKey(e.target.value)}
-                placeholder="Paste API Key..."
-              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                <h4>Voice Provider</h4>
+                <span style={{ fontSize: '10px', background: voiceProvider === 'assemblyai' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 110, 95, 0.2)', color: voiceProvider === 'assemblyai' ? '#93c5fd' : '#ff8b6a', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                  {voiceProvider === 'assemblyai' ? 'Universal-3 Pro' : 'Indic Voice'}
+                </span>
+              </div>
+              <div className="voice-provider-tabs">
+                <button
+                  type="button"
+                  className={`voice-provider-tab ${voiceProvider === 'assemblyai' ? 'active aai' : ''}`}
+                  onClick={() => void updateVoiceProvider('assemblyai')}
+                >
+                  <span>⚡ AssemblyAI</span>
+                </button>
+                <button
+                  type="button"
+                  className={`voice-provider-tab ${voiceProvider === 'sarvam' ? 'active' : ''}`}
+                  onClick={() => void updateVoiceProvider('sarvam')}
+                >
+                  <span>Sarvam AI</span>
+                </button>
+              </div>
             </div>
+
+            {voiceProvider === 'assemblyai' ? (
+              <div className="dropdown-section">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                  <h4>AssemblyAI API Key</h4>
+                  <span style={{ fontSize: '9.5px', color: 'rgba(255, 255, 255, 0.5)' }}>Universal-3 Pro</span>
+                </div>
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={assemblyaiApiKey}
+                  onChange={(e) => void updateAssemblyaiApiKey(e.target.value)}
+                  placeholder="Paste AssemblyAI API Key..."
+                />
+                <div className="voice-mode-selector">
+                  <button
+                    type="button"
+                    className={`voice-mode-btn ${assemblyaiVoiceMode === 'agent' ? 'active' : ''}`}
+                    onClick={() => setAssemblyaiVoiceMode('agent')}
+                    title="Real-time voice agent with VAD and tool calling"
+                  >
+                    Voice Agent API
+                  </button>
+                  <button
+                    type="button"
+                    className={`voice-mode-btn ${assemblyaiVoiceMode === 'realtime_stt' ? 'active' : ''}`}
+                    onClick={() => setAssemblyaiVoiceMode('realtime_stt')}
+                    title="Sub-second streaming speech-to-text"
+                  >
+                    Realtime STT API
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="dropdown-section">
+                <h4>Sarvam AI API Key</h4>
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={sarvamApiKey}
+                  onChange={(e) => void updateSarvamApiKey(e.target.value)}
+                  placeholder="Paste Sarvam API Key..."
+                />
+              </div>
+            )}
 
             <div className="dropdown-section">
               <h4>WhatsApp</h4>

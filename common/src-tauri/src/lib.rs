@@ -35,7 +35,6 @@ struct TutorRequest {
     conversation_history: Option<serde_json::Value>,
     web_search_enabled: Option<bool>,
     agent_mode: Option<bool>,
-    attached_image: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,7 +64,6 @@ async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<serde_json::
         request.conversation_history.as_ref(),
         request.web_search_enabled.unwrap_or(false),
         request.agent_mode.unwrap_or(false),
-        request.attached_image.as_deref(),
         command.clone(),
         overlay.clone(),
     );
@@ -307,8 +305,10 @@ fn resize_and_move_command_window(
 #[derive(Serialize, Deserialize)]
 struct BlinkySettings {
     provider: String,
+    voice_provider: String,
     shortcut: String,
     sarvam_api_key: String,
+    assemblyai_api_key: String,
     groq_api_key: String,
     deepseek_api_key: String,
     custom_url: String,
@@ -322,8 +322,10 @@ async fn get_settings(app: AppHandle) -> Result<BlinkySettings, String> {
     let env_vars = read_env_file(&root);
 
     let mut provider = "groq".to_string();
+    let mut voice_provider = "assemblyai".to_string();
     let mut shortcut = "Enter".to_string();
     let mut sarvam_api_key = "".to_string();
+    let mut assemblyai_api_key = "".to_string();
     let mut groq_api_key = "".to_string();
     let mut deepseek_api_key = "".to_string();
     let mut custom_url = "".to_string();
@@ -333,10 +335,14 @@ async fn get_settings(app: AppHandle) -> Result<BlinkySettings, String> {
     for (key, val) in env_vars {
         if key == "BLINKY_AI_PROVIDER" {
             provider = val.to_lowercase();
+        } else if key == "BLINKY_VOICE_PROVIDER" {
+            voice_provider = val.to_lowercase();
         } else if key == "BLINKY_SHORTCUT" {
             shortcut = val;
         } else if key == "SARVAM_API_KEY" {
             sarvam_api_key = val;
+        } else if key == "ASSEMBLY_AI_API_KEY" || key == "ASSEMBLYAI_API_KEY" {
+            assemblyai_api_key = val;
         } else if key == "GROQ_API_KEY" {
             groq_api_key = val;
         } else if key == "DEEPSEEK_API_KEY" {
@@ -352,8 +358,10 @@ async fn get_settings(app: AppHandle) -> Result<BlinkySettings, String> {
 
     Ok(BlinkySettings {
         provider,
+        voice_provider,
         shortcut,
         sarvam_api_key,
+        assemblyai_api_key,
         groq_api_key,
         deepseek_api_key,
         custom_url,
@@ -368,6 +376,8 @@ async fn save_settings(
     provider: String,
     shortcut: String,
     sarvam_api_key: String,
+    assemblyai_api_key: Option<String>,
+    voice_provider: Option<String>,
     groq_api_key: String,
     deepseek_api_key: String,
     custom_url: String,
@@ -382,25 +392,36 @@ async fn save_settings(
 
     let mut lines: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
     let mut provider_found = false;
+    let mut voice_provider_found = false;
     let mut shortcut_found = false;
     let mut sarvam_api_key_found = false;
+    let mut assemblyai_api_key_found = false;
     let mut groq_api_key_found = false;
     let mut deepseek_api_key_found = false;
     let mut custom_url_found = false;
     let mut custom_model_found = false;
     let mut custom_api_key_found = false;
 
+    let aai_key = assemblyai_api_key.unwrap_or_default();
+    let v_provider = voice_provider.unwrap_or_else(|| "assemblyai".to_string());
+
     for line in lines.iter_mut() {
         let trimmed = line.trim();
         if trimmed.starts_with("BLINKY_AI_PROVIDER=") {
             *line = format!("BLINKY_AI_PROVIDER={}", provider);
             provider_found = true;
+        } else if trimmed.starts_with("BLINKY_VOICE_PROVIDER=") {
+            *line = format!("BLINKY_VOICE_PROVIDER={}", v_provider);
+            voice_provider_found = true;
         } else if trimmed.starts_with("BLINKY_SHORTCUT=") {
             *line = format!("BLINKY_SHORTCUT={}", shortcut);
             shortcut_found = true;
         } else if trimmed.starts_with("SARVAM_API_KEY=") {
             *line = format!("SARVAM_API_KEY={}", sarvam_api_key);
             sarvam_api_key_found = true;
+        } else if trimmed.starts_with("ASSEMBLY_AI_API_KEY=") || trimmed.starts_with("ASSEMBLYAI_API_KEY=") {
+            *line = format!("ASSEMBLY_AI_API_KEY={}", aai_key);
+            assemblyai_api_key_found = true;
         } else if trimmed.starts_with("GROQ_API_KEY=") {
             *line = format!("GROQ_API_KEY={}", groq_api_key);
             groq_api_key_found = true;
@@ -422,11 +443,17 @@ async fn save_settings(
     if !provider_found {
         lines.push(format!("BLINKY_AI_PROVIDER={}", provider));
     }
+    if !voice_provider_found {
+        lines.push(format!("BLINKY_VOICE_PROVIDER={}", v_provider));
+    }
     if !shortcut_found {
         lines.push(format!("BLINKY_SHORTCUT={}", shortcut));
     }
     if !sarvam_api_key_found {
         lines.push(format!("SARVAM_API_KEY={}", sarvam_api_key));
+    }
+    if !assemblyai_api_key_found && !aai_key.is_empty() {
+        lines.push(format!("ASSEMBLY_AI_API_KEY={}", aai_key));
     }
     if !groq_api_key_found {
         lines.push(format!("GROQ_API_KEY={}", groq_api_key));
@@ -472,7 +499,6 @@ fn run_python_worker(
     conversation_history: Option<&serde_json::Value>,
     web_search_enabled: bool,
     agent_mode: bool,
-    attached_image: Option<&str>,
     command_window: Option<WebviewWindow>,
     overlay_window: Option<WebviewWindow>,
 ) -> Result<String, String> {
@@ -512,7 +538,6 @@ fn run_python_worker(
         "web_search_enabled": web_search_enabled,
         "agent_mode": agent_mode,
         "ignored_rects": if command_rect.is_null() { vec![] } else { vec![command_rect] },
-        "attached_image": attached_image,
     });
 
     if let Some(mut stdin) = child.stdin.take() {

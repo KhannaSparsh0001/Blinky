@@ -1,4 +1,4 @@
-<img width="4320" height="1440" alt="hh26 main poster 2 with sponsors 3x1 (4320 x 1440 px) (2)" src="https://github.com/user-attachments/assets/c698b2cd-da84-4cb0-9276-125c6a7244aa" />
+<img width="4320" height="1440" alt="Blinky - AssemblyAI Voice Agent Hackathon" src="https://github.com/user-attachments/assets/c698b2cd-da84-4cb0-9276-125c6a7244aa" />
 
 <div align="center">
 
@@ -13,30 +13,18 @@
 <br>
 
 <p align="center">
-
+<img src="https://img.shields.io/badge/Hackathon-AssemblyAI%20Voice%20Agent-blueviolet?style=for-the-badge">
 <img src="https://img.shields.io/badge/Tauri-2.x-orange?style=for-the-badge">
 <img src="https://img.shields.io/badge/React-19-61dafb?style=for-the-badge">
 <img src="https://img.shields.io/badge/Bun-1.3.14-f9f1e1?style=for-the-badge">
 <img src="https://img.shields.io/badge/Python-3.11-yellow?style=for-the-badge">
-<img src="https://img.shields.io/badge/Expo-SDK%2057%20(RN%200.86)-black?style=for-the-badge">
-
 </p>
 
 <p align="center">
-
-<img src="https://img.shields.io/badge/Actuator-cua--driver%200.28.1%20(Hermes)-purple?style=for-the-badge">
-<img src="https://img.shields.io/badge/Groq-Llama%203.3%2070B%20%26%20Qwen%2027B-purple?style=for-the-badge">
+<img src="https://img.shields.io/badge/Playwright-Edge-green?style=for-the-badge">
 <img src="https://img.shields.io/badge/Ollama-gemma4:e4b-green?style=for-the-badge">
-<img src="https://img.shields.io/badge/Vision-OmniParser%20%2B%20WinRT-blue?style=for-the-badge">
-
-</p>
-
-<p align="center">
-
-<img src="https://img.shields.io/badge/Voice-Sarvam%20AI%20(saaras%20%2B%20bulbul)-red?style=for-the-badge">
-<img src="https://img.shields.io/badge/Hardware-ESP32%20Ambient%20Sync-darkgreen?style=for-the-badge">
-<img src="https://img.shields.io/badge/Monetization-RevenueCat%20%2B%20Vouchers-blue?style=for-the-badge">
-
+<img src="https://img.shields.io/badge/Groq-Llama4Scout-purple?style=for-the-badge">
+<img src="https://img.shields.io/badge/OCR-Windows%20OCR-blue?style=for-the-badge">
 </p>
 
 <br>
@@ -48,7 +36,16 @@
 
 ---
 
-Blinky is an AI-powered desktop tutor and autonomous workstation agent. In tutor mode, it observes your screen, runs local WinRT OCR and Microsoft OmniParser bounding-box grounding, and guides you with real-time visual highlights and word-by-word synchronized voice guidance. In **Agent Mode**, it executes desktop tasks entirely autonomously in the background using the **`cua-driver` (Hermes engine)** without stealing your mouse focus. With its **Expo-powered Mobile Companion**, Blinky bridges to your phone for live IDE monitoring, remote PC telemetry, Wake-on-LAN power controls, remote file explorer sync, and physical ESP32 ambient lighting synchronization.
+## 🎙️ AssemblyAI - Voice Agent Hackathon Submission
+
+This project is submitted to the **AssemblyAI - Voice Agent Hackathon**, a month-long online challenge (Sep 1–30, 2026) run by lablab.ai together with AssemblyAI. 
+
+**Hackathon Highlights:**
+- 🌎 **Online Hackathon:** Fully online challenge connecting innovators globally.
+- 💻 **Challenge:** Building the fastest path to a working voice agent using AssemblyAI infrastructure.
+- 🏆 **Prize Pool:** $10,000 ($5k cash + $5k in AAI credits).
+
+Blinky leverages modern voice AI patterns to create an immersive, screen-aware voice agent that acts as a tutor directly on your desktop.
 
 ---
 
@@ -56,24 +53,21 @@ Blinky is an AI-powered desktop tutor and autonomous workstation agent. In tutor
 
 Learning complex software (like VS Code, Blender, CAD, or system configurations) typically involves constant context switching between tutorials, video timestamps, static manuals, and the application workspace. This induces "tutorial hell" and stalls productivity.
 
-Blinky brings the learning experience and autonomous task execution directly into the active application. By capturing the screen, extracting accessibility trees via Windows UIA and OmniParser, and leveraging high-performance local or cloud LLMs, Blinky guides users step-by-step or handles repetitive workflows autonomously.
-
-**Themes Selected:**
-- [x] Human Experience & Productivity  
-- [x] Learning & Knowledge Systems  
-- [x] Developer Tools & Software Infrastructure  
+Blinky brings the learning experience directly into the active application. By capturing the screen, running local OCR + Windows UIA, and leveraging local or cloud LLMs alongside powerful voice features, Blinky guides users step-by-step with real-time visual highlights directly on their screen.
 
 ---
 
 ## 🎯 Objective
 
-Blinky serves software learners, power users, and remote developers:
-- **Pain Points Addressed**: Context-switching, static manuals, inability to multitask while agents hijack mouse input, and lack of mobile visibility into desktop workflows.
-- **Value Provided**: Non-intrusive on-screen overlay highlighting, background headless desktop automation, low-latency Sarvam AI voice guidance, and an encrypted mobile companion with remote power and filesystem management.
+Blinky serves students, developers, and general users learning to navigate desktop software.
+
+- **Target Users**: Software learners, junior developers, and remote users looking for hands-on, contextual guide steps.
+- **Pain Point**: Context-switching, static text manuals, video pacing issues, and lack of visual mapping.
+- **Value Provided**: Real-time visual overlay highlighting on the actual screen, hands-free desktop autopilot execution, and a fully interactive voice interface.
 
 ---
 
-## 🧠 Team & Approach
+## 🧠 Team
 
 ### Team Name:  
 `Tech Nerds`
@@ -84,92 +78,74 @@ Blinky serves software learners, power users, and remote developers:
 - **FeV-06** (GitHub: [FeV-06](https://github.com/FeV-06) / Role: Mobile and Linux Developer)
 - **meharwanfr** (GitHub: [meharwanfr](https://github.com/meharwanfr) / Role: Linux Developer)
 
-### Engineering Highlights & Milestones:
-- **Headless Actuation via `cua-driver`**: Replaced foreground pointer hijacking with Nous Research's `cua-driver 0.28.1`. Actions execute on background windows without stealing mouse focus or switching virtual desktops.
-- **Flicker-Free Screen Capture**: Uses Windows Display Affinity (`WDA_EXCLUDEFROMCAPTURE`) to make Blinky's overlay completely invisible to the AI screen grabber while remaining visible to the user.
-- **OmniParser & UIA Element Trees**: Integrates Microsoft OmniParser for bounding-box grounding and parses up to 1,000+ native Windows UIA elements for precision targeting.
-- **Voice Timeline Synchronization**: Word-by-word active text highlights dynamically aligned with the Sarvam TTS audio timeline.
-- **Multi-Device Companion**: Encrypted WebSocket transport with token authentication, Wake-on-LAN power triggers, remote Windows Credential Provider unlock, and remote file sync.
-
 ---
 
 ## 🛠️ Tech Stack
 
-| Component | Technology | Role |
-| :--- | :--- | :--- |
-| **Desktop Shell** | Tauri 2 (Rust) | Native window management, system tray, hotkeys, authenticated WebSocket gateway (`:9001`) |
-| **Desktop Frontend** | React 19 + TypeScript (Vite) | Floating command bar, overlay highlights, companion cursor |
-| **Mobile Companion** | Expo SDK 57 / React Native 0.86 | Remote dashboard, IDE bridge, telemetry, file sync, paywall |
-| **Actuator & Driver** | `cua-driver 0.28.1` (Hermes Engine) | Background headless desktop actuation; fallback to native `SendInput` / `pywinauto` |
-| **AI Models (Cloud)** | Groq `llama-3.3-70b-versatile` & `qwen/qwen3.6-27b` | High-speed reasoning, vision grounding, and preflight intent classification |
-| **AI Models (Local)** | Ollama `gemma4:e4b` | 100% offline private local inference |
-| **Vision & Screen Grounding** | Microsoft OmniParser + Windows WinRT OCR + dxcam | High-frame DirectX capture, UI element parsing, coordinate mapping |
-| **Voice Engine** | Sarvam AI `saaras:v3` (STT) + `bulbul:v3` (TTS) | Real-time Indian-accented speech-to-text and synchronized text-to-speech readbacks |
-| **Web Automation** | Playwright + WhatsApp Web (`wwebjs_auth`) | Headless browser execution and WhatsApp session management |
-| **Local Search** | SearXNG + Docker Compose | Offline-first, privacy-respecting metasearch |
-| **IoT Hardware** | ESP32 Universal Micro-Daemon | Physical desk ambient lighting synced with agent states |
-| **Monetization** | RevenueCat SDK + Offline Promo Code Engine | Pro feature gating for PC telemetry and remote power actions |
+### Core Technologies Used:
 
----
-
-## 🏆 Sponsored Track Participation
-
-- [x] **Expo Track** – Built a full-featured mobile companion app (`common/mobile`) under React Native 0.86 and Expo SDK 57, featuring WebSocket auto-discovery, live IDE streaming, file transfer, and remote power controls.
-- [x] **Sarvam Track** – Integrated Sarvam AI `saaras:v3` (STT) and `bulbul:v3` (TTS) with real-time word-by-word visual synchronization.
-- [x] **Base44 Track** – Built and deployed our interactive showcase and download portal at [blinky.base44.app](https://blinky.base44.app).
-- [ ] **Neo4j Track**
+| Component                            | Technology                                         |
+| ------------------------------------ | -------------------------------------------------- |
+| **Desktop Framework**                | Tauri 2 (Rust desktop shell)                       |
+| **Frontend**                         | React 19 + TypeScript                              |
+| **Backend Runtime**                  | Python 3.11+                                       |
+| **AI Runtime**                       | Ollama (Local)                                     |
+| **AI Model**                         | `gemma4:e4b`                                       |
+| **Cloud AI (optional)**              | Groq — `llama-3.3-70b-versatile`                   |
+| **OCR**                              | Windows OCR API (WinRT), Falls back to pytesseract |
+| **Screen Capture**                   | `dxcam` (DirectX-based high-frame capture)         |
+| **Window Detection**                 | `pywinauto`                                        |
+| **Browser Automation**               | Playwright + Microsoft Edge                        |
+| **Overlay System**                   | Transparent Tauri Window                           |
+| **Hosting & Prototyping**            | Base44 App Hosting (blinky.base44.app)             |
+| **Voice Agent / STT**                | AssemblyAI Voice Agent API & Real-time STT API     |
+| **TTS (Fallback)**                   | AssemblyAI Voice Output                            |
 
 ---
 
 ## ✨ Key Features
 
-### 🤖 1. Headless Background Computer-Use (`cua-driver` / Hermes Actuator)
-Blinky integrates `cua-driver 0.28.1` (the actuator powering Nous Research's Hermes Agent) for autonomous desktop execution:
-- **Zero Cursor Hijacking**: Executes clicks, keyboard input, and window interactions in the background without stealing user focus or moving the physical mouse.
-- **Deep UIA Element Trees**: Queries Windows Accessibility APIs to inspect 1,000+ UI elements on screen with native roles and screen-absolute bounding boxes.
-- **Virtual Companion Cursor**: Renders an aesthetic visual overlay cursor to show the user what Blinky is pointing to without interfering with active user typing.
-- **Bounded Autopilot**: Executes multi-step observe-act loops with robust fallback to native `SendInput` when background actuation is unsupported.
+### 🎙️ AssemblyAI Hackathon Coverage
+This project deeply integrates AssemblyAI to fulfill both major paths of the hackathon challenge:
 
-### 📱 2. Expo Mobile Companion & Antigravity IDE Bridge (`common/mobile`)
-Connect your Android/iOS phone over LAN, USB port forwarding (`adb reverse tcp:9001 tcp:9001`), or Tailscale:
-- **Antigravity IDE Remote Bridge**: Live-streams agent thinking steps, shell outputs, and transcript milestones straight to your phone. Approve CLI permissions with a single tap.
-- **Sentinel PC Telemetry & Power Controls**: Real-time meters for PC CPU %, RAM usage, and battery/AC power. Dispatch remote Sleep, Restart, Hibernate, or wake the PC via **Wake-on-LAN (WoL)** magic packets.
-- **Bi-Directional File Explorer**: Remotely browse your PC filesystem from your phone, save images/videos to your camera roll, or batch-upload photos and documents directly to your desktop agent.
-- **Windows Remote Unlock**: Unlock locked Windows desktop sessions securely from your phone via our custom Windows Credential Provider DLL.
+1. **Voice Agent API (End-to-End Voice Agent)**
+   - **Full Voice Stack**: Uses AssemblyAI for STT (Universal-3.5 Pro), LLM routing, turn-taking, VAD, and voice output.
+   - **JSON-Schema Tool Calling**: Enables the AssemblyAI Voice Agent to actuate and command the PC desktop. When a user asks to click an icon or search the screen, AssemblyAI sends a `tool.call` (`control_desktop`), Blinky executes native Windows UI automation, and returns a `tool.result` for AssemblyAI to speak back the status.
 
-### 💬 3. Full WhatsApp Web Automation Engine
-- Powered by `wwebjs_auth` with headless Chromium session management.
-- Quick in-app QR code pairing directly from the desktop command bar.
-- Summarize chat threads, extract contact updates, and query WhatsApp messages using fast-path token-saving LLM routing.
+2. **Realtime Speech-to-Text API**
+   - **Sub-second Transcription**: Live streaming of 16 kHz PCM16 audio directly to `wss://streaming.assemblyai.com/v3/ws`.
+   - **Bring Your Own Orchestration**: Feeds live Universal-3 Pro transcripts into Blinky's local desktop multi-agent tutor pipeline.
 
-### 💡 4. Hardware Ambient Sync (ESP32 Micro-Daemon)
-- Direct UART / Wi-Fi communication with physical ESP32 microcontrollers (`esp32_firmware/`).
-- Synchronizes desk ambient RGB lighting with Blinky's live state (idle, listening, thinking, executing, success, error).
+### 🗣️ Voice-Driven Agent Mode (Computer Use)
+Activate the 🤖 agent mode using voice commands to perform direct computer-use actions without requiring you to click anything:
+- **Open any app** — uses app protocol URIs, known executable paths, Windows Start Apps, and Windows Search.
+- **Play Spotify tracks** — searches and resolves tracks to open directly in the Spotify desktop app.
+- **Press keyboard shortcuts** — parses natural-language shortcut descriptions (`Ctrl+S`, `Alt+H`) and executes them via `pywinauto`.
 
-### 🎬 5. AiCut Multimodal Video & Media Pipeline
-- Automated video concatenation, background music ducking, and auto-generated subtitle burning.
-- Natural language video trimming powered by Google Gemini Vision.
-- Whisper audio forced alignment for precise caption placement.
+### 🎧 Audio-Synchronized Visual Highlighting
+- Dynamic **Real-time Word Highlighting**: Fades out unspoken text, highlighting the active word dynamically as the AssemblyAI synthesized readback plays in sync with the audio duration timeline.
+- Fully integrated speech-to-text dictation and text-to-speech readbacks via AssemblyAI for seamless hands-free operation.
 
-### 💳 6. RevenueCat In-App Monetization & Offline Vouchers
-- **RevenueCat Paywall**: Protects advanced PC telemetry and remote power actions behind `react-native-purchases`.
-- **Store-Independent Promo Engine**: Fully offline voucher redemption (`SHIPATHON`, `BLINKYVIP`, `EARLYBIRD`) allowing judges and direct APK sideload users to unlock Pro features without Google Play billing.
+### 🧠 Intent Classification (Preflight Router)
+Before any screenshot is taken, Blinky runs a fast **preflight classifier** that routes requests:
+- `DESKTOP_AUTOMATION` — needs screen capture + OCR + AI overlay
+- `OPEN_APP` — directly launches the named app
+- `MEDIA_PLAYBACK` — plays a named song on Spotify
+- `SYSTEM_SHORTCUT` — presses a keyboard shortcut
+- `INFORMATIONAL_CHAT` — answers without any screen capture
 
-### 🗣️ 7. Sarvam AI Voice & Dynamic Word Highlighting
-- Real-time speech recognition (`saaras:v3`) and high-fidelity Indian-accented speech synthesis (`bulbul:v3`).
-- **Dynamic Word Highlighting**: Fades out unspoken text, highlighting the active word dynamically as the voice readback plays in sync with the audio duration timeline.
-
-### 🗂️ 8. Dynamic App Context Generation
-- Auto-generates markdown navigation guides for any newly encountered desktop app by searching SearXNG for shortcuts and synthesizing a structured guide cached in `python/app_context/`.
+### 🛡️ Dynamic Capture Exclusion (Flicker-Free Mode)
+- Excludes Blinky's overlay window from screenshots programmatically using `SetWindowDisplayAffinity`.
+- Blinky remains fully visible to you, but the screenshot sent to the AI model is completely clean.
 
 ---
 
 ## 📽️ Demo & Deliverables
 
-- **Demo Video Link (Mandatory):** [YouTube Video](https://youtu.be/CHFF9J_Jqgw)
-- **Deployment Link (Recommended):** [blinky.base44.app](https://blinky.base44.app)
-- **Pitch Deck / PPT (Optional):** [Blinky Presentation Deck](https://docs.google.com/presentation/d/10isbvsbzb3Xm2RzeHyaA_FQqcjUTUzRipflrhuyABRY/edit?slide=id.g3f49da6dcbc_0_157#slide=id.g3f49da6dcbc_0_157)
-- **Technical Blog:** [Building Blinky: Fighting CAPTCHAs, Invisible Windows, and the Agony of Visualizing AI](https://medium.com/@khannasparsh0001/building-blinky-fighting-captchas-invisible-windows-and-the-agony-of-visualizing-ai-b1247b9fc324?sharedUserId=khannasparsh0001)
+- **Demo Video Link:** [Youtube Video](https://youtu.be/CHFF9J_Jqgw)
+- **Deployment Link:** [blinky.base44.app](https://blinky.base44.app) (Landing Page & Releases) 
+- **Pitch Deck / PPT:** [Blinky Deck](https://docs.google.com/presentation/d/10isbvsbzb3Xm2RzeHyaA_FQqcjUTUzRipflrhuyABRY/edit)
+- **Blog:** [Building Blinky: Fighting CAPTCHAs, Invisible Windows, and the Agony of Visualizing AI](https://medium.com/@khannasparsh0001/building-blinky-fighting-captchas-invisible-windows-and-the-agony-of-visualizing-ai-b1247b9fc324?sharedUserId=khannasparsh0001) 
 
 ---
 
@@ -197,13 +173,9 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 #### Linux:
 ```bash
 chmod +x setup.sh && ./setup.sh
-# or: bun run setup:linux
 ```
 
----
-
-### 2️⃣ Start Blinky Desktop
-
+### 2️⃣ Start Blinky
 ```bash
 bun run dev
 ```

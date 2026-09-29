@@ -64,8 +64,6 @@ impl AgentDaemon {
         // Forward environment variables
         for var in &[
             "GROQ_API_KEY",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
             "BLINKY_AI_PROVIDER",
             "BLINKY_OLLAMA_URL",
             "BLINKY_OLLAMA_MODEL",
@@ -408,31 +406,6 @@ pub async fn start_websocket_server(app: AppHandle) {
         tokio::spawn(async move {
             broadcast_to_all_clients(&payload).await;
         });
-    });
-
-    // Background watcher: synchronize workstation lock/unlock state to connected clients in real time
-    let app_lock_watcher = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut last_locked = crate::platform::is_workstation_locked();
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-            let current_locked = crate::platform::is_workstation_locked();
-            if current_locked != last_locked {
-                last_locked = current_locked;
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-                let action = if current_locked { "lock" } else { "unlock" };
-                let evt = serde_json::json!({
-                    "type": "power_event",
-                    "action": action,
-                    "status": "triggered",
-                    "message": format!("Workstation {} detected.", if current_locked { "locked" } else { "unlocked" }),
-                    "timestamp": now,
-                    "is_locked": current_locked
-                });
-                let _ = app_lock_watcher.emit("blinky://power-event", evt.clone());
-                broadcast_to_all_clients(&evt.to_string()).await;
-            }
-        }
     });
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
@@ -808,6 +781,24 @@ where
         return handle_sarvam_tts_proxy(ws_sender, ws_receiver).await;
     }
 
+    if active_path.starts_with("/assemblyai-agent") || active_path.starts_with("/assemblyai-stt") {
+        if !authenticated {
+            authenticated =
+                authenticate_websocket(&mut ws_receiver, &ws_sender, &server_token, mode).await?;
+        }
+        if !authenticated {
+            eprintln!(
+                "REJECTED unauthenticated AssemblyAI proxy connection from {}",
+                peer_addr
+            );
+            return Ok(());
+        }
+        if active_path.starts_with("/assemblyai-agent") {
+            return handle_assemblyai_agent_proxy(ws_sender, ws_receiver).await;
+        }
+        return handle_assemblyai_stt_proxy(ws_sender, ws_receiver).await;
+    }
+
     /// Builds an auth-denied JSON error frame for a command that requires a token.
     fn auth_denied(request_id: &str) -> String {
         serde_json::json!({
@@ -972,47 +963,6 @@ where
                 crate::platform::execute_unlock(parsed_pin.as_deref());
             } else if trimmed == "screenshot" {
                 crate::platform::execute_screenshot();
-            } else if trimmed == "media_play_pause" || trimmed == "play_pause" {
-                crate::platform::execute_media_play_pause();
-            } else if trimmed == "open_browser" || trimmed == "browser" || trimmed == "chrome" {
-                crate::platform::execute_open_browser();
-            } else if trimmed == "open_terminal" || trimmed == "terminal" {
-                crate::platform::execute_open_terminal();
-            } else if trimmed == "toggle_lights" || trimmed == "lights" || trimmed == "turn_off_lights" || trimmed == "lights_off" || trimmed == "turn_on_lights" || trimmed == "lights_on" {
-                let root = project_root();
-                let python = python_executable(&root);
-                let script = root.join("common").join("python").join("tools").join("esp32_light_tool.py");
-                let action_arg = if trimmed == "turn_off_lights" || trimmed == "lights_off" {
-                    "off"
-                } else if trimmed == "turn_on_lights" || trimmed == "lights_on" {
-                    "on"
-                } else {
-                    "toggle"
-                };
-                let app_handle = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let out = TokioCommand::new(python)
-                        .arg("-u")
-                        .arg(&script)
-                        .arg(action_arg)
-                        .current_dir(&root)
-                        .output()
-                        .await;
-                    if let Ok(output) = out {
-                        let stdout_str = String::from_utf8_lossy(&output.stdout);
-                        let trimmed_out = stdout_str.trim();
-                        println!("blinky: esp32 light action ({}) output: {}", action_arg, trimmed_out);
-                        let json_val = serde_json::from_str::<serde_json::Value>(trimmed_out)
-                            .unwrap_or_else(|_| serde_json::json!({ "raw": trimmed_out }));
-                        let evt = serde_json::json!({
-                            "type": "light_event",
-                            "action": action_arg,
-                            "data": json_val
-                        });
-                        let _ = app_handle.emit("blinky://light-event", evt.clone());
-                        broadcast_to_all_clients(&evt.to_string()).await;
-                    }
-                });
             } else if trimmed == "get_sarvam_key" {
                 let key = get_sarvam_api_key();
                 let resp = serde_json::json!({
@@ -1026,24 +976,11 @@ where
                         resp.to_string().into(),
                     ))
                     .await;
-            } else if trimmed == "get_fs_quick_access" || trimmed == "fs_quick_access" {
-                let folders = crate::platform::fs_sync::get_quick_access_folders();
+            } else if trimmed == "get_assemblyai_key" {
+                let key = get_assemblyai_api_key();
                 let resp = serde_json::json!({
-                    "type": "fs_quick_access",
-                    "folders": folders
-                });
-                let _ = ws_sender
-                    .lock()
-                    .await
-                    .send(tokio_tungstenite::tungstenite::Message::Text(
-                        resp.to_string().into(),
-                    ))
-                    .await;
-            } else if trimmed == "get_fs_recent" || trimmed == "fs_recent" {
-                let files = crate::platform::fs_sync::get_recent_files();
-                let resp = serde_json::json!({
-                    "type": "fs_recent_files",
-                    "files": files
+                    "type": "assemblyai_key",
+                    "key": key
                 });
                 let _ = ws_sender
                     .lock()
@@ -1268,46 +1205,9 @@ where
                     trimmed.to_string()
                 };
 
-                let attached_image = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    parsed
-                        .get("attachedImage")
-                        .or_else(|| parsed.get("attached_image"))
-                        .and_then(|img| img.as_str())
-                        .map(|s| s.to_string())
-                } else {
-                    None
-                };
-
-                let mut resolved_query = query_text.clone();
-                let mut attached_file_path: Option<String> = None;
-
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    if let Some(file_obj) = parsed.get("attachedFile").or_else(|| parsed.get("attached_file")) {
-                        let file_name = file_obj.get("name").and_then(|n| n.as_str()).unwrap_or("uploaded_file");
-                        let b64_content = file_obj.get("base64").and_then(|b| b.as_str());
-
-                        if let Some(b64) = b64_content {
-                            if let Ok(decoded_bytes) = BASE64.decode(b64) {
-                                let uploads_dir = std::env::temp_dir().join("blinky_uploads");
-                                let _ = std::fs::create_dir_all(&uploads_dir);
-                                let target_file = uploads_dir.join(file_name);
-                                if std::fs::write(&target_file, &decoded_bytes).is_ok() {
-                                    let saved_path_str = target_file.to_string_lossy().to_string();
-                                    println!("blinky: saved uploaded mobile file to: {}", saved_path_str);
-                                    attached_file_path = Some(saved_path_str.clone());
-                                    // Replace referenced file name in query with absolute path
-                                    let ref_pattern = format!("[Referenced Files: {}]", file_name);
-                                    let ref_replacement = format!("[Referenced Files: {}]", saved_path_str);
-                                    resolved_query = resolved_query.replace(&ref_pattern, &ref_replacement);
-                                }
-                            }
-                        }
-                    }
-                }
-
                 println!(
-                    "blinky: received remote query from mobile: '{}' (req_id: {}, has_image: {}, has_file: {})",
-                    resolved_query, request_id, attached_image.is_some(), attached_file_path.is_some()
+                    "blinky: received remote query from mobile: '{}' (req_id: {})",
+                    query_text, request_id
                 );
 
                 // PC & Mobile Command Unification:
@@ -1318,9 +1218,7 @@ where
                     "blinky://mobile-query",
                     serde_json::json!({
                         "requestId": request_id,
-                        "query": resolved_query,
-                        "attachedImage": attached_image,
-                        "attachedFile": attached_file_path
+                        "query": query_text
                     }),
                 );
             } else {
@@ -1916,6 +1814,27 @@ fn get_sarvam_api_key() -> String {
         .unwrap_or_default()
 }
 
+fn get_assemblyai_api_key() -> String {
+    if let Ok(val) = std::env::var("ASSEMBLY_AI_API_KEY") {
+        let trimmed = val.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    if let Ok(val) = std::env::var("ASSEMBLYAI_API_KEY") {
+        let trimmed = val.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    let root = project_root();
+    let envs = read_env_file(&root);
+    envs.into_iter()
+        .find(|(k, _)| k == "ASSEMBLY_AI_API_KEY" || k == "ASSEMBLYAI_API_KEY")
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// Reads the remote token if explicitly configured by the user in environment or .env.
 /// Development may continue without one for compatibility; release remote peers then fail auth.
 fn get_remote_token() -> String {
@@ -2141,3 +2060,146 @@ where
     }
     Ok(())
 }
+
+async fn handle_assemblyai_agent_proxy<S>(
+    client_write: WsSender<S>,
+    mut client_read: SplitStream<WebSocketStream<S>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let api_key = get_assemblyai_api_key();
+    if api_key.is_empty() {
+        return Err("ASSEMBLY_AI_API_KEY is not configured in environment".into());
+    }
+
+    let url = "wss://agents.assemblyai.com/v1/ws";
+    let mut request = url.into_client_request()?;
+    request
+        .headers_mut()
+        .insert("Authorization", api_key.parse()?);
+
+    let (aai_ws, _) = connect_async(request).await?;
+    println!("Successfully connected proxy to AssemblyAI Voice Agent WebSocket");
+
+    let (mut aai_write, mut aai_read) = aai_ws.split();
+
+    let client_to_aai = async {
+        while let Some(msg) = client_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("AssemblyAI Agent: Client sent close");
+                let _ = aai_write.send(msg).await;
+                break;
+            }
+            if let Err(e) = aai_write.send(msg).await {
+                eprintln!("AssemblyAI Agent: Error sending to AssemblyAI: {:?}", e);
+                break;
+            }
+        }
+        println!("AssemblyAI Agent: client_to_aai ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let aai_to_client = async {
+        while let Some(msg) = aai_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("AssemblyAI Agent: AssemblyAI sent close");
+                let _ = client_write.lock().await.send(msg).await;
+                break;
+            }
+            if let Err(e) = client_write.lock().await.send(msg).await {
+                eprintln!("AssemblyAI Agent: Error sending to client: {:?}", e);
+                break;
+            }
+        }
+        println!("AssemblyAI Agent: aai_to_client ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let res = tokio::select! {
+        r1 = client_to_aai => r1,
+        r2 = aai_to_client => r2,
+    };
+
+    if let Err(e) = res {
+        let err_str = e.to_string();
+        if !err_str.contains("closed") && !err_str.contains("Closing") && !err_str.contains("reset") {
+            eprintln!("AssemblyAI Agent proxy error: {}", err_str);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_assemblyai_stt_proxy<S>(
+    client_write: WsSender<S>,
+    mut client_read: SplitStream<WebSocketStream<S>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let api_key = get_assemblyai_api_key();
+    if api_key.is_empty() {
+        return Err("ASSEMBLY_AI_API_KEY is not configured in environment".into());
+    }
+
+    let url = "wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&speech_model=universal-3-5-pro";
+    let mut request = url.into_client_request()?;
+    request
+        .headers_mut()
+        .insert("Authorization", api_key.parse()?);
+
+    let (aai_ws, _) = connect_async(request).await?;
+    println!("Successfully connected proxy to AssemblyAI Realtime STT WebSocket");
+
+    let (mut aai_write, mut aai_read) = aai_ws.split();
+
+    let client_to_aai = async {
+        while let Some(msg) = client_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("AssemblyAI STT: Client sent close");
+                let _ = aai_write.send(msg).await;
+                break;
+            }
+            if let Err(e) = aai_write.send(msg).await {
+                eprintln!("AssemblyAI STT: Error sending to AssemblyAI: {:?}", e);
+                break;
+            }
+        }
+        println!("AssemblyAI STT: client_to_aai ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let aai_to_client = async {
+        while let Some(msg) = aai_read.next().await {
+            let msg = msg?;
+            if msg.is_close() {
+                println!("AssemblyAI STT: AssemblyAI sent close");
+                let _ = client_write.lock().await.send(msg).await;
+                break;
+            }
+            if let Err(e) = client_write.lock().await.send(msg).await {
+                eprintln!("AssemblyAI STT: Error sending to client: {:?}", e);
+                break;
+            }
+        }
+        println!("AssemblyAI STT: aai_to_client ended");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    };
+
+    let res = tokio::select! {
+        r1 = client_to_aai => r1,
+        r2 = aai_to_client => r2,
+    };
+
+    if let Err(e) = res {
+        let err_str = e.to_string();
+        if !err_str.contains("closed") && !err_str.contains("Closing") && !err_str.contains("reset") {
+            eprintln!("AssemblyAI STT proxy error: {}", err_str);
+        }
+    }
+    Ok(())
+}
+
