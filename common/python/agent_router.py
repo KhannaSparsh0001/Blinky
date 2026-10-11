@@ -742,6 +742,8 @@ async def handle_request(line):
             elif sheet_match.get("action") == "type_in_cells":
                 cells_desc = ", ".join(c.get("cell", "") for c in sheet_match.get("cells", []))
                 status_msg = f"Writing into cells {cells_desc} in Microsoft Excel..."
+            elif sheet_match.get("action") == "format":
+                status_msg = "Formatting Microsoft Excel worksheet: auto-fitting columns and styling text..."
             else:
                 status_msg = "Opening Microsoft Excel spreadsheet..."
             send_response(request_id, "processing", data={"message": status_msg, "percent": 50})

@@ -326,6 +326,50 @@ but write this whole text in c2 hello in google sheets at a1 and bye"""
         # Must call ShowWindow with 9 (SW_RESTORE)
         mock_user32.ShowWindow.assert_called_once_with(12345, 9)
 
+    @patch("tools.spreadsheet_tool.extract_table_data_from_url")
+    def test_generate_table_tsv_extracts_from_url(self, mock_extract):
+        mock_extract.return_value = (
+            "Repository: KingSahil/Blinky\nSource: https://github.com/KingSahil/blinky\n\nContributor\tGitHub\nSahil\t@KingSahil",
+            ["Contributor", "GitHub"],
+        )
+        tsv, cols = generate_table_tsv(
+            None,
+            None,
+            "go to https://github.com/KingSahil/blinky and extract contributors to excel",
+        )
+        mock_extract.assert_called_once_with(
+            "https://github.com/KingSahil/blinky",
+            "go to https://github.com/KingSahil/blinky and extract contributors to excel",
+        )
+        self.assertIn("Repository: KingSahil/Blinky", tsv)
+        self.assertEqual(cols, ["Contributor", "GitHub"])
+
+    def test_resolve_spreadsheet_request_format_phrasings(self):
+        cases = [
+            "good just formatting is little bad also format the text so everything clearly visible",
+            "format excel so everything clearly visible",
+            "autofit columns in excel",
+            "format the text so everything clearly visible",
+        ]
+        for query in cases:
+            res = resolve_spreadsheet_request(query)
+            self.assertIsNotNone(res, f"Failed to match format query: {query}")
+            self.assertEqual(res["action"], "format")
+            self.assertEqual(res["preferred_app"], "excel")
+
+    @patch("tools.spreadsheet_tool.execute_format_spreadsheet")
+    def test_handle_request_format_action(self, mock_fmt):
+        mock_fmt.return_value = {
+            "success": True,
+            "action": "format",
+            "message": "Formatted Microsoft Excel worksheet: auto-fitted all columns, styled headers, and ensured all text is clearly visible.",
+            "target_app": "Microsoft Excel",
+        }
+        res = handle_request({"action": "format"})
+        self.assertTrue(res["success"])
+        self.assertEqual(res["action"], "format")
+        mock_fmt.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

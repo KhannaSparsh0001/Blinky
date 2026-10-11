@@ -1295,6 +1295,8 @@ def run_spreadsheet_tool(
     elif action == "type_in_cells":
         cells_desc = ", ".join(c.get("cell", "") for c in params.get("cells", []))
         _emit_status("spreadsheet", f"Focusing Microsoft Excel and writing in cells {cells_desc}...")
+    elif action == "format":
+        _emit_status("spreadsheet", "Formatting Microsoft Excel worksheet: auto-fitting columns and styling text...")
     else:
         _emit_status("spreadsheet", "Opening Microsoft Excel spreadsheet...")
     res = handle_request(params)

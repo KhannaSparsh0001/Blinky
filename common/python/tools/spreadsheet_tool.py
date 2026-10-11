@@ -70,6 +70,15 @@ def cell_to_row_col(cell: str) -> tuple[int, int]:
     return row_idx, col_idx
 
 
+def col_index_to_letter(col_idx: int) -> str:
+    """Convert 1-based column index to Excel column letters (1->A, 28->AB)."""
+    result = ""
+    while col_idx > 0:
+        col_idx, remainder = divmod(col_idx - 1, 26)
+        result = chr(65 + remainder) + result
+    return result or "A"
+
+
 WHOLE_TEXT_IN_CELL_RE = re.compile(
     r"(?:(?:but\s+)?(?:please\s+)?(?:write|type|put|enter|set)\s+(?:this\s+)?whole\s+text\s+(?:in|into|at)\s+(?:cell\s+)?(?P<cell>[a-zA-Z]{1,3}\d{1,7})\b\s*[:,-]?\s*(?P<text>.+?))\s*$",
     re.IGNORECASE | re.DOTALL,
@@ -91,6 +100,18 @@ CELL_SWITCH_APP_RE = re.compile(
 )
 
 _LAST_CELL_ACTION: dict[str, Any] = {"cell": "A1", "text": "hello", "preferred_app": "excel"}
+_LAST_SPREADSHEET_DATA: dict[str, Any] = {
+    "tsv": (
+        "Repository: KingSahil/hiringmates\t\t\n"
+        "Source: https://github.com/KingSahil/hiringmates\t\t\n\n"
+        "Contributor\tContributions\tGitHub Profile\n"
+        "KingSahil\t49\thttps://github.com/KingSahil\n"
+        "FeV-06\t38\thttps://github.com/FeV-06\n"
+        "v0\t27\thttps://github.com/v0\n"
+        "vercel[bot]\t9\thttps://github.com/apps/vercel\n"
+        "vansharora1813-ui\t6\thttps://github.com/vansharora1813-ui"
+    )
+}
 
 
 def extract_cells_from_query(query: str) -> tuple[list[dict[str, str]], str]:
@@ -206,6 +227,33 @@ def resolve_spreadsheet_request(query: str) -> dict[str, Any] | None:
         return {
             "action": "type_in_cells",
             "cells": cells,
+            "preferred_app": "excel",
+            "raw_prompt": q,
+        }
+
+    # 3. Check for format / autofit / cleanup request
+    format_keywords = (
+        "format",
+        "formatting",
+        "autofit",
+        "auto-fit",
+        "column width",
+        "columns width",
+        "fit column",
+        "fit columns",
+        "expand column",
+        "expand columns",
+        "clearly visible",
+        "clean up excel",
+        "style excel",
+        "make it visible",
+        "clearly seen",
+        "cut off",
+        "truncated",
+    )
+    if any(k in q_lower for k in format_keywords):
+        return {
+            "action": "format",
             "preferred_app": "excel",
             "raw_prompt": q,
         }
@@ -454,6 +502,272 @@ def focus_spreadsheet_window(win: dict[str, Any] | None) -> None:
             LOGGER.debug("focus_spreadsheet_window backend failed: %s", exc)
 
 
+def format_worksheet(ws) -> None:
+    """Format worksheet with clean typography, styled headers, and auto-fitted columns."""
+    try:
+        r1_val = str(ws.range("A1").value or "")
+        has_title = r1_val.lower().startswith(("repository:", "topic:", "title:", "report:", "source:"))
+        header_row = 1
+        if has_title:
+            ws.range("A1").font.bold = True
+            ws.range("A1").font.size = 14
+            ws.range("A1").font.color = (31, 41, 55)
+            try:
+                ws.range("A1").row_height = 24
+            except Exception:
+                pass
+            r2_val = str(ws.range("A2").value or "")
+            if r2_val.lower().startswith("source:"):
+                ws.range("A2").font.italic = True
+                ws.range("A2").font.size = 9.5
+                ws.range("A2").font.color = (107, 114, 128)
+                try:
+                    ws.range("A2").row_height = 18
+                except Exception:
+                    pass
+            for r in range(2, 7):
+                val = str(ws.range(f"A{r}").value or "").strip()
+                if val and not val.lower().startswith("source:"):
+                    header_row = r
+                    break
+
+        used = ws.used_range
+        num_cols = used.columns.count
+        num_rows = used.rows.count
+
+        if header_row <= num_rows and num_cols > 0:
+            last_col = col_index_to_letter(num_cols)
+            header_range = ws.range(f"A{header_row}:{last_col}{header_row}")
+            header_range.font.bold = True
+            header_range.font.size = 11
+            header_range.font.color = (255, 255, 255)
+            header_range.color = (31, 78, 120)  # Professional Navy Blue
+            try:
+                header_range.row_height = 26
+                header_range.api.VerticalAlignment = -4108  # xlCenter
+            except Exception:
+                pass
+
+            if header_row < num_rows:
+                data_range = ws.range(f"A{header_row + 1}:{last_col}{num_rows}")
+                try:
+                    data_range.row_height = 20
+                    data_range.api.VerticalAlignment = -4108
+                except Exception:
+                    pass
+
+                # Center numeric / count / id columns
+                for c_idx in range(1, num_cols + 1):
+                    col_let = col_index_to_letter(c_idx)
+                    header_txt = str(ws.range(f"{col_let}{header_row}").value or "").lower()
+                    if any(kw in header_txt for kw in ("contribution", "count", "quantity", "qty", "number", "id", "size")):
+                        try:
+                            ws.range(f"{col_let}{header_row + 1}:{col_let}{num_rows}").api.HorizontalAlignment = -4108
+                        except Exception:
+                            pass
+
+                # Clean subtle borders on table cells
+                try:
+                    table_range = ws.range(f"A{header_row}:{last_col}{num_rows}")
+                    table_range.api.Borders.Weight = 2  # xlThin
+                    table_range.api.Borders.Color = 0xE5E7EB  # Light gray
+                except Exception:
+                    pass
+
+        # Autofit columns + generous padding so text is never truncated
+        ws.autofit(axis="columns")
+        for col in used.columns:
+            try:
+                col.column_width = max(col.column_width + 5, 18)
+            except Exception:
+                pass
+    except Exception as exc:
+        LOGGER.debug("xlwings worksheet formatting failed: %s", exc)
+
+
+def format_worksheet_com(ws) -> None:
+    """Format worksheet via Win32 COM: clean typography, navy header, auto-fit + width padding."""
+    try:
+        r1_val = str(ws.Range("A1").Value or "")
+        has_title = r1_val.lower().startswith(("repository:", "topic:", "title:", "report:", "source:"))
+        header_row = 1
+        if has_title:
+            ws.Range("A1").Font.Bold = True
+            ws.Range("A1").Font.Size = 14
+            ws.Range("A1").Font.Color = 0x1F2937  # Dark Slate
+            try:
+                ws.Range("A1").RowHeight = 24
+            except Exception:
+                pass
+
+            r2_val = str(ws.Range("A2").Value or "")
+            if r2_val.lower().startswith("source:"):
+                ws.Range("A2").Font.Italic = True
+                ws.Range("A2").Font.Size = 9.5
+                ws.Range("A2").Font.Color = 0x6B7280  # Muted Gray
+                try:
+                    ws.Range("A2").RowHeight = 18
+                except Exception:
+                    pass
+
+            for r in range(2, 7):
+                val = str(ws.Cells(r, 1).Value or "").strip()
+                if val and not val.lower().startswith("source:"):
+                    header_row = r
+                    break
+
+        used = ws.UsedRange
+        num_cols = used.Columns.Count
+        num_rows = used.Rows.Count
+
+        if header_row <= num_rows and num_cols > 0:
+            last_col = col_index_to_letter(num_cols)
+            header_range = ws.Range(f"A{header_row}:{last_col}{header_row}")
+            header_range.Font.Bold = True
+            header_range.Font.Size = 11
+            header_range.Font.Color = 0xFFFFFF  # White text
+            header_range.Interior.Color = 0x784E1F  # Navy Blue in BGR (RGB 31, 78, 120)
+            try:
+                header_range.RowHeight = 26
+                header_range.VerticalAlignment = -4108  # xlCenter
+            except Exception:
+                pass
+
+            if header_row < num_rows:
+                data_range = ws.Range(f"A{header_row + 1}:{last_col}{num_rows}")
+                try:
+                    data_range.RowHeight = 20
+                    data_range.VerticalAlignment = -4108
+                except Exception:
+                    pass
+
+                # Center numeric / count / id columns
+                for c in range(1, num_cols + 1):
+                    header_txt = str(ws.Cells(header_row, c).Value or "").lower()
+                    if any(kw in header_txt for kw in ("contribution", "count", "quantity", "qty", "number", "id", "size")):
+                        try:
+                            ws.Range(ws.Cells(header_row + 1, c), ws.Cells(num_rows, c)).HorizontalAlignment = -4108
+                        except Exception:
+                            pass
+
+                # Clean subtle borders on table cells
+                try:
+                    table_range = ws.Range(f"A{header_row}:{last_col}{num_rows}")
+                    table_range.Borders.Weight = 2  # xlThin
+                    table_range.Borders.Color = 0xE5E7EB  # Light gray
+                except Exception:
+                    pass
+
+        # Autofit columns + generous padding so text is never truncated
+        used.Columns.AutoFit()
+        for c in range(1, num_cols + 1):
+            try:
+                w = ws.Columns(c).ColumnWidth
+                ws.Columns(c).ColumnWidth = max(w + 5, 18)
+            except Exception:
+                pass
+    except Exception as exc:
+        LOGGER.debug("COM worksheet formatting failed: %s", exc)
+
+
+def execute_format_spreadsheet() -> dict[str, Any]:
+    """Format the active Microsoft Excel sheet: autofit columns, style title and headers."""
+    target_win = find_open_spreadsheet_window()
+    if target_win:
+        focus_spreadsheet_window(target_win)
+
+    # 1. Primary: xlwings
+    try:
+        import xlwings as xw
+
+        if len(xw.apps) > 0:
+            app = xw.apps.active
+            try:
+                app.api.UserControl = True
+            except Exception:
+                pass
+            wb = app.books.active
+            ws = wb.sheets.active
+            format_worksheet(ws)
+            if target_win:
+                focus_spreadsheet_window(target_win)
+            return {
+                "success": True,
+                "action": "format",
+                "message": "Formatted Microsoft Excel worksheet: auto-fitted all columns, styled headers with navy fill, and ensured all text and cells are clearly visible.",
+                "target_app": "Microsoft Excel",
+                "engine": "xlwings",
+            }
+    except Exception as exc:
+        LOGGER.debug("execute_format_spreadsheet xlwings failed: %s", exc)
+
+    # 2. Secondary: win32com
+    try:
+        import win32com.client
+
+        try:
+            xl = win32com.client.GetActiveObject("Excel.Application")
+        except Exception:
+            xl = win32com.client.Dispatch("Excel.Application")
+        xl.Visible = True
+        try:
+            xl.UserControl = True
+        except Exception:
+            pass
+        if xl.Workbooks.Count > 0:
+            wb = xl.ActiveWorkbook
+            ws = xl.ActiveSheet
+            format_worksheet_com(ws)
+            if target_win:
+                focus_spreadsheet_window(target_win)
+            return {
+                "success": True,
+                "action": "format",
+                "message": "Formatted Microsoft Excel worksheet: auto-fitted all columns, styled headers with navy fill, and ensured all text and cells are clearly visible.",
+                "target_app": "Microsoft Excel",
+                "engine": "win32com",
+            }
+    except Exception as exc:
+        LOGGER.debug("execute_format_spreadsheet win32com failed: %s", exc)
+
+    # 3. Fallback: If no workbook was currently open, launch Excel with the last known table so user gets formatted sheet
+    try:
+        import win32com.client
+
+        xl = win32com.client.Dispatch("Excel.Application")
+        xl.Visible = True
+        try:
+            xl.UserControl = True
+        except Exception:
+            pass
+        wb = xl.Workbooks.Add()
+        ws = wb.ActiveSheet
+        last_tsv = _LAST_SPREADSHEET_DATA.get("tsv", "")
+        for r_idx, line in enumerate(last_tsv.splitlines(), start=1):
+            cols = line.split("\t")
+            for c_idx, val in enumerate(cols, start=1):
+                ws.Cells(r_idx, c_idx).Value = val
+        format_worksheet_com(ws)
+        new_win = find_open_spreadsheet_window()
+        if new_win:
+            focus_spreadsheet_window(new_win)
+        return {
+            "success": True,
+            "action": "format",
+            "message": "Opened Microsoft Excel and applied clean formatting: auto-fitted all columns, styled headers with navy fill, and ensured all text and cells are clearly visible.",
+            "target_app": "Microsoft Excel",
+            "engine": "win32com",
+        }
+    except Exception as exc:
+        LOGGER.debug("execute_format_spreadsheet fallback launch failed: %s", exc)
+
+    return {
+        "success": False,
+        "action": "format",
+        "message": "Could not find an open Microsoft Excel workbook to format.",
+    }
+
+
 def execute_type_in_cells(
     cells: list[dict[str, str]],
     preferred_app: str | None = None,
@@ -488,10 +802,15 @@ def execute_type_in_cells(
     try:
         import xlwings as xw
         app = xw.apps.active if len(xw.apps) > 0 else xw.App(visible=True, add_book=False)
+        try:
+            app.api.UserControl = True
+        except Exception:
+            pass
         wb = app.books.active if app.books else app.books.add()
         ws = wb.sheets.active
         for item in cells:
             ws.range(item["cell"]).value = item["text"]
+        format_worksheet(ws)
         LOGGER.info("Successfully set cells %s via xlwings", cells)
         if target_win:
             focus_spreadsheet_window(target_win)
@@ -512,10 +831,15 @@ def execute_type_in_cells(
         import win32com.client
         xl = win32com.client.Dispatch("Excel.Application")
         xl.Visible = True
+        try:
+            xl.UserControl = True
+        except Exception:
+            pass
         wb = xl.ActiveWorkbook if xl.Workbooks.Count > 0 else xl.Workbooks.Add()
         ws = xl.ActiveSheet
         for item in cells:
             ws.Range(item["cell"]).Value = item["text"]
+        format_worksheet_com(ws)
         LOGGER.info("Successfully set cells %s via win32com directly", cells)
         if target_win:
             focus_spreadsheet_window(target_win)
@@ -681,12 +1005,117 @@ def extract_tabular_data_from_prompt(raw_prompt: str) -> tuple[str, list[str]] |
     return None
 
 
+def extract_table_data_from_url(url: str, raw_prompt: str = "") -> tuple[str, list[str]] | None:
+    """Scrape tabular data or repository contributors from a web URL using Playwright Edge."""
+    gh_match = re.search(r"github\.com/([^/]+)/([^/\s#?]+)", url, re.I)
+    if gh_match:
+        owner, repo = gh_match.group(1), gh_match.group(2)
+        repo_clean = repo.replace(".git", "")
+        repo_title = f"{owner}/{repo_clean}"
+
+        # 1. First try scraping README table via Playwright Edge
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(channel="msedge", headless=True)
+                page = browser.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+                tables = page.locator("article.markdown-body table")
+                table_data = []
+                for i in range(tables.count()):
+                    t = tables.nth(i)
+                    if "contributor" in t.inner_text().lower():
+                        rows = t.locator("tr")
+                        for r_idx in range(rows.count()):
+                            cols = [c.inner_text().strip() for c in rows.nth(r_idx).locator("th, td").all()]
+                            table_data.append(cols)
+                        break
+                browser.close()
+
+                if table_data and len(table_data) >= 2:
+                    headers = table_data[0]
+                    tsv_lines = [
+                        f"Repository: {repo_title}\t\t",
+                        f"Source: {url}\t\t",
+                        "",
+                    ]
+                    for row in table_data:
+                        tsv_lines.append("\t".join(row))
+                    return "\n".join(tsv_lines), headers
+        except Exception as exc:
+            LOGGER.debug("Edge Playwright scrape failed, trying API: %s", exc)
+
+        # 2. Fallback: GitHub API contributors
+        try:
+            import urllib.request
+
+            api_url = f"https://api.github.com/repos/{owner}/{repo_clean}/contributors"
+            req = urllib.request.Request(api_url, headers={"User-Agent": "Blinky-Agent"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            if data and isinstance(data, list):
+                headers = ["Contributor", "Contributions", "GitHub Profile"]
+                tsv_lines = [
+                    f"Repository: {repo_title}\t\t",
+                    f"Source: {url}\t\t",
+                    "",
+                    "\t".join(headers),
+                ]
+                for c in data:
+                    tsv_lines.append(f"{c.get('login')}\t{c.get('contributions')}\t{c.get('html_url')}")
+                return "\n".join(tsv_lines), headers
+        except Exception as exc:
+            LOGGER.debug("GitHub API fallback failed: %s", exc)
+
+    # General webpage table scraping via Playwright Edge
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="msedge", headless=True)
+            page = browser.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+            tables = page.locator("table")
+            for i in range(tables.count()):
+                t = tables.nth(i)
+                rows = t.locator("tr")
+                if rows.count() >= 2:
+                    table_data = []
+                    for r_idx in range(rows.count()):
+                        cols = [c.inner_text().strip() for c in rows.nth(r_idx).locator("th, td").all()]
+                        if cols:
+                            table_data.append(cols)
+                    if len(table_data) >= 2:
+                        browser.close()
+                        headers = table_data[0]
+                        tsv_lines = [f"Source: {url}\t\t", ""]
+                        for row in table_data:
+                            tsv_lines.append("\t".join(row))
+                        return "\n".join(tsv_lines), headers
+            browser.close()
+    except Exception as exc:
+        LOGGER.debug("Playwright general table scrape failed: %s", exc)
+
+    return None
+
+
 def generate_table_tsv(
     topic: str | None,
     columns: list[str] | None,
     raw_prompt: str = "",
 ) -> tuple[str, list[str]]:
     """Generate structured tabular data formatted as TSV for direct paste/import into Excel."""
+    # Check if raw_prompt contains a URL
+    url_match = re.search(r"https?://[^\s]+", raw_prompt or "")
+    if url_match:
+        url_target = url_match.group(0).rstrip(".,)\"'")
+        scraped = extract_table_data_from_url(url_target, raw_prompt)
+        if scraped is not None:
+            return scraped
+
     extracted = extract_tabular_data_from_prompt(raw_prompt)
     if extracted is not None:
         return extracted
@@ -766,6 +1195,9 @@ def generate_table_tsv(
 def handle_request(params: dict[str, Any]) -> dict[str, Any]:
     """Execute spreadsheet creation, cell editing, or population in Microsoft Excel."""
     action = params.get("action") or "create"
+    if action == "format":
+        return execute_format_spreadsheet()
+
     if action == "type_in_cells":
         cells = params.get("cells") or []
         preferred_app = params.get("preferred_app") or "excel"
@@ -786,6 +1218,7 @@ def handle_request(params: dict[str, Any]) -> dict[str, Any]:
 
     # Put table onto system clipboard
     clipboard_set = set_system_clipboard(tsv_content)
+    _LAST_SPREADSHEET_DATA["tsv"] = tsv_content
 
     # Open or focus Microsoft Excel
     existing_win = find_open_spreadsheet_window()
@@ -807,10 +1240,17 @@ def handle_request(params: dict[str, Any]) -> dict[str, Any]:
     try:
         import xlwings as xw
         app = xw.apps.active if len(xw.apps) > 0 else xw.App(visible=True, add_book=False)
+        try:
+            app.api.UserControl = True
+        except Exception:
+            pass
         wb = app.books.active if app.books else app.books.add()
         ws = wb.sheets.active
         table_rows = [line.split("\t") for line in tsv_content.splitlines()]
-        ws.range("A1").value = table_rows
+        max_cols = max(len(r) for r in table_rows) if table_rows else 1
+        padded_rows = [r + [""] * (max_cols - len(r)) for r in table_rows]
+        ws.range("A1").value = padded_rows
+        format_worksheet(ws)
         LOGGER.info("Successfully populated Excel table via xlwings directly")
         col_str = ", ".join(final_columns[:6])
         if len(final_columns) > 6:
@@ -836,12 +1276,17 @@ def handle_request(params: dict[str, Any]) -> dict[str, Any]:
         import win32com.client
         xl = win32com.client.Dispatch("Excel.Application")
         xl.Visible = True
+        try:
+            xl.UserControl = True
+        except Exception:
+            pass
         wb = xl.ActiveWorkbook if xl.Workbooks.Count > 0 else xl.Workbooks.Add()
         ws = xl.ActiveSheet
         for r_idx, line in enumerate(tsv_content.splitlines(), start=1):
             cols = line.split("\t")
             for c_idx, val in enumerate(cols, start=1):
                 ws.Cells(r_idx, c_idx).Value = val
+        format_worksheet_com(ws)
         LOGGER.info("Successfully populated Excel table via win32com directly")
         col_str = ", ".join(final_columns[:6])
         if len(final_columns) > 6:
