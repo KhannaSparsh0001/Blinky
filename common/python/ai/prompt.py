@@ -17,7 +17,7 @@ def build_preflight_prompt(
         history_context_str = f"\nRecent conversation:\n{history_context_str}\n"
 
     return f"""
-You are Blinky, an AI desktop tutor running on Linux.
+You are Blinky, an AI desktop tutor running on Windows or Linux.
 
 Classify the student's request before any screen capture happens.
 {previous_context_str}
@@ -28,7 +28,7 @@ Student request:
 Decide on the best intent category for the request, whether Blinky needs to inspect the user's screen to answer (needs_screen), and whether it is a continuation.
 
 Intents to choose from:
-1. `COMPUTER_USE`: The student wants to control their Linux desktop â€” open/list windows, click buttons, type text, press keys, or perform sequential actions on running applications (e.g. "type hello world", "list windows", "click the search box", "press Enter").
+1. `COMPUTER_USE`: The student wants to control their Windows or Linux desktop â€” open/list windows, click buttons, type text, press keys, or perform sequential actions on running applications (e.g. "type hello world", "list windows", "click the search box", "press Enter").
 2. `OPEN_APP`: The user explicitly requests to open, launch, or start a local desktop application (e.g. "open Spotify", "launch vscode", "start WhatsApp"). Extract the app name to "app_name".
    - Note: Do NOT classify web destinations, sites, or domains (e.g. YouTube, GitHub, Gmail, ChatGPT, or URLs) as `OPEN_APP`. Route those to `DESKTOP_AUTOMATION`.
 3. `MEDIA_PLAYBACK`: The user requests to play a song/artist/playlist, pause/stop/resume playback, seek (fast-forward or rewind), or skip to the next/previous track on Spotify or YouTube (e.g. "play blinding lights", "pause the music", "skip 1 minute in song", "go back 10 seconds", "next song", "prev track"). Extract the following parameters if applicable:
@@ -39,7 +39,7 @@ Intents to choose from:
 4. `SYSTEM_SHORTCUT`: The user requests to trigger or press a keyboard shortcut (e.g. "press alt+tab", "do ctrl+s"). Extract the shortcut combination to "shortcut".
 5. `WEB_SEARCH`: The user is asking for real-time, current/fresh facts, news, weather, comparisons, or recommendations requiring external web lookup (e.g. "what is the price of Bitcoin?", "search gaming chair reviews", "latest news on AI", "who won the match?", "weather in Tokyo", "best gaming chair under 10000", "cheapest laptop", "compare iPhone 15 vs 16").
 6. `INFORMATIONAL_CHAT`: The user is greeting you, asking about your identity, explaining concepts, starting a normal conversation, or asking general questions that don't need screen context or web search (e.g. "hello", "who are you", "what is a variable in Python?").
-7. `WHATSAPP`: The user wants to interact with WhatsApp — summarize a chat, list chats, or check WhatsApp connection status (e.g. "summarize hackathon crew", "summarize my whatsapp group", "list my whatsapp chats", "check whatsapp status", "whatsapp status"). Extract: the WhatsApp action to "wa_action" (one of: "summarize", "chats", "status"), and the group or chat name to "wa_chat_name" (if mentioned).
+7. `WHATSAPP`: The user wants to interact with WhatsApp — send a message, summarize a chat, list chats, or check WhatsApp connection status (e.g. "send a WhatsApp message to Sahil Gupta saying hello", "summarize hackathon crew", "summarize my whatsapp group", "list my whatsapp chats", "check whatsapp status"). Extract: the WhatsApp action to "wa_action" (one of: "send", "summarize", "chats", "status"), the group or chat name to "wa_chat_name" (if mentioned), and the exact outgoing text to "wa_message" for send.
 8. `VIDEO_EDIT`: The user wants to edit a video, remove silent pauses (AI jump-cut), trim a clip, add/mix background music, merge multiple video clips, burn styled subtitles/captions with presets (e.g. "instagram", "hormozi", "word-by-word", "neon-blur", "pill-yellow", "glassmorphism", "documentary", etc.), transcribe audio/video to SRT captions via faster-whisper, inspect media info, or perform multi-step editing pipelines (e.g. "remove silence from video.mp4", "cut pauses from lecture.mp4", "trim dance.mp4 from 10 to 25s", "add song edm.mp3 to video.mp4", "merge clip1.mp4 and clip2.mp4", "merge them all and add captions", "burn subtitles to dance.mp4 with instagram preset", "i want word by word instagram like", "transcribe lecture.mp4 with small model"). Extract the relevant parameters:
     - "action": one of "trim", "add_song", "merge", "subtitles", "transcribe", "remove_silence", "media_info", "pipeline"
     - "video_path": video path or filename
@@ -57,7 +57,8 @@ Intents to choose from:
     - "action": "set_color" or "turn_off"
     - "color": color name like "red", "green", "blue", "yellow", "cyan", "purple", "white", "warm_white" (or null if turning off)
     - "brightness": float between 0.0 and 1.0 (or null)
-10. `DESKTOP_AUTOMATION`: Any step-by-step guidance on the user's active desktop screen/application UI (e.g. "how do I install python extension?", "click the install button", "where is the settings tab?").
+10. `SPREADSHEET`: The user wants to create, open, or build a spreadsheet in Microsoft Excel, or type into specific spreadsheet cells (e.g. "create a spreadsheet with columns Name, Email, Phone", "create a new spreadsheet for monthly expenses", "make a spreadsheet of top 5 tech companies", "new spreadsheet", "type hello in cell a1", "in excel write 100 in cell a1", "write hello in a1 and bye at c2"). Extract: "topic" (subject or purpose of spreadsheet, or null), "columns" (list of column names if mentioned), and "cell" or "cells" if specific cell operations are requested.
+11. `DESKTOP_AUTOMATION`: Any step-by-step guidance on the user's active desktop screen/application UI (e.g. "how do I install python extension?", "click the install button", "where is the settings tab?").
 
 Compound-request rule (IMPORTANT):
 - If the request combines OPENING an app WITH a follow-up action inside it
@@ -67,7 +68,7 @@ Compound-request rule (IMPORTANT):
 
 Rules for needs_screen:
 - needs_screen is true ONLY when the student wants guidance tied to visible UI (like clicking, opening, selecting, locating, highlighting, installing, or navigating something in an app, menu, button, tab, or window), OR when the student asks what is on their screen ("what's on my screen", "whats on my screen", "describe my screen", "explain my screen", "what am I looking at").
-- needs_screen is false for COMPUTER_USE, OPEN_APP, MEDIA_PLAYBACK, SYSTEM_SHORTCUT, WEB_SEARCH, INFORMATIONAL_CHAT, WHATSAPP, VIDEO_EDIT, and ESP32_LIGHT.
+- needs_screen is false for COMPUTER_USE, OPEN_APP, MEDIA_PLAYBACK, SYSTEM_SHORTCUT, WEB_SEARCH, INFORMATIONAL_CHAT, WHATSAPP, VIDEO_EDIT, ESP32_LIGHT, and SPREADSHEET.
 
 
 Rules for is_continuation:
@@ -84,8 +85,9 @@ Return valid JSON in the following format only:
     "song_name": "extracted song/artist query or video/channel query",
     "platform": "spotify or youtube",
     "shortcut": "extracted shortcut key combo",
-    "wa_action": "summarize or chats or status",
+    "wa_action": "send or summarize or chats or status",
     "wa_chat_name": "extracted WhatsApp group or chat name",
+    "wa_message": "exact message text to send, only for wa_action send",
     "media_action": "play or pause or resume or stop or seek or next or prev",
     "seek_seconds": 10,
     "action": "trim or add_song or merge or subtitles or transcribe or media_info or pipeline",

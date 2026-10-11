@@ -61,6 +61,36 @@ def ground_step_to_screen(
     if not target and not instruction:
         return None
 
+    target_lower = target.lower()
+    instruction_lower = instruction.lower()
+
+    # Direct resolution for keyboard actions/keys (e.g. "Enter key", "Return")
+    if action in ("key", "press_key", "shortcut") or target_lower in ("enter", "enter key", "return", "press enter", "escape", "esc", "tab"):
+        key_name = str(planned_step.get("key") or ("enter" if "enter" in target_lower or "return" in target_lower else "escape" if "esc" in target_lower else "tab")).strip().lower()
+        return {
+            "step": planned_step.get("step", 1),
+            "instruction": instruction or f"Press {key_name.capitalize()}",
+            "target_text": target or key_name,
+            "planned_target": target,
+            "target_ref": "",
+            "match": {
+                "ref": "",
+                "x": 0,
+                "y": 0,
+                "width": 0,
+                "height": 0,
+                "source": "keyboard",
+                "control_type": "KeyboardKey",
+                "score": 1.0,
+                "text_similarity": 1.0,
+                "is_exact_text": True,
+                "match_method": "keyboard_bypass",
+            },
+            "action": "key",
+            "text_to_type": "",
+            "key": key_name,
+        }
+
     # Ignore items that belong to Blinky's own floating UI
     blinky_ignored_terms = {
         "blinky app", "blinky command", "ctrl + shift", "space", "enter", "ask anything",
@@ -88,9 +118,6 @@ def ground_step_to_screen(
 
     # Ensure all visible items have @ref assigned
     ref_items = assign_screen_element_refs(filtered_visible)
-
-    target_lower = target.lower()
-    instruction_lower = instruction.lower()
 
     # Safety: Window titlebar control buttons that should NEVER be clicked unless explicitly asked
     window_control_keywords = {"close", "close window", "minimize", "maximize", "restore", "system close"}
@@ -138,11 +165,19 @@ def ground_step_to_screen(
         is_interactive = bool(item.get("clickable")) or str(item.get("source", "")).lower() == "omniparser" or ctype in ("button", "menuitem", "tabitem", "listitem", "hyperlink", "icon", "combobox", "radiobutton", "checkbox", "group")
         is_static_text = ctype in ("text", "textblock", "label", "static", "heading", "title", "header") and not item.get("clickable")
 
+        # Contextual boosts for common browser/chat controls
+        if any(term in target_lower for term in ("address bar", "url bar", "omnibox", "search bar")):
+            if item.get("is_address_bar") or "address" in str(item.get("automation_id", "")).lower() or ctype in ("edit", "textbox"):
+                score += 0.50
+
+        if any(term in target_lower for term in ("message input", "type a message", "message field", "input field", "search or start new chat")):
+            if ctype in ("edit", "textbox") or item.get("input") or any(t in text_lower for t in ("type a message", "message", "search")):
+                score += 0.50
+
         if action in ("click", "press"):
             if is_interactive:
                 score += 0.15
             elif is_static_text:
-                # Heavy penalty for static non-clickable headers/labels when seeking a click action
                 score -= 0.35
         elif action == "type" and (item.get("input") or ctype in ("edit", "textbox", "searchbox", "combobox")):
             score += 0.20
@@ -151,8 +186,8 @@ def ground_step_to_screen(
             best_score = score
             best_item = item
 
-    # If heuristic match is confident (>= 0.75) and no previous failure occurred, return immediately
-    if best_item is not None and best_score >= 0.75 and not failed_refs_set and not failed_targets_set:
+    # If heuristic match is confident (>= 0.65) and no previous failure occurred, return immediately
+    if best_item is not None and best_score >= 0.65 and not failed_refs_set and not failed_targets_set:
         LOGGER.info(
             "Grounded step target '%s' to '%s' (@%s) via heuristic match (score=%.2f)",
             target,
@@ -162,22 +197,26 @@ def ground_step_to_screen(
         )
         return _build_grounded_step(planned_step, best_item, best_score)
 
-    # 2. Second pass: Disambiguate / Self-Heal using fast Groq text LLM (pure text prompt, zero screenshots)
-    try:
-        compact_lines = []
-        for it in ref_items[:60]:
-            name = screen_element_name(it)
-            if name:
-                compact_lines.append(
-                    f"{it.get('ref')} role={it.get('control_type', 'Control')} name=\"{name}\" source={it.get('source', '')}"
-                )
+    # 2. Second pass: Disambiguate / Self-Heal using fast text LLM with rate-limit cooldown
+    global _last_grounder_rate_limit
+    can_call_llm = (time.time() - _last_grounder_rate_limit > 30.0)
 
-        if compact_lines:
-            failure_note = ""
-            if failed_refs_set or failed_targets_set:
-                failure_note = f"\nCRITICAL NOTE: Previous attempts to interact with {list(failed_targets_set)} (ref IDs: {list(failed_refs_set)}) had no effect or failed. DO NOT select those. Find the alternative element that actually accomplishes the task.\n"
+    if can_call_llm:
+        try:
+            compact_lines = []
+            for it in ref_items[:60]:
+                name = screen_element_name(it)
+                if name:
+                    compact_lines.append(
+                        f"{it.get('ref')} role={it.get('control_type', 'Control')} name=\"{name}\" source={it.get('source', '')}"
+                    )
 
-            disambiguate_prompt = f"""You are Blinky's Intelligent UI Grounder & Self-Healing Decision Maker.
+            if compact_lines:
+                failure_note = ""
+                if failed_refs_set or failed_targets_set:
+                    failure_note = f"\nCRITICAL NOTE: Previous attempts to interact with {list(failed_targets_set)} (ref IDs: {list(failed_refs_set)}) had no effect or failed. DO NOT select those. Find the alternative element that actually accomplishes the task.\n"
+
+                disambiguate_prompt = f"""You are Blinky's Intelligent UI Grounder & Self-Healing Decision Maker.
 Select the exact screen element that accomplishes this step:
 Overall Task: {user_task or instruction or target}
 Step: {instruction or target}
@@ -191,18 +230,22 @@ Which @ref corresponds to the correct target element?
 Respond ONLY with a JSON object:
 {{"target_ref": "@ref", "reasoning": "why this item is the correct target"}}
 """
-            llm_res = ask_text_model(disambiguate_prompt, max_tokens=150)
-            if isinstance(llm_res, dict) and llm_res.get("target_ref"):
-                chosen_ref = str(llm_res.get("target_ref", "")).strip()
-                for it in ref_items:
-                    if it.get("ref") == chosen_ref:
-                        LOGGER.info("Grounded step target '%s' to @%s via Groq text re-thinker", target, chosen_ref)
-                        return _build_grounded_step(planned_step, it, 0.95)
-    except Exception as exc:
-        LOGGER.warning("Groq text grounding disambiguation failed: %s", exc)
+                llm_res = ask_text_model(disambiguate_prompt, max_tokens=150)
+                if isinstance(llm_res, dict) and llm_res.get("target_ref"):
+                    chosen_ref = str(llm_res.get("target_ref", "")).strip()
+                    for it in ref_items:
+                        if it.get("ref") == chosen_ref:
+                            LOGGER.info("Grounded step target '%s' to @%s via text re-thinker", target, chosen_ref)
+                            return _build_grounded_step(planned_step, it, 0.95)
+        except Exception as exc:
+            if any(term in str(exc).lower() for term in ("rate limit", "tpm", "429")):
+                _last_grounder_rate_limit = time.time()
+                LOGGER.warning("Rate limit reached in text grounding (%s); cooling down LLM grounder for 30s", exc)
+            else:
+                LOGGER.warning("Text grounding disambiguation failed: %s", exc)
 
-    # If heuristic had a moderate match (>= 0.60), fall back to it
-    if best_item is not None and best_score >= 0.60:
+    # If heuristic had a moderate match (>= 0.50), fall back to it
+    if best_item is not None and best_score >= 0.50:
         return _build_grounded_step(planned_step, best_item, best_score)
 
     LOGGER.info("No confident on-screen match found for step target '%s'", target)

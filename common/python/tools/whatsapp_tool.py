@@ -2,9 +2,46 @@ import sys
 import json
 import os
 import re
+from urllib.parse import quote
 import requests
 
 SESSION_ID = "blinky-default-session"
+
+
+def resolve_whatsapp_send_request(query: str) -> tuple[str, str] | None:
+    """Parse an explicit WhatsApp send request into chat name and message.
+
+    Sending is intentionally stricter than read-only WhatsApp requests: the
+    query must mention WhatsApp and use an explicit ``to ... saying ...`` (or
+    ``to ...: ...``) shape so ordinary chat text is never sent accidentally.
+    """
+    if not query or "whatsapp" not in query.lower():
+        return None
+
+    q = query.strip().rstrip("?.!,;:").strip()
+    patterns = (
+        (r"^(?:please\s+)?(?:whatsapp\s+)?send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+to\s+(.+?)\s*(?:saying|that\s+says|with\s+text|:)\s+(.+)$", False),
+        (r"^(?:please\s+)?(?:whatsapp\s+)?send\s+(?:a\s+)?(?:whatsapp\s+)?message\s+[\"'](.+?)[\"']\s+to\s+(.+?)(?:\s+(?:on|in|via)\s+whatsapp)?$", True),
+        (r"^(?:please\s+)?(?:whatsapp\s+)?send\s+[\"'](.+?)[\"']\s+to\s+(.+?)(?:\s+(?:on|in|via)\s+whatsapp)?$", True),
+        (r"^(?:please\s+)?whatsapp\s+send\s+to\s+(.+?)\s*:\s*(.+)$", False),
+        (r"^(?:please\s+)?whatsapp\s+send\s+[\"']?(.+?)[\"']?\s+to\s+(.+)$", True),
+        (r"^(?:please\s+)?send\s+(?:a\s+)?(?:whatsapp\s+)?(?:message\s+)?to\s+(.+?)\s+on\s+whatsapp\s*:\s*(.+)$", False),
+        (r"^(?:please\s+)?send\s+(?:a\s+)?(?:whatsapp\s+)?(?:message\s+)?to\s+(.+?)\s+on\s+whatsapp\s+(?:saying|that\s+says|with\s+text)\s+(.+)$", False),
+    )
+    for pattern, message_first in patterns:
+        match = re.search(pattern, q, re.IGNORECASE)
+        if not match:
+            continue
+        if message_first:
+            message, chat_name = match.groups()
+        else:
+            chat_name, message = match.groups()
+        chat_name = re.sub(r"^(?:the|my)\s+", "", chat_name.strip(), flags=re.IGNORECASE)
+        chat_name = re.sub(r"\s+(?:on|in|via)\s+whatsapp$", "", chat_name.strip(), flags=re.IGNORECASE).strip()
+        message = message.strip().strip("\"'").strip()
+        if chat_name and message:
+            return chat_name, message
+    return None
 
 def resolve_whatsapp_request(query: str) -> tuple[str, str | None] | None:
     """Deterministically parse and resolve WhatsApp action and chat name from a user query."""
@@ -134,6 +171,84 @@ def run_chats(base_url):
             return {"error": error_msg}
     except Exception as e:
         return {"error": f"Failed to retrieve chats: {e}"}
+
+
+def run_send(base_url, chat_name: str | None, message: str | None):
+    """Send one explicit message after resolving an unambiguous chat name."""
+    if not chat_name or not message:
+        return {"error": "Both chat_name and message are required to send a WhatsApp message."}
+
+    clean_message = str(message).strip()
+    if not clean_message:
+        return {"error": "The WhatsApp message cannot be empty."}
+    if len(clean_message) > 4096:
+        return {"error": "The WhatsApp message is too long (maximum 4096 characters)."}
+
+    chats_result = run_chats(base_url)
+    if "error" in chats_result:
+        return {"error": f"Could not fetch chats to resolve name: {chats_result['error']}"}
+
+    scored_chats = []
+    self_alias = chat_name.strip().lower() in {"me", "myself", "my own number", "my self chat"}
+    if not self_alias:
+        for chat in chats_result.get("chats", []):
+            score = score_match(chat_name, chat.get("name", ""))
+            chat_id = chat.get("id")
+            if chat_id and score >= 20.0:
+                scored_chats.append((score, chat))
+
+    # WhatsApp Web exposes the self-chat as ``WhatsApp`` / ``0@c.us`` rather
+    # than the account's profile name. Resolve an explicit account-name match
+    # to that self-chat without hardcoding any person's name.
+    if not scored_chats:
+        status_result = run_status(base_url)
+        me_name = (status_result.get("me") or {}).get("name") if isinstance(status_result, dict) else None
+        self_chat = next(
+            (chat for chat in chats_result.get("chats", []) if chat.get("id") == "0@c.us"),
+            None,
+        )
+        if self_chat and me_name and (self_alias or score_match(chat_name, me_name) >= 70.0):
+            scored_chats.append((100.0, {**self_chat, "name": me_name}))
+
+    if not scored_chats:
+        return {"error": f"No WhatsApp chat found matching '{chat_name}'."}
+
+    scored_chats.sort(key=lambda item: item[0], reverse=True)
+    exact_matches = [item for item in scored_chats if item[0] == 100.0]
+    best_score, best_chat = exact_matches[0] if exact_matches else scored_chats[0]
+    second_score = scored_chats[1][0] if len(scored_chats) > 1 else 0.0
+    if best_score < 70.0:
+        return {
+            "error": f"The chat name '{chat_name}' was not an exact enough match. Please use the exact chat name.",
+            "candidates": [chat.get("name", "") for _, chat in scored_chats[:5]],
+        }
+    if not exact_matches and len(scored_chats) > 1 and best_score - second_score < 8.0:
+        return {
+            "error": f"The chat name '{chat_name}' is ambiguous. Please choose one exact chat.",
+            "candidates": [chat.get("name", "") for _, chat in scored_chats[:5]],
+        }
+
+    chat_id = str(best_chat["id"])
+    try:
+        resp = requests.post(
+            f"{base_url}/api/chats/{quote(chat_id, safe='')}/messages",
+            json={"message": clean_message},
+            headers=get_headers(),
+            timeout=30.0,
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            return {
+                "sent": True,
+                "chat_id": chat_id,
+                "chat_name": best_chat.get("name", chat_name),
+                "message": clean_message,
+                "message_id": result.get("messageId"),
+            }
+        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        return {"error": f"Message send failed: {data.get('error', resp.text)}"}
+    except Exception as exc:
+        return {"error": f"Message send request failed: {exc}"}
 
 def score_match(query, candidate):
     """Calculate similarity score between query and candidate chat name."""
@@ -274,6 +389,7 @@ def main():
     action = args.get("action", "status").lower().strip()
     chat_name = args.get("chat_name")
     chat_id = args.get("chat_id")
+    message = args.get("message")
     limit = args.get("limit")
     if limit is None:
         limit = 50
@@ -287,6 +403,8 @@ def main():
         result = run_chats(base_url)
     elif action == "summarize" or action == "summarise":
         result = run_summarize(base_url, chat_name=chat_name, chat_id=chat_id, limit=limit)
+    elif action == "send":
+        result = run_send(base_url, chat_name=chat_name, message=message)
     else:
         result = {"error": f"Unknown action: {action}"}
 

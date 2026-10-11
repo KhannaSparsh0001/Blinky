@@ -137,3 +137,73 @@ impl Tool for WikipediaTool {
         }))
     }
 }
+
+pub struct CreateSpreadsheetTool;
+
+impl CreateSpreadsheetTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Tool for CreateSpreadsheetTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "create_spreadsheet".to_string(),
+            description: "Go to Google Docs / Google Sheets and create or open a spreadsheet".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "target_url": {
+                        "type": "string",
+                        "description": "Optional specific Google Sheets URL to open"
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "Subject or purpose of the spreadsheet (e.g. 'monthly budget', 'student grades')"
+                    },
+                    "columns": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of column header names"
+                    }
+                }
+            }),
+        }
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value> {
+        let topic = args.get("topic").and_then(|v| v.as_str()).unwrap_or("spreadsheet");
+        let columns = args.get("columns").and_then(|v| v.as_array());
+
+        let raw_url = args
+            .get("target_url")
+            .or_else(|| args.get("url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("https://docs.google.com/spreadsheets/u/0/");
+
+        let url = if raw_url.contains("sheets.new") || raw_url.is_empty() {
+            "https://docs.google.com/spreadsheets/u/0/"
+        } else {
+            raw_url
+        };
+
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(url).spawn();
+
+        let message = format!("Opened Google Spreadsheet at {}", url);
+
+        Ok(json!({
+            "success": true,
+            "url": url,
+            "topic": topic,
+            "columns": columns,
+            "message": message
+        }))
+    }
+}

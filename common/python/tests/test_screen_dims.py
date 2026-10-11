@@ -6,7 +6,7 @@ from computer_use.loop import _get_screen_dims
 
 
 def test_get_screen_dims_from_mcp_window_bounds() -> None:
-    with patch("computer_use.linux_mcp.get_focused_window_bounds", return_value={"x": 0, "y": 0, "width": 2560, "height": 1440}):
+    with patch("computer_use.actuator.get_focused_window_bounds", return_value={"x": 0, "y": 0, "width": 2560, "height": 1440}):
         w, h = _get_screen_dims()
     assert w == 2560
     assert h == 1440
@@ -17,7 +17,7 @@ def test_get_screen_dims_from_xrandr() -> None:
 HDMI-1 connected primary 2560x1440+0+0 (normal left inverted right x axis y axis) 527mm x 296mm"""
 
     with (
-        patch("computer_use.linux_mcp.get_focused_window_bounds", return_value=None),
+        patch("computer_use.actuator.get_focused_window_bounds", return_value=None),
         patch("subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 0
@@ -33,7 +33,7 @@ DP-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis) 527mm x 
 HDMI-1 disconnected (normal left inverted right x axis y axis)"""
 
     with (
-        patch("computer_use.linux_mcp.get_focused_window_bounds", return_value=None),
+        patch("computer_use.actuator.get_focused_window_bounds", return_value=None),
         patch("subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 0
@@ -45,7 +45,7 @@ HDMI-1 disconnected (normal left inverted right x axis y axis)"""
 
 def test_get_screen_dims_fallback_on_xrandr_failure() -> None:
     with (
-        patch("computer_use.linux_mcp.get_focused_window_bounds", return_value=None),
+        patch("computer_use.actuator.get_focused_window_bounds", return_value=None),
         patch("subprocess.run", side_effect=FileNotFoundError("no xrandr")),
         patch("computer_use.tools.capture_screenshot", return_value=None),
     ):
@@ -56,7 +56,7 @@ def test_get_screen_dims_fallback_on_xrandr_failure() -> None:
 
 def test_get_screen_dims_from_screenshot_fallback() -> None:
     with (
-        patch("computer_use.linux_mcp.get_focused_window_bounds", return_value=None),
+        patch("computer_use.actuator.get_focused_window_bounds", return_value=None),
         patch("subprocess.run", side_effect=FileNotFoundError("no xrandr")),
         patch("computer_use.tools.capture_screenshot", return_value="/tmp/fake.png"),
         patch("PIL.Image.open") as mock_img_open,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from utils.logging import get_logger
 
 LOGGER = get_logger("blinky.uia")
@@ -63,10 +65,19 @@ def get_visible_ui_text(window=None, target_pid: int | None = None, include_unla
         }
 
         items: list[dict] = []
+        start_time = time.perf_counter()
+        UIA_TIME_BUDGET_SECONDS = 2.0
+        MAX_ITEMS = 250
 
         for element in active.descendants():
-            if len(items) >= 400:
-                LOGGER.info("UIA: Traversal capped at 400 items to prevent massive tree scanning")
+            if time.perf_counter() - start_time > UIA_TIME_BUDGET_SECONDS:
+                LOGGER.info(
+                    "UIA: Traversal time budget exceeded (%.1fs), stopping scan early to prevent window hang",
+                    UIA_TIME_BUDGET_SECONDS,
+                )
+                break
+            if len(items) >= MAX_ITEMS:
+                LOGGER.info("UIA: Traversal capped at %d items to prevent massive tree scanning", MAX_ITEMS)
                 break
                 
             try:
@@ -163,6 +174,7 @@ def get_visible_ui_text(window=None, target_pid: int | None = None, include_unla
                                 automation_id=_element_metadata(el, "automation_id"),
                             ))
                             LOGGER.info("UIA: Captured Blinky control element '%s' at (%d, %d)", text, x, y)
+                            break
                         except Exception:
                             continue
                     break

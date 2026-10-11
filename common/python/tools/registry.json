@@ -98,6 +98,25 @@
     "verification_args": {
       "color": "red"
     }
+  },
+  "spreadsheet_tool": {
+    "name": "spreadsheet_tool",
+    "description": "Create or open a spreadsheet in Microsoft Excel from user prompt with automatic column structure and data generation, or write directly into cells.",
+    "filepath": "python/tools/spreadsheet_tool.py",
+    "arguments": [
+      "action",
+      "topic",
+      "columns",
+      "raw_prompt",
+      "cell",
+      "cells",
+      "text"
+    ],
+    "status": "generalized",
+    "verification_args": {
+      "action": "create",
+      "topic": "test"
+    }
   }
 }
 

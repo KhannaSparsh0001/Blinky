@@ -71,7 +71,7 @@ def _emit_status(phase: str, message: str, data: dict | None = None) -> None:
 
 from .tools import (
     ToolResult,
-    open_app_tool_linux,
+    open_app_tool,
     list_windows_tool,
     get_app_state_tool,
     click_element_tool,
@@ -82,7 +82,7 @@ from .tools import (
 )
 
 TOOL_MAP = {
-    "open_app": open_app_tool_linux,
+    "open_app": open_app_tool,
     "list_windows": list_windows_tool,
     "get_app_state": get_app_state_tool,
     "click_element": click_element_tool,
@@ -97,7 +97,22 @@ from . import metrics as vision_metrics
 from .vision_planner import plan_action
 from .vision_verifier import verify_action
 from .recovery import diagnose_failure
-from .tools import capture_screenshot, checksum_frame
+from .tools import capture_screenshot as _capture_screenshot, checksum_frame
+
+
+def capture_screenshot() -> str | None:
+    """Capture a frame without letting an unavailable platform backend escape.
+
+    The loop uses screenshots opportunistically for planning and verification.
+    A Windows/macOS install may not have the Linux backend package on its
+    import path, so a missing backend must degrade to no screenshot rather than
+    aborting the entire computer-use request.
+    """
+    try:
+        return _capture_screenshot()
+    except Exception as exc:
+        LOGGER.debug("Screenshot capture unavailable: %s", exc)
+        return None
 
 
 def _describe_action(tool_name: str, args: dict[str, Any]) -> str:
@@ -273,7 +288,7 @@ def _backend_list_windows_cheap() -> list[Any]:
     tool-call + OCR machinery.
     """
     try:
-        from backend.window import list_windows
+        from .actuator import list_windows
 
         return list_windows()
     except Exception:
@@ -283,7 +298,8 @@ def _backend_list_windows_cheap() -> list[Any]:
 def _get_fresh_window_bounds() -> dict[str, Any] | None:
     """Get fresh window bounds at action time to avoid stale coordinates."""
     try:
-        from computer_use.linux_mcp import get_focused_window_bounds
+        from .actuator import get_focused_window_bounds
+
         return get_focused_window_bounds()
     except Exception:
         return _last_window_bounds
@@ -296,7 +312,8 @@ def _get_screen_dims() -> tuple[int, int]:
     """
     # 1. Try wayland_vision's get_focused_window_bounds (window fills screen minus panels)
     try:
-        from computer_use.linux_mcp import get_focused_window_bounds
+        from .actuator import get_focused_window_bounds
+
         b = get_focused_window_bounds()
         if b and b.get("width") and b.get("height"):
             return int(b["width"]), int(b["height"])
@@ -423,9 +440,6 @@ def run_computer_use_loop(
 ) -> dict[str, Any]:
     """Execute a multi-step desktop automation task.
     Recipes inject knowledge into the LLM prompt — never blind replay."""
-
-    if platform.system() != "Linux":
-        return {"success": False, "error": "Computer use is only supported on Linux.", "steps": []}
 
     from ai.client import ask_text_model, has_vision_capability
 
@@ -691,8 +705,23 @@ def run_computer_use_loop(
                 try:
                     windows = _backend_list_windows_cheap()
                     app_hint = str(args.get("app_name", "")).lower()[:20]
+
+                    def _window_text(window: Any, key: str, *fallbacks: str) -> str:
+                        if isinstance(window, dict):
+                            for field in (key, *fallbacks):
+                                value = window.get(field)
+                                if value:
+                                    return str(value)
+                            return ""
+                        for field in (key, *fallbacks):
+                            value = getattr(window, field, None)
+                            if value:
+                                return str(value)
+                        return ""
+
                     appeared = any(
-                        app_hint in w.process.lower() or app_hint in w.title.lower()
+                        app_hint in _window_text(w, "process", "app_id").lower()
+                        or app_hint in _window_text(w, "title").lower()
                         for w in windows
                     )
                     if appeared:

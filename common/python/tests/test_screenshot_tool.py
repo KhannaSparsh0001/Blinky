@@ -14,11 +14,40 @@ if LINUX_PYTHON not in os.environ.get("PYTHONPATH", ""):
 from computer_use.tools import ToolResult, screenshot_tool
 
 
-def test_screenshot_tool_not_linux() -> None:
-    with patch("computer_use.tools.IS_LINUX", False):
+def test_screenshot_tool_windows_uses_common_capture() -> None:
+    fake = MagicMock()
+    fake.path = Path("screenshots/screen.jpg")
+    with (
+        patch("computer_use.tools.IS_LINUX", False),
+        patch("computer_use.backends.get_backend", return_value=None),
+        patch("capture.capture_screen", return_value=fake) as capture_screen,
+    ):
         result = screenshot_tool()
-        assert result.success is False
-        assert "supported on Linux only" in result.message
+        assert result.success is True
+        assert result.details["image_path"].endswith("screen.jpg")
+        capture_screen.assert_called_once_with()
+
+
+def test_screenshot_tool_windows_prefers_cua_capture() -> None:
+    fake = MagicMock()
+    fake.path = Path("screenshots/cua-screen.jpg")
+    fake.width = 100
+    fake.height = 80
+    fake.screen_width = 100
+    fake.screen_height = 80
+    backend = MagicMock()
+    backend.capture.return_value = fake
+    with (
+        patch("computer_use.tools.IS_LINUX", False),
+        patch("computer_use.backends.get_backend", return_value=backend),
+        patch("capture.capture_screen", side_effect=AssertionError("common fallback should not run")),
+    ):
+        result = screenshot_tool()
+
+    assert result.success is True
+    assert result.details["image_path"].endswith("cua-screen.jpg")
+    assert result.details["has_vision"] is True
+    backend.capture.assert_called_once_with(window=False)
 
 
 def test_screenshot_tool_legacy_mode_returns_ocr_items_key() -> None:

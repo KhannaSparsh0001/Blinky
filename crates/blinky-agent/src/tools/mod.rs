@@ -49,6 +49,7 @@ impl ToolRegistry {
         // 4. Utility Tools
         registry.register(Arc::new(utility::CryptoPriceTool::new()));
         registry.register(Arc::new(utility::WikipediaTool::new()));
+        registry.register(Arc::new(utility::CreateSpreadsheetTool::new()));
 
         // 5. Hardware & IDE Bridges
         registry.register(Arc::new(esp32::Esp32LightTool::new()));

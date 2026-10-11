@@ -441,10 +441,23 @@ def type_text(text: str, target_app: str | None = None) -> dict[str, Any]:
         linux = _linux_module()
         if linux is not None:
             return linux.type_text(text, target_app=target_app)
+        if IS_WINDOWS:
+            try:
+                from utils.window import get_target_window_element
+                import ctypes
+                active = get_target_window_element()
+                if active and hasattr(active, "handle") and active.handle:
+                    ctypes.windll.user32.SetForegroundWindow(active.handle)
+                    import time; time.sleep(0.05)
+                import pywinauto.keyboard
+                pywinauto.keyboard.send_keys(text, with_spaces=True)
+                return _ok_result("type_text", f"Typed '{text}' via native keyboard", text=text, target_app=target_app)
+            except Exception as exc:
+                LOGGER.warning("Native keyboard type fallback failed: %s", exc)
         return _no_backend("type_text")
 
     try:
-        result = backend.type_text(text)
+        result = backend.type_text(text, target_app=target_app)
         return (
             _ok_result("type_text", result.message, text=text, target_app=target_app)
             if result.ok
@@ -465,7 +478,7 @@ def press_key(key: str, target_app: str | None = None) -> dict[str, Any]:
 
     backend_key = _MEDIA_KEY_MAP.get(key, key)
     try:
-        result = backend.key(backend_key)
+        result = backend.key(backend_key, target_app=target_app)
         return (
             _ok_result("press_key", result.message, key=key)
             if result.ok

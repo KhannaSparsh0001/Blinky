@@ -475,9 +475,33 @@ class CuaDriverBackend(ComputerUseBackend):
 
     @staticmethod
     def _is_driver_overlay(item: dict[str, Any]) -> bool:
-        """Skip cua-driver's own overlay-cursor window when picking a target."""
-        haystack = f"{item.get('app_name', '')} {item.get('title', '')}".lower()
-        return "agentcursoroverlay" in haystack or "cua.agentcursor" in haystack
+        """Skip cua-driver's own overlay cursor and Blinky's CommandBar when picking a target."""
+        haystack = f"{item.get('app_name', '')} {item.get('process', '')} {item.get('app_id', '')} {item.get('title', '')}".lower()
+        if "agentcursoroverlay" in haystack or "cua.agentcursor" in haystack:
+            return True
+        title = (item.get("title") or "").strip().lower()
+        if title in {"blinky", "blinky app", "recording toolbar", "command palette"} or title.startswith("blinky app"):
+            return True
+        return False
+
+    def _resolve_target_window_by_name(self, target_app: str) -> WindowInfo | None:
+        target_lower = target_app.strip().lower()
+        if not target_lower:
+            return None
+        windows = self.list_windows()
+        for w in windows:
+            w_title = (w.title or "").lower()
+            w_proc = (w.process or "").lower()
+            if target_lower in w_title or target_lower in w_proc:
+                return w
+        # Common domain expansions
+        spreadsheet_markers = ("sheet", "untitled spreadsheet", "docs.google.com", "excel", "calc")
+        if target_lower in {"spreadsheet", "sheet", "sheets", "googlesheet", "googlesheets"}:
+            for w in windows:
+                w_title = (w.title or "").lower()
+                if any(m in w_title for m in spreadsheet_markers):
+                    return w
+        return None
 
     def get_active_window(self) -> WindowInfo | None:
         """Frontmost on-screen window.
@@ -578,10 +602,20 @@ class CuaDriverBackend(ComputerUseBackend):
             payload["y"] = int(y)
         return self._dispatch_input("scroll", payload, action="scroll")
 
-    def type_text(self, text: str) -> ActionResult:
-        return self._dispatch_input("type_text", {"text": text}, action="type_text")
+    def type_text(self, text: str, target_app: str | None = None) -> ActionResult:
+        payload: dict[str, Any] = {"text": text}
+        active = None
+        if target_app:
+            active = self._resolve_target_window_by_name(target_app)
+        if active is None:
+            active = self.get_active_window()
+        if active is not None and active.pid is not None:
+            payload["pid"] = int(active.pid)
+            if active.window_id:
+                payload["window_id"] = str(active.window_id)
+        return self._dispatch_input("type_text", payload, action="type_text")
 
-    def key(self, keys: str) -> ActionResult:
+    def key(self, keys: str, target_app: str | None = None) -> ActionResult:
         """Single key or a combination like `ctrl+s`.
 
         `press_key` handles one key; `hotkey` handles combinations. Blinky's
@@ -599,13 +633,38 @@ class CuaDriverBackend(ComputerUseBackend):
             payload = {"key": normalized}
             tool = "press_key"
 
+        # cua-driver's keyboard actions are window-scoped on Windows and
+        # require the target process id. Resolve the frontmost real window at
+        # action time, excluding the driver's own cursor overlay.
+        active = None
+        if target_app:
+            active = self._resolve_target_window_by_name(target_app)
+        if active is None:
+            active = self.get_active_window()
+        if active is not None and active.pid is not None:
+            payload["pid"] = int(active.pid)
+            if active.window_id:
+                payload["window_id"] = str(active.window_id)
+
         return self._dispatch_input(tool, payload, action="key")
 
-    def focus_window(self, window_id: str) -> ActionResult:
+    def focus_window(self, window_id: str, pid: int | None = None) -> ActionResult:
         try:
             payload: dict[str, Any] = {"window_id": int(window_id)}
         except (TypeError, ValueError):
             return ActionResult(False, "focus_window", f"invalid window_id: {window_id!r}", {})
+
+        if pid is None:
+            try:
+                for w in self.list_windows():
+                    if str(w.window_id) == str(window_id) and w.pid is not None:
+                        pid = int(w.pid)
+                        break
+            except Exception:
+                pass
+
+        if pid is not None:
+            payload["pid"] = int(pid)
 
         # bring_to_front is the one operation that legitimately changes z-order.
         # Blinky only calls it when the user explicitly targets a window.
@@ -627,7 +686,69 @@ class CuaDriverBackend(ComputerUseBackend):
         payload.setdefault("delivery_mode", "background")
         try:
             data = self._call(tool, payload)
+            if (
+                payload.get("pid") is not None
+                and tool in {"type_text", "press_key", "hotkey"}
+                and isinstance(data, dict)
+                and data.get("code") == "ambiguous_window_target"
+            ):
+                unscoped = dict(payload)
+                unscoped.pop("pid", None)
+                retry_data = self._call(tool, unscoped)
+                return ActionResult(
+                    True,
+                    action,
+                    f"{tool} completed via focused-window fallback.",
+                    {"result": retry_data, "pid_fallback": True},
+                )
+            if isinstance(data, dict) and data.get("code") == "background_unavailable":
+                # Some driver versions return background failures as a normal
+                # response rather than raising a transport exception.
+                raise _CuaDriverError(
+                    tool,
+                    str(data.get("message", "background unavailable")),
+                    data,
+                )
         except _CuaDriverError as exc:
+            # Some Chromium/WebView and transparent-overlay windows share a
+            # process id. cua-driver refuses a pid-scoped keyboard action when
+            # it cannot select one exact HWND; retry the global route once so
+            # the focused target can still receive input. This is also the
+            # required path for Blinky's own borderless prompt overlay.
+            if (
+                payload.get("pid") is not None
+                and tool in {"type_text", "press_key", "hotkey"}
+                and not _is_background_unavailable(exc)
+            ):
+                unscoped = dict(payload)
+                unscoped.pop("pid", None)
+                data = None
+                try:
+                    data = self._call(tool, unscoped)
+                    # The driver reports structured failures as a normal JSON
+                    # result for some Chromium/WebView surfaces. Do not turn a
+                    # background_unavailable response into a false success;
+                    # let the foreground escalation below handle it.
+                    if not (
+                        isinstance(data, dict)
+                        and data.get("code") == "background_unavailable"
+                    ):
+                        return ActionResult(
+                            True,
+                            action,
+                            f"{tool} completed via focused-window fallback.",
+                            {"result": data, "pid_fallback": True},
+                        )
+                except _CuaDriverError:
+                    pass
+                if isinstance(data, dict) and data.get("code") == "background_unavailable":
+                    # Re-enter the outer error path so the normal foreground
+                    # escalation is applied to structured JSON failures too.
+                    raise _CuaDriverError(
+                        tool,
+                        str(data.get("message", "background unavailable")),
+                        data,
+                    )
             if not _is_background_unavailable(exc):
                 return ActionResult(False, action, exc.message, {"payload": payload, "error": exc.payload})
 

@@ -206,7 +206,79 @@ def test_type_text_sends_text_without_pid() -> None:
 
     payload = transport.last("type_text")
     assert payload["text"] == "hello"
-    assert "pid" not in payload
+
+
+def test_type_text_includes_active_window_pid_when_available() -> None:
+    backend, transport = make_backend(
+        responses={
+            "list_windows": {
+                "windows": [
+                    {
+                        "title": "Editor",
+                        "app_name": "editor.exe",
+                        "pid": 42,
+                        "window_id": 99,
+                        "is_on_screen": True,
+                        "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+                    }
+                ]
+            }
+        }
+    )
+
+    backend.type_text("hello")
+
+    assert transport.last("type_text")["pid"] == 42
+
+
+def test_key_includes_active_window_pid_when_available() -> None:
+    backend, transport = make_backend(
+        responses={
+            "list_windows": {
+                "windows": [
+                    {
+                        "title": "Browser",
+                        "app_name": "chrome.exe",
+                        "pid": 77,
+                        "window_id": 11,
+                        "is_on_screen": True,
+                        "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+                    }
+                ]
+            }
+        }
+    )
+
+    backend.key("ctrl+l")
+
+    assert transport.last("hotkey")["pid"] == 77
+
+
+def test_keyboard_retries_unscoped_when_process_has_ambiguous_windows() -> None:
+    ambiguous = _CuaDriverError(
+        "type_text",
+        "ambiguous window target",
+        {"code": "ambiguous_window_target"},
+    )
+    backend, transport = make_backend(
+        responses={"type_text": [ambiguous, {"typed": True}], "list_windows": {
+            "windows": [{
+                "title": "Blinky Highlight Overlay",
+                "app_name": "blinky.exe",
+                "pid": 41484,
+                "window_id": 1,
+                "is_on_screen": True,
+                "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
+            }]
+        }}
+    )
+
+    result = backend.type_text("hello")
+
+    assert result.ok is True
+    calls = [payload for tool, payload in transport.calls if tool == "type_text"]
+    assert calls[0]["pid"] == 41484
+    assert "pid" not in calls[1]
 
 
 # ── Window / element mapping ───────────────────────────────────────

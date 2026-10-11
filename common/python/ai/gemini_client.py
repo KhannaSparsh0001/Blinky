@@ -12,13 +12,14 @@ from utils.logging import get_logger
 
 LOGGER = get_logger("blinky.gemini")
 
-# Priority model list: active modern 2.5/2.0/1.5 family
+# Priority model list: active modern 3.5/3.8/lite family
 PREFERRED_GEMINI_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
     "gemini-flash-latest",
+    "gemini-2.5-flash",
 ]
 
 
@@ -39,7 +40,12 @@ def _get_gemini_client():
         api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
         if not api_key:
             # Auto-load from .env if running directly without Tauri parent process
-            for candidate in [Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env"]:
+            for candidate in [
+                Path.cwd() / ".env",
+                Path(__file__).resolve().parents[1] / ".env",
+                Path(__file__).resolve().parents[2] / ".env",
+                Path(__file__).resolve().parents[3] / ".env",
+            ]:
                 if candidate.exists():
                     try:
                         for line in candidate.read_text(encoding="utf-8").splitlines():

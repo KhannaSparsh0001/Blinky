@@ -147,14 +147,14 @@ class ComputerUseBackend(ABC):
     ) -> ActionResult: ...
 
     @abstractmethod
-    def type_text(self, text: str) -> ActionResult: ...
+    def type_text(self, text: str, target_app: str | None = None) -> ActionResult: ...
 
     @abstractmethod
-    def key(self, keys: str) -> ActionResult:
+    def key(self, keys: str, target_app: str | None = None) -> ActionResult:
         """Combo like 'ctrl+s' or media keys 'play', 'next', 'prev'."""
 
     @abstractmethod
-    def focus_window(self, window_id: str) -> ActionResult: ...
+    def focus_window(self, window_id: str, pid: int | None = None) -> ActionResult: ...
 
     # ── Optional: element enumeration ───────────────────────────
     def get_window_elements(self, window_id: str, pid: int | None = None) -> list[UIElement]:

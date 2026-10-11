@@ -1,25 +1,46 @@
 use super::Tool;
 use crate::providers::ToolDefinition;
-use anyhow::{Context, Result};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::TcpStream;
+
+#[cfg(unix)]
+type DaemonStream = UnixStream;
+#[cfg(windows)]
+type DaemonStream = TcpStream;
 
 pub struct DaemonRpcClient {
+    #[allow(dead_code)]
     socket_path: std::path::PathBuf,
 }
 
 impl DaemonRpcClient {
     pub fn new() -> Self {
+        #[cfg(unix)]
         let runtime = std::env::var("XDG_RUNTIME_DIR")
             .unwrap_or_else(|_| format!("/run/user/{}", nix::unistd::getuid()));
-        Self {
-            socket_path: std::path::PathBuf::from(runtime).join("blinky-daemon.sock"),
-        }
+        #[cfg(unix)]
+        let socket_path = std::path::PathBuf::from(runtime).join("blinky-daemon.sock");
+        #[cfg(windows)]
+        let socket_path = std::path::PathBuf::new();
+        Self { socket_path }
     }
 
-    async fn ensure_connected(&self) -> Result<UnixStream> {
+    async fn ensure_connected(&self) -> Result<DaemonStream> {
+        #[cfg(windows)]
+        {
+            anyhow::bail!("The Linux desktop daemon is not available on Windows; use the Windows actuator.");
+        }
+
+        #[cfg(unix)]
+        {
         if let Ok(stream) = UnixStream::connect(&self.socket_path).await {
             return Ok(stream);
         }
@@ -48,6 +69,7 @@ impl DaemonRpcClient {
         UnixStream::connect(&self.socket_path)
             .await
             .with_context(|| format!("Failed to connect to daemon socket at {}", self.socket_path.display()))
+        }
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {

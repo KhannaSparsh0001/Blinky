@@ -107,6 +107,30 @@ app.get('/api/chats', requireSession, async (req, res) => {
   }
 });
 
+app.post('/api/chats/:id/messages', requireSession, async (req, res) => {
+  try {
+        const { status } = req.session.getStatus();
+        if (status !== 'connected') return res.status(503).json({ error: 'WhatsApp not connected yet' });
+
+        const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+        if (!message) return res.status(400).json({ error: 'message required' });
+        if (message.length > 4096) return res.status(400).json({ error: 'message exceeds 4096 characters' });
+
+        const chat = await req.session.getChatInstance(req.params.id);
+        if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+        const sent = await chat.sendMessage(message);
+        res.json({
+            ok: true,
+            chatId: req.params.id,
+            message,
+            messageId: sent?.id?._serialized || sent?.id?.id || null,
+        });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/debug-chats', requireSession, async (req, res) => {
   try {
         const results = await req.session.client.pupPage.evaluate(async () => {

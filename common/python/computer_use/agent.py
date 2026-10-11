@@ -105,6 +105,14 @@ CLICK_ELEMENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+TYPE_TEXT_IN_APP_RE = re.compile(
+    r"^\s*(?:type|enter|write|input)\s+(?P<text>.+?)\s+(?:in|into)\s+(?:the\s+)?(?P<app>[a-zA-Z0-9 .+_-]{2,60})\s*$",
+    re.IGNORECASE,
+)
+TYPE_TEXT_TO_APP_RE = re.compile(
+    r"^\s*(?:type|enter|write|input)\s+(?P<text>.+?)\s+to\s+(?:the\s+)?(?P<app>[a-zA-Z][a-zA-Z0-9 .+_-]{1,60})\s*$",
+    re.IGNORECASE,
+)
 TYPE_TEXT_RE = re.compile(
     r"^\s*(?:type|enter|write|input)\s+(?P<text>.+?)(?:\s+(?:in|into|to)\s+(?:the\s+)?(?P<app>[a-zA-Z0-9 .+_-]{2,60}))?\s*$",
     re.IGNORECASE,
@@ -132,6 +140,8 @@ def is_web_destination(app_name: str) -> bool:
 
 def looks_like_app_name(app_name: str) -> bool:
     name_lower = app_name.lower().strip()
+    if re.match(r"^cell\s+[a-zA-Z]{1,3}\d+$", name_lower):
+        return False
     words = name_lower.split()
     if not words:
         return False
@@ -251,6 +261,22 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
         return shortcut_tool("media_prev")
 
 
+    # Spreadsheet creation fast-path
+    try:
+        from tools.spreadsheet_tool import resolve_spreadsheet_request, handle_request as handle_spreadsheet_request
+        sheet_params = resolve_spreadsheet_request(question_cleaned)
+        if sheet_params:
+            sheet_res = handle_spreadsheet_request(sheet_params)
+            msg = sheet_res.get("message") or "Created Microsoft Excel spreadsheet successfully."
+            return ToolResult(
+                sheet_res.get("success", True),
+                "spreadsheet_tool",
+                msg,
+                sheet_res,
+            )
+    except Exception as exc:
+        LOGGER.debug("Spreadsheet tool action failed: %s", exc)
+
     # Desktop actions (click element, type text, list windows, get app state)
     result = _try_desktop_action(question_cleaned)
     if result is not None:
@@ -308,13 +334,43 @@ def _try_desktop_action(question: str) -> ToolResult | None:
         return None
 
     # Type text
-    type_match = TYPE_TEXT_RE.match(question)
+    type_match = (
+        TYPE_TEXT_IN_APP_RE.match(question)
+        or TYPE_TEXT_TO_APP_RE.match(question)
+        or TYPE_TEXT_RE.match(question)
+    )
     if type_match:
         text = type_match.group("text")
-        app = type_match.group("app")
+        app = type_match.group("app") if "app" in type_match.groupdict() else None
         if text:
+            cleaned_text = text.strip()
+            # If app is a cell reference (e.g. "cell b1", "cell a1"), route directly to spreadsheet tool
+            if app and re.match(r"^cell\s+[a-zA-Z]{1,3}\d+$", app.strip(), re.IGNORECASE):
+                cell_ref = re.sub(r"^cell\s+", "", app.strip(), flags=re.IGNORECASE).upper()
+                try:
+                    from tools.spreadsheet_tool import execute_type_in_cell
+                    sheet_res = execute_type_in_cell(cell_ref, cleaned_text)
+                    return ToolResult(
+                        sheet_res.get("success", True),
+                        "spreadsheet_tool",
+                        sheet_res.get("message", f"Typed '{cleaned_text}' in cell {cell_ref}."),
+                        sheet_res,
+                    )
+                except Exception as exc:
+                    LOGGER.debug("execute_type_in_cell in agent.py failed: %s", exc)
+
+            # If user asks to type a number sequence like "1 to 9" or "from 1 to 9"
+            range_match = re.match(r"^(?:from\s+)?(\d+)\s+to\s+(\d+)$", cleaned_text, re.IGNORECASE)
+            if range_match:
+                start_n, end_n = int(range_match.group(1)), int(range_match.group(2))
+                if start_n <= end_n and (end_n - start_n) <= 100:
+                    if app and any(k in app.lower() for k in ("sheet", "excel", "table")):
+                        cleaned_text = "\t".join(str(i) for i in range(start_n, end_n + 1))
+                    else:
+                        cleaned_text = " ".join(str(i) for i in range(start_n, end_n + 1))
+
             from .tools import type_text_tool
-            return type_text_tool(text.strip(), target_app=app.strip() if app else None)
+            return type_text_tool(cleaned_text, target_app=app.strip() if app else None)
 
     return None
 

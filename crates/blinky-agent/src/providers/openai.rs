@@ -128,24 +128,47 @@ impl AiProvider for OpenAiCompatibleProvider {
             payload["tool_choice"] = json!("auto");
         }
 
-        let mut req = self.client.post(&endpoint).json(&payload);
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
+        let mut attempts = 0;
+        let body: Value = loop {
+            attempts += 1;
+            let mut req = self.client.post(&endpoint).json(&payload);
+            if !self.api_key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", self.api_key));
+            }
 
-        let res = req
-            .send()
-            .await
-            .with_context(|| format!("Failed to connect to AI provider endpoint {}", endpoint))?;
+            let res = req
+                .send()
+                .await
+                .with_context(|| format!("Failed to connect to AI provider endpoint {}", endpoint))?;
 
-        if !res.status().is_success() {
+            if res.status().is_success() {
+                break res.json().await.context("Failed to parse AI JSON response")?;
+            }
+
             let status = res.status();
             let text = res.text().await.unwrap_or_default();
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempts <= 2 {
+                let mut wait_secs = 11.0;
+                if let Some(pos) = text.find("try again in ") {
+                    let sub = &text[pos + 13..];
+                    if let Some(end) = sub.find('s') {
+                        if let Ok(parsed) = sub[..end].trim().parse::<f64>() {
+                            wait_secs = parsed.min(20.0);
+                        }
+                    }
+                }
+                tracing::warn!(
+                    "AI provider rate limited (429); waiting {:.1}s before retry...",
+                    wait_secs
+                );
+                tokio::time::sleep(Duration::from_millis((wait_secs * 1000.0) as u64 + 500)).await;
+                continue;
+            }
+
             error!("AI Provider error ({}): {}", status, text);
             bail!("AI Provider error ({}): {}", status, text);
-        }
-
-        let body: Value = res.json().await.context("Failed to parse AI JSON response")?;
+        };
 
         let choice = body["choices"]
             .as_array()

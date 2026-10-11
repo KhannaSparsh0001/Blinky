@@ -388,13 +388,21 @@ def run(
         LOGGER.info("Routing to WhatsApp tool for intent: WHATSAPP")
         wa_action = str(extracted_params.get("wa_action") or "status").lower().strip()
         wa_chat_name = extracted_params.get("wa_chat_name") or None
-        return run_whatsapp_tool(wa_action, wa_chat_name, started, warnings)
+        wa_message = extracted_params.get("wa_message") or None
+        return run_whatsapp_tool(wa_action, wa_chat_name, started, warnings, wa_message)
     elif intent == "SCREENSHOT":
         LOGGER.info("Routing to SCREENSHOT fast-path")
         return run_screenshot_tool(started, warnings)
     elif intent == "ESP32_LIGHT":
         LOGGER.info("Routing to ESP32 Light tool for intent: ESP32_LIGHT")
         return run_esp32_light_tool(extracted_params, started, warnings)
+    elif intent == "SPREADSHEET":
+        LOGGER.info("Routing to spreadsheet tool for intent: SPREADSHEET")
+        if not extracted_params:
+            extracted_params = {}
+        if "raw_prompt" not in extracted_params:
+            extracted_params["raw_prompt"] = question
+        return run_spreadsheet_tool(extracted_params, started, warnings)
     elif intent in {"COMPUTER_USE", "OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
 
         LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
@@ -449,7 +457,7 @@ def run(
             if shortcut:
                 from computer_use.tools import shortcut_tool
                 direct_agent_result = shortcut_tool(shortcut)
-        elif intent == "COMPUTER_USE" and platform.system() == "Linux":
+        elif intent == "COMPUTER_USE":
             from computer_use.loop import run_computer_use_loop
             loop_result = run_computer_use_loop(question)
             if loop_result.get("success"):
@@ -1001,7 +1009,20 @@ def classify_request(
     except Exception as exc:
         LOGGER.debug("Fast-path AiCut resolution failed: %s", exc)
     try:
-        from tools.whatsapp_tool import resolve_whatsapp_request
+        from tools.whatsapp_tool import resolve_whatsapp_request, resolve_whatsapp_send_request
+        send_match = resolve_whatsapp_send_request(question)
+        if send_match:
+            chat_name, message = send_match
+            return {
+                "intent": "WHATSAPP",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": {
+                    "wa_action": "send",
+                    "wa_chat_name": chat_name,
+                    "wa_message": message,
+                }
+            }
         wa_match = resolve_whatsapp_request(question)
         if wa_match:
             action, chat_name = wa_match
@@ -1016,6 +1037,18 @@ def classify_request(
             }
     except Exception as exc:
         LOGGER.debug("Fast-path WhatsApp resolution failed: %s", exc)
+    try:
+        from tools.spreadsheet_tool import resolve_spreadsheet_request
+        sheet_match = resolve_spreadsheet_request(question)
+        if sheet_match:
+            return {
+                "intent": "SPREADSHEET",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": sheet_match,
+            }
+    except Exception as exc:
+        LOGGER.debug("Fast-path SPREADSHEET resolution failed: %s", exc)
     # Fast-path Screenshot / Screen capture
     cleaned_lower = question.lower().strip().rstrip("?.!,;:")
     if any(k in cleaned_lower for k in {
@@ -1133,6 +1166,7 @@ def run_whatsapp_tool(
     chat_name: str | None,
     started: float,
     warnings: list[str],
+    message: str | None = None,
 ) -> dict:
     """Call whatsapp_tool.py as a subprocess and return a Blinky-formatted result."""
     import subprocess
@@ -1142,6 +1176,8 @@ def run_whatsapp_tool(
     args_dict: dict = {"action": action}
     if chat_name:
         args_dict["chat_name"] = chat_name
+    if message:
+        args_dict["message"] = message
 
     LOGGER.info("Running WhatsApp tool: action=%s chat_name=%s", action, chat_name)
     _emit_status("whatsapp", f"Connecting to WhatsApp backend ({action})...")
@@ -1191,6 +1227,11 @@ def run_whatsapp_tool(
                         summary = "WhatsApp is not connected. Use the WhatsApp button in Blinky settings to connect."
                     else:
                         summary = f"WhatsApp status: {status_val or json.dumps(result_data)}"
+                elif action == "send":
+                    if result_data.get("sent"):
+                        summary = f"Sent WhatsApp message to {result_data.get('chat_name', chat_name or 'the chat')}."
+                    else:
+                        summary = json.dumps(result_data, indent=2)
                 else:
                     summary = json.dumps(result_data, indent=2)
             except json.JSONDecodeError:
@@ -1232,6 +1273,39 @@ def run_esp32_light_tool(
         "summary": summary,
         "steps": [],
         "active_app": {"title": "", "process": "", "supported": False},
+        "ocr": {"count": 0, "items": []},
+        "elapsed_ms": elapsed_ms,
+        "provider": get_provider_label(),
+        "warnings": warnings,
+        "is_continuation": False,
+    }
+
+
+def run_spreadsheet_tool(
+    params: dict,
+    started: float,
+    warnings: list[str],
+) -> dict:
+    """Execute spreadsheet tool in Microsoft Excel and return a Blinky-formatted result."""
+    from tools.spreadsheet_tool import handle_request
+    action = params.get("action", "")
+    if action == "type_in_cell":
+        cell = params.get("cell", "A1")
+        _emit_status("spreadsheet", f"Focusing Microsoft Excel and writing in cell {cell}...")
+    elif action == "type_in_cells":
+        cells_desc = ", ".join(c.get("cell", "") for c in params.get("cells", []))
+        _emit_status("spreadsheet", f"Focusing Microsoft Excel and writing in cells {cells_desc}...")
+    else:
+        _emit_status("spreadsheet", "Opening Microsoft Excel spreadsheet...")
+    res = handle_request(params)
+    summary = res.get("message", "Microsoft Excel action completed.")
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    app_label = "Microsoft Excel"
+    app_proc = "excel"
+    return {
+        "summary": summary,
+        "steps": [],
+        "active_app": {"title": app_label, "process": app_proc, "supported": True},
         "ocr": {"count": 0, "items": []},
         "elapsed_ms": elapsed_ms,
         "provider": get_provider_label(),

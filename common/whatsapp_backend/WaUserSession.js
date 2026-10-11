@@ -321,7 +321,12 @@ export class WaUserSession {
     }
 
     getStatus() {
-        return { status: this.status, qr: this.qr };
+        const pushName = this.client?.info?.pushname || this.client?.info?.name || null;
+        return {
+            status: this.status,
+            qr: this.qr,
+            ...(pushName ? { me: { name: String(pushName) } } : {}),
+        };
     }
 
     getSettingsForApi() {

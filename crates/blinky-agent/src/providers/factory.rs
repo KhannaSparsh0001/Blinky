@@ -8,6 +8,11 @@ use std::sync::Arc;
 use tracing::info;
 
 pub fn create_provider_from_env() -> Result<Arc<dyn AiProvider>> {
+    // Tauri's dev process is launched by Bun and does not automatically load
+    // the workspace .env file. Load it here so the Rust agent uses the same
+    // provider credentials and model settings as the Python agent.
+    let _ = dotenvy::dotenv();
+
     let provider_key = std::env::var("FLICKY_AI_PROVIDER")
         .or_else(|_| std::env::var("BLINKY_AI_PROVIDER"))
         .unwrap_or_else(|_| "groq".to_string())
@@ -15,6 +20,7 @@ pub fn create_provider_from_env() -> Result<Arc<dyn AiProvider>> {
 
     let model_override = std::env::var("FLICKY_AI_MODEL")
         .or_else(|_| std::env::var("BLINKY_AI_MODEL"))
+        .or_else(|_| std::env::var("BLINKY_GROQ_MODEL"))
         .ok();
 
     match provider_key.as_str() {

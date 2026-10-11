@@ -34,6 +34,11 @@ pub fn click_element_impl(x: i32, y: i32, label: &str) -> Result<(), String> {
         match super::cua::click_element_at(x, y, Some(label)) {
             Ok(()) => return Ok(()),
             Err(err) => {
+                let err_lower = err.to_lowercase();
+                if err_lower.contains("timed out") || err_lower.contains("unresponsive") || err_lower.contains("timeout") {
+                    eprintln!("blinky: cua element click timed out ({err}); bypassing secondary UIA point click and falling back directly to SendInput");
+                    return send_input_click(x, y);
+                }
                 eprintln!("blinky: cua element click failed ({err}); falling back to point click")
             }
         }
@@ -52,6 +57,11 @@ pub fn click_screen_point_impl(x: i32, y: i32) -> Result<(), String> {
             Err(err) => eprintln!("blinky: cua click failed ({err}); falling back to SendInput"),
         }
     }
+
+    send_input_click(x, y)
+}
+
+fn send_input_click(x: i32, y: i32) -> Result<(), String> {
 
     use std::thread;
     use std::time::Duration;

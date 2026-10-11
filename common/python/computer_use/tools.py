@@ -1573,7 +1573,7 @@ def type_text_tool(text: str, target_app: str | None = None) -> ToolResult:
             and target_app
             and "target window could not be focused" in str(result.get("message", ""))
         ):
-            launch_result = open_app_tool_linux(target_app)
+            launch_result = open_app_tool(target_app)
             if launch_result.success:
                 time.sleep(1.0)
                 result = type_text(text, target_app=target_app)
@@ -1611,7 +1611,7 @@ def press_key_tool(key: str, target_app: str | None = None) -> ToolResult:
             and target_app
             and "target window could not be focused" in str(result.get("message", ""))
         ):
-            launch_result = open_app_tool_linux(target_app)
+            launch_result = open_app_tool(target_app)
             if launch_result.success:
                 time.sleep(1.0)
                 result = press_key(key, target_app=target_app)
@@ -1905,9 +1905,42 @@ def _cleanup_old_screenshots(max_age: int = 300, max_files: int = 50) -> None:
 
 def screenshot_tool() -> ToolResult:
     if not IS_LINUX:
-        return ToolResult(
-            False, "screenshot", "Desktop screenshots are supported on Linux only.", {}
-        )
+        try:
+            screenshot = None
+            # Prefer cua-driver's Windows Graphics Capture so the computer-use
+            # loop gets a true desktop frame from the same backend that acts on
+            # windows. PIL remains the fallback for machines without cua.
+            try:
+                from computer_use.backends import get_backend
+
+                backend = get_backend()
+                if backend is not None:
+                    screenshot = backend.capture(window=False)
+            except Exception as exc:
+                LOGGER.debug("cua screenshot unavailable; using common capture: %s", exc)
+
+            if screenshot is None:
+                from capture import capture_screen
+
+                screenshot = capture_screen()
+            return ToolResult(
+                True,
+                "screenshot",
+                "Screenshot captured.",
+                {
+                    "image_path": str(screenshot.path.resolve()),
+                    "ocr_items": [],
+                    "window_bounds": None,
+                    "has_vision": True,
+                    "width": screenshot.width,
+                    "height": screenshot.height,
+                    "screen_width": screenshot.screen_width,
+                    "screen_height": screenshot.screen_height,
+                },
+            )
+        except Exception as exc:
+            LOGGER.exception("Windows screenshot capture failed")
+            return ToolResult(False, "screenshot", str(exc), {})
 
     global _SCREENSHOT_COUNTER
     _SCREENSHOT_COUNTER += 1
@@ -2336,6 +2369,23 @@ def capture_screenshot() -> str | None:
     factory, so a stale hyprctl socket / missing grim does NOT blind the loop.
     Never raises — logs and returns None on failure.
     """
+    if not IS_LINUX:
+        try:
+            try:
+                from computer_use.backends import get_backend
+
+                backend = get_backend()
+                if backend is not None:
+                    return str(backend.capture(window=False).path.resolve())
+            except Exception as exc:
+                LOGGER.debug("cua capture unavailable; using common capture: %s", exc)
+            from capture import capture_screen
+
+            return str(capture_screen().path.resolve())
+        except Exception:
+            LOGGER.exception("Cross-platform screenshot capture failed")
+            return None
+
     try:
         from backend.capture import CaptureStrategyFactory
 

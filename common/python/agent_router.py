@@ -16,7 +16,8 @@ _COMMON_PY = str(_SCRIPT_DIR)
 if _COMMON_PY not in sys.path:
     sys.path.insert(0, _COMMON_PY)
 
-from tools.whatsapp_tool import resolve_whatsapp_request
+from tools.whatsapp_tool import resolve_whatsapp_request, resolve_whatsapp_send_request
+from tools.spreadsheet_tool import resolve_spreadsheet_request
 
 if sys.platform == "win32":
     _PLATFORM_PY = str(_SCRIPT_DIR.parent.parent / "windows" / "python")
@@ -310,7 +311,20 @@ def parse_routing_decision(raw_decision: str) -> dict:
     return decision
 
 def resolve_open_url_request(query: str) -> tuple[str, str] | None:
-    normalized = " ".join(query.strip().lower().split())
+    raw = query.strip()
+    if re.fullmatch(r"https?://[^\s]+", raw):
+        label = raw
+        if "docs.google.com/spreadsheets" in raw:
+            label = "Google Spreadsheet"
+        elif "docs.google.com" in raw:
+            label = "Google Docs"
+        elif "youtube.com" in raw or "youtu.be" in raw:
+            label = "YouTube"
+        elif "github.com" in raw:
+            label = "GitHub"
+        return (label, raw)
+
+    normalized = " ".join(raw.lower().split())
     if not normalized.startswith(("open ", "launch ", "go to ", "navigate to ")):
         return None
 
@@ -709,6 +723,33 @@ async def handle_request(line):
         from computer_use.tools import play_spotify_track_tool, play_youtube_video_tool, open_app_tool, shortcut_tool
 
         # Check WhatsApp direct request fast-path
+        wa_send_match = resolve_whatsapp_send_request(query)
+        if wa_send_match:
+            chat_name, message = wa_send_match
+            send_response(request_id, "processing", data={"message": "Sending WhatsApp message...", "percent": 50})
+            from main import run_whatsapp_tool
+            wa_result = await asyncio.to_thread(run_whatsapp_tool, "send", chat_name, time.perf_counter(), [], message)
+            summary = wa_result.get("summary", "No WhatsApp response.")
+            send_response(request_id, "success", data={"response": summary})
+            return
+
+        # Check Spreadsheet direct request fast-path
+        sheet_match = resolve_spreadsheet_request(query)
+        if sheet_match:
+            if sheet_match.get("action") == "type_in_cell":
+                cell = sheet_match.get("cell", "A1")
+                status_msg = f"Writing into cell {cell} in Microsoft Excel..."
+            elif sheet_match.get("action") == "type_in_cells":
+                cells_desc = ", ".join(c.get("cell", "") for c in sheet_match.get("cells", []))
+                status_msg = f"Writing into cells {cells_desc} in Microsoft Excel..."
+            else:
+                status_msg = "Opening Microsoft Excel spreadsheet..."
+            send_response(request_id, "processing", data={"message": status_msg, "percent": 50})
+            from main import run_spreadsheet_tool
+            sheet_result = await asyncio.to_thread(run_spreadsheet_tool, sheet_match, time.perf_counter(), [])
+            summary = sheet_result.get("summary", "Microsoft Excel action completed.")
+            send_response(request_id, "success", data={"response": summary})
+            return
         wa_match = resolve_whatsapp_request(query)
         if wa_match:
             action, chat_name = wa_match
@@ -918,10 +959,31 @@ async def handle_request(line):
             elif intent == "WHATSAPP":
                 wa_action = str(extracted_params.get("wa_action") or "status").lower().strip()
                 wa_chat_name = extracted_params.get("wa_chat_name") or None
+                wa_message = extracted_params.get("wa_message") or None
                 send_response(request_id, "processing", data={"message": f"Querying WhatsApp ({wa_action})...", "percent": 50})
                 from main import run_whatsapp_tool
-                wa_result = await asyncio.to_thread(run_whatsapp_tool, wa_action, wa_chat_name, time.perf_counter(), [])
+                wa_result = await asyncio.to_thread(run_whatsapp_tool, wa_action, wa_chat_name, time.perf_counter(), [], wa_message)
                 summary = wa_result.get("summary", "No WhatsApp response.")
+                send_response(request_id, "success", data={"response": summary})
+                return
+            elif intent == "SPREADSHEET":
+                from tools.spreadsheet_tool import normalize_spreadsheet_url
+                target_url = normalize_spreadsheet_url(extracted_params.get("target_url"))
+                extracted_params["target_url"] = target_url
+                if "raw_prompt" not in extracted_params:
+                    extracted_params["raw_prompt"] = query
+                if extracted_params.get("action") == "type_in_cell":
+                    cell = extracted_params.get("cell", "A1")
+                    status_msg = f"Writing into cell {cell} in Microsoft Excel..."
+                elif extracted_params.get("action") == "type_in_cells":
+                    cells_desc = ", ".join(c.get("cell", "") for c in extracted_params.get("cells", []))
+                    status_msg = f"Writing into cells {cells_desc} in Microsoft Excel..."
+                else:
+                    status_msg = "Opening Microsoft Excel spreadsheet..."
+                send_response(request_id, "processing", data={"message": status_msg, "percent": 50})
+                from main import run_spreadsheet_tool
+                sheet_result = await asyncio.to_thread(run_spreadsheet_tool, extracted_params, time.perf_counter(), [])
+                summary = sheet_result.get("summary", "Microsoft Excel action completed.")
                 send_response(request_id, "success", data={"response": summary})
                 return
             elif intent == "MEDIA_PLAYBACK":
@@ -942,19 +1004,14 @@ async def handle_request(line):
                     send_response(request_id, "processing", data={"message": f"Triggering shortcut {shortcut}...", "percent": 60})
                     direct_result = shortcut_tool(shortcut)
             elif intent == "COMPUTER_USE":
-                # Only run the full computer use loop if on Linux
-                if platform.system() == "Linux":
-                    from computer_use.loop import run_computer_use_loop
-                    send_response(request_id, "processing", data={"message": "Running desktop automation loop...", "percent": 60})
-                    loop_result = run_computer_use_loop(query)
-                    if loop_result.get("success"):
-                        send_response(request_id, "success", data={"response": loop_result.get("answer", "Task completed.")})
-                    else:
-                        send_response(request_id, "error", error={"code": "COMPUTER_USE_FAILED", "message": loop_result.get("error", "Task failed"), "details": ""})
-                    return
+                from computer_use.loop import run_computer_use_loop
+                send_response(request_id, "processing", data={"message": "Running desktop automation loop...", "percent": 60})
+                loop_result = run_computer_use_loop(query)
+                if loop_result.get("success"):
+                    send_response(request_id, "success", data={"response": loop_result.get("answer", "Task completed.")})
                 else:
-                    # Windows doesn't support the vision-based loop.py computer use, but try direct agent action first
-                    direct_result = try_run_agent_action(query)
+                    send_response(request_id, "error", error={"code": "COMPUTER_USE_FAILED", "message": loop_result.get("error", "Task failed"), "details": ""})
+                return
                     
             if direct_result is None and intent in {"COMPUTER_USE", "DESKTOP_AUTOMATION"}:
                 # Try regex-based try_run_agent_action fallback
