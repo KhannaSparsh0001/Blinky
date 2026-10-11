@@ -121,6 +121,18 @@ def _resolve_binary() -> str | None:
                 return str(candidate)
         except OSError:
             continue
+
+    # Also check bundled binary from python cua package
+    try:
+        import cua
+        bundled = getattr(cua, "_bundled_cli", None)
+        if callable(bundled):
+            b_path = bundled()
+            if b_path and Path(b_path).is_file():
+                return str(b_path)
+    except Exception:
+        pass
+
     return None
 
 

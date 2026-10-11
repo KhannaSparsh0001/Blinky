@@ -1104,6 +1104,20 @@ def classify_request(
     except Exception as exc:
         LOGGER.debug("Fast-path PDF resolution failed: %s", exc)
 
+    # Fast-path Laya System 1 Neural Router + Structural Classification (~30ms local)
+    try:
+        from ai.laya_router import get_preflight_from_laya
+        laya_preflight = get_preflight_from_laya(question, previous_question)
+        if laya_preflight and (laya_preflight.get("confidence", 0.0) >= 0.50 or laya_preflight.get("source") == "structural_guard"):
+            LOGGER.info(
+                "Laya System 1 preflight resolved intent '%s' (conf=%.2f, source=%s)",
+                laya_preflight.get("intent"),
+                laya_preflight.get("confidence", 0.0),
+                laya_preflight.get("source"),
+            )
+            return laya_preflight
+    except Exception as exc:
+        LOGGER.debug("Laya preflight classification failed: %s", exc)
 
     try:
         payload = ask_text_model(build_preflight_prompt(question, previous_question, conversation_history))

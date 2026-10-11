@@ -1001,6 +1001,27 @@ async def handle_request(line):
                 summary = sheet_result.get("summary", "Microsoft Excel action completed.")
                 send_response(request_id, "success", data={"response": summary})
                 return
+            elif intent == "BROWSER_USE":
+                from tools.browser_use_tool import run_browser_task
+                task_desc = extracted_params.get("task", query)
+                send_response(request_id, "processing", data={"message": "Starting autonomous browser agent...", "percent": 30})
+                bu_res = await run_browser_task(task_desc)
+                summary = bu_res.get("result", "Browser task completed.")
+                send_response(request_id, "success", data={"response": summary, "tool": "browser_use"})
+                return
+            elif intent == "VIDEO_EDIT":
+                send_response(request_id, "processing", data={"message": "Editing media with AiCut...", "percent": 50})
+                from main import run_aicut_tool
+                aicut_result = await asyncio.to_thread(run_aicut_tool, extracted_params, query, time.perf_counter(), [])
+                summary = aicut_result.get("summary", "Media editing completed.")
+                send_response(request_id, "success", data={"response": summary, "tool": "aicut"})
+                return
+            elif intent in {"INFORMATIONAL_CHAT", "CHAT"}:
+                from main import answer_without_screen
+                chat_res = await asyncio.to_thread(answer_without_screen, query)
+                summary = chat_res.get("summary", "")
+                send_response(request_id, "success", data={"response": summary})
+                return
             elif intent == "MEDIA_PLAYBACK":
                 from computer_use.agent import handle_media_playback_action
                 direct_result = handle_media_playback_action(extracted_params, query)

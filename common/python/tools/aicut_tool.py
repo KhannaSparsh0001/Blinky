@@ -259,9 +259,10 @@ def resolve_aicut_request(
     q = clean_instruction.strip() if manual_script else query.strip()
     q_lower = q.lower()
 
-    # Guard: URLs, web addresses, and browser navigation requests are NOT local AiCut video editing tasks
+    # Guard: URLs, web addresses, domain names, and browser navigation requests are NOT local AiCut video editing tasks
     if (
         re.search(r"https?://|www\.", q, re.IGNORECASE)
+        or re.search(r"\b[a-zA-Z0-9-]+\.(?:com|org|net|io|ai|co|tv|app|dev)(?:/\S*)?", q_lower)
         or re.search(r"\b(?:go\s+to|navigate\s+to|visit|browse|open\s+website|open\s+url)\b", q_lower)
     ):
         return None
