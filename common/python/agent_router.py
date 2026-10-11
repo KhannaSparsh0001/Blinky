@@ -733,6 +733,19 @@ async def handle_request(line):
             send_response(request_id, "success", data={"response": summary})
             return
 
+        # Check Browser-Use direct request fast-path
+        try:
+            from tools.browser_use_tool import resolve_browser_use_request, run_browser_task
+            bu_match = resolve_browser_use_request(query)
+            if bu_match:
+                send_response(request_id, "processing", data={"message": "Starting autonomous browser agent...", "percent": 30})
+                bu_res = await run_browser_task(bu_match["task"])
+                summary = bu_res.get("result", "Browser task completed.")
+                send_response(request_id, "success", data={"response": summary, "tool": "browser_use"})
+                return
+        except Exception as exc:
+            LOGGER.debug("Fast-path browser-use failed: %s", exc)
+
         # Check Spreadsheet direct request fast-path
         sheet_match = resolve_spreadsheet_request(query)
         if sheet_match:

@@ -403,6 +403,9 @@ def run(
         if "raw_prompt" not in extracted_params:
             extracted_params["raw_prompt"] = question
         return run_spreadsheet_tool(extracted_params, started, warnings)
+    elif intent == "BROWSER_USE":
+        LOGGER.info("Routing to browser-use tool for intent: BROWSER_USE")
+        return run_browser_use_tool(extracted_params, started, warnings)
     elif intent in {"COMPUTER_USE", "OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
 
         LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
@@ -1038,6 +1041,18 @@ def classify_request(
     except Exception as exc:
         LOGGER.debug("Fast-path WhatsApp resolution failed: %s", exc)
     try:
+        from tools.browser_use_tool import resolve_browser_use_request
+        bu_match = resolve_browser_use_request(question)
+        if bu_match:
+            return {
+                "intent": "BROWSER_USE",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": bu_match,
+            }
+    except Exception as exc:
+        LOGGER.debug("Fast-path BROWSER_USE resolution failed: %s", exc)
+    try:
         from tools.spreadsheet_tool import resolve_spreadsheet_request
         sheet_match = resolve_spreadsheet_request(question)
         if sheet_match:
@@ -1304,6 +1319,37 @@ def run_spreadsheet_tool(
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     app_label = "Microsoft Excel"
     app_proc = "excel"
+    return {
+        "summary": summary,
+        "steps": [],
+        "active_app": {"title": app_label, "process": app_proc, "supported": True},
+        "ocr": {"count": 0, "items": []},
+        "elapsed_ms": elapsed_ms,
+        "provider": get_provider_label(),
+        "warnings": warnings,
+        "is_continuation": False,
+    }
+
+
+def run_browser_use_tool(
+    params: dict,
+    started: float,
+    warnings: list[str],
+) -> dict:
+    """Execute autonomous browser-use task in Microsoft Edge and return a Blinky-formatted result."""
+    from tools.browser_use_tool import run_browser_task
+    import asyncio
+
+    _emit_status("browser", "Executing autonomous browser-use task in Microsoft Edge...")
+    task = params.get("task") or params.get("raw_prompt") or "Open browser and perform task."
+    try:
+        res = asyncio.run(run_browser_task(task))
+        summary = res.get("result", "Browser task completed.")
+    except Exception as exc:
+        summary = f"Browser-use task failed: {exc}"
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    app_label = "Microsoft Edge"
+    app_proc = "msedge"
     return {
         "summary": summary,
         "steps": [],
