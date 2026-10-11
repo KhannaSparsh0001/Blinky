@@ -259,6 +259,13 @@ def resolve_aicut_request(
     q = clean_instruction.strip() if manual_script else query.strip()
     q_lower = q.lower()
 
+    # Guard: URLs, web addresses, and browser navigation requests are NOT local AiCut video editing tasks
+    if (
+        re.search(r"https?://|www\.", q, re.IGNORECASE)
+        or re.search(r"\b(?:go\s+to|navigate\s+to|visit|browse|open\s+website|open\s+url)\b", q_lower)
+    ):
+        return None
+
     # Check for explicitly referenced / dragged-in files in query
     referenced_files = []
     if context_files is not None:
@@ -298,8 +305,11 @@ def resolve_aicut_request(
 
     # Detect subtitle preset and whisper model
     preset_name = _detect_preset_name(q_lower)
-    if not preset_name and any(k in q_lower for k in ["instagram", "word by word", "word-by-word", "reels", "tiktok"]):
+    if not preset_name and any(k in q_lower for k in ["word by word", "word-by-word"]):
         preset_name = "instagram"
+    elif not preset_name and any(k in q_lower for k in ["instagram", "reels", "tiktok"]):
+        if any(k in q_lower for k in ["subtitle", "caption", "subs", "style", "preset", "like", "burn"]):
+            preset_name = "instagram"
     model_size = _detect_whisper_model(q_lower)
 
     # ── Check Feature Triggers ──
@@ -313,7 +323,9 @@ def resolve_aicut_request(
         r"|\b(?:" + known_presets_regex + r")\b.*?\b(?:subtitles?|captions?|subs?)\b"
         r"|\b(?:subtitle|caption|subs?|subtitles|captions)\b.*?(?:to|on|into|for|this|that|the|with|in|like)\b.*?\b(?:video|clip|file|mp4|mov|mkv)?"
         r"|\b(?:subtitle|caption)\b\s+(?:this|that|the)?\s*(?:video|clip|file)"
-        r"|\b(?:word\s+by\s+word|instagram|reels|tiktok)\b"
+        r"|\bword\s+by\s+word\b"
+        r"|\b(?:instagram|reels|tiktok)\s+(?:style|preset|captions?|subtitles?|subs?|like)\b"
+        r"|\b(?:preset|style|like)\s+(?:instagram|reels|tiktok)\b"
         r"|\b(?:captions?|subtitles?)\s+(?:in|on|to|into)\b"
     )
     has_subtitles = (bool(re.search(subtitle_pattern, q_lower)) or bool(manual_script)) and not is_transcribe_only
@@ -339,9 +351,11 @@ def resolve_aicut_request(
         )
         for path in ref_audios
     )
+    clean_audio_q = re.sub(r"\b(?:sync(?:ed)?\s+(?:automatically\s+)?to\s+audio|audio\s+sync(?:ed)?)\b", "", q_lower)
     has_audio_keyword = (
-        bool(re.search(add_song_pattern, q_lower))
-        or any(k in q_lower for k in ["song", "music", "audio", "beats", "bgm", "track"])
+        bool(re.search(add_song_pattern, clean_audio_q))
+        or any(k in clean_audio_q for k in ["song", "music", "beats", "bgm", "soundtrack"])
+        or bool(re.search(r"\b(?:add|mix|put|attach|with)\s+audio\b", clean_audio_q))
         or explicitly_added_audio
     )
 

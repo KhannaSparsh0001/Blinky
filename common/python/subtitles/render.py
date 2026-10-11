@@ -101,13 +101,20 @@ def burn(
             font_dir_escaped = str(font_dir).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
             filter_str += f":fontsdir='{font_dir_escaped}'"
 
-        encoder_args = get_fast_encoder_args()
+        is_webm = out.suffix.lower() == ".webm"
+        if is_webm:
+            encoder_args = ["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-pix_fmt", "yuv420p"]
+            audio_args = ["-c:a", "libopus"]
+        else:
+            encoder_args = get_fast_encoder_args()
+            audio_args = ["-c:a", "copy"]
+
         cmd = [
             "ffmpeg", "-y",
             "-i", str(video),
             "-vf", filter_str,
             *encoder_args,
-            "-c:a", "copy",
+            *audio_args,
             str(out),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

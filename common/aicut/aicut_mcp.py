@@ -174,13 +174,13 @@ def get_media_info(file_path: str) -> dict[str, Any]:
     return {"file_path": str(p), "file_name": p.name}
 
 
-def resolve_output_path(input_path: str, suffix: str = "_edited") -> str:
+def resolve_output_path(input_path: str, suffix: str = "_edited", ext: str | None = None) -> str:
     """Generate default output path in the same directory as input or sample/output."""
     inp = Path(input_path).resolve()
     stem = inp.stem
-    ext = inp.suffix
+    actual_ext = ext if ext is not None else inp.suffix
     parent = inp.parent
-    return str(parent / f"{stem}{suffix}{ext}")
+    return str(parent / f"{stem}{suffix}{actual_ext}")
 
 
 def trim_video(
@@ -1073,7 +1073,8 @@ def burn_subtitles(
         return {"success": False, "error": f"SRT file not found: {srt_path}"}
 
     if not output_path:
-        output_path = resolve_output_path(str(v_path), "_subtitled")
+        out_ext = ".mp4" if v_path.suffix.lower() == ".webm" else v_path.suffix
+        output_path = resolve_output_path(str(v_path), "_subtitled", ext=out_ext)
 
     out = Path(output_path).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)

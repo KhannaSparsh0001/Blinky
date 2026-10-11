@@ -591,4 +591,14 @@ def test_format_aicut_summary_silence():
     assert "37.0%" in summary
 
 
-
+def test_reject_web_urls_and_browser_queries():
+    web_queries = [
+        "go to https://instagram.com/blinky_ai and tell me the first comment of latest video",
+        "go to https://tiktok.com/@blinky and check the views",
+        "open website https://youtube.com/watch?v=123",
+        "visit https://twitter.com/ai and read the post",
+        "navigate to https://example.com/video.mp4 and download it",
+    ]
+    for q in web_queries:
+        res = resolve_aicut_request(q)
+        assert res is None, f"AiCut should NOT claim web URL query: {q}"

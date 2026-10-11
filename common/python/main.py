@@ -1000,6 +1000,18 @@ def classify_request(
     agent_mode: bool = False,
 ) -> dict | None:
     try:
+        from tools.browser_use_tool import resolve_browser_use_request
+        bu_match = resolve_browser_use_request(question)
+        if bu_match:
+            return {
+                "intent": "BROWSER_USE",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": bu_match,
+            }
+    except Exception as exc:
+        LOGGER.debug("Fast-path BROWSER_USE resolution failed: %s", exc)
+    try:
         from tools.aicut_tool import resolve_aicut_request
         aicut_match = resolve_aicut_request(question)
         if aicut_match and aicut_match.get("action") != "explorer_context":
@@ -1040,18 +1052,6 @@ def classify_request(
             }
     except Exception as exc:
         LOGGER.debug("Fast-path WhatsApp resolution failed: %s", exc)
-    try:
-        from tools.browser_use_tool import resolve_browser_use_request
-        bu_match = resolve_browser_use_request(question)
-        if bu_match:
-            return {
-                "intent": "BROWSER_USE",
-                "needs_screen": False,
-                "is_continuation": False,
-                "extracted_params": bu_match,
-            }
-    except Exception as exc:
-        LOGGER.debug("Fast-path BROWSER_USE resolution failed: %s", exc)
     try:
         from tools.spreadsheet_tool import resolve_spreadsheet_request
         sheet_match = resolve_spreadsheet_request(question)

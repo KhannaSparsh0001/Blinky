@@ -108,10 +108,16 @@ async def run_browser_task(
 
 
 BROWSER_USE_PATTERNS = (
-    r"\b(?:go\s+to|navigate\s+to|open\s+website|open\s+url)\s+(https?://[^\s]+|\S+\.(?:com|org|io|net|edu|gov|dev|ai))\s+(?:and|to|then)\s+(?:click|find|extract|scrape|search|fill|type|buy|order|check)\b",
-    r"\b(?:automate|use\s+browser|agent\s+in\s+browser|browser\s+agent)\b",
-    r"\b(?:click|press|fill|sign\s+in|log\s+in|submit)\b.+?\b(?:on|in|at|to)\s+(?:https?://|\w+\.(?:com|org|io|net|dev|ai))\b",
-    r"\b(?:extract|scrape|pull)\s+(?:the\s+)?(?:data|table|prices|items|products|contributors|reviews|heading|text|info)\s+(?:from|on|at)\s+(https?://\S+|\S+\.(?:com|org|io|net|dev|ai))\b",
+    # 1. Direct URL navigation with any follow-up instruction (e.g. "go to https://... and tell me...", "open https://... to check...")
+    r"\b(?:go\s+to|navigate\s+to|visit|browse|open\s+website|open\s+url|open)\s+(https?://[^\s]+|\S+\.(?:com|org|io|net|edu|gov|dev|ai|app|co))\b(?:\s+(?:and|to|then)\s+.+|\s*$)",
+    # 2. General URL with information/action request (e.g. "tell me / extract / get / check / read ... from/on/at <url>")
+    r"\b(?:tell\s+me|find|extract|scrape|get|check|read|see|show|look\s+up|summarize)\b.+?\b(?:on|in|at|from|of)\s+(https?://[^\s]+|\S+\.(?:com|org|io|net|edu|gov|dev|ai|app|co))\b",
+    # 3. Explicit web/browser agent keywords
+    r"\b(?:automate|use\s+browser|agent\s+in\s+browser|browser\s+agent|browser-use|browser\s+use|web\s+agent)\b",
+    # 4. Actions on webpage elements (click/press/fill/sign in/submit on <url>)
+    r"\b(?:click|press|fill|sign\s+in|log\s+in|submit|type)\b.+?\b(?:on|in|at|to)\s+(?:https?://|\w+\.(?:com|org|io|net|dev|ai|app|co))\b",
+    # 5. Extract/scrape/pull/read content from URL
+    r"\b(?:extract|scrape|pull|read|fetch|get)\s+(?:the\s+)?(?:data|table|prices|items|products|contributors|reviews|comments|heading|text|info|posts)\s+(?:from|on|at|of)\s+(https?://\S+|\S+\.(?:com|org|io|net|dev|ai|app|co))\b",
 )
 
 
@@ -143,5 +149,19 @@ def resolve_browser_use_request(query: str) -> dict[str, Any] | None:
             "task": q,
             "raw_prompt": q,
         }
+
+    # If query contains explicit http/https URL and asks for web action or inspection
+    if re.search(r"https?://", q, re.IGNORECASE):
+        url_action_keywords = (
+            "tell me", "first comment", "comment", "comments", "latest", "post", "posts",
+            "video", "videos", "check", "find", "extract", "scrape", "get", "read", "see",
+            "show", "heading", "title", "summarize", "page", "website", "who", "what"
+        )
+        if any(kw in q_lower for kw in url_action_keywords):
+            return {
+                "action": "browser_use",
+                "task": q,
+                "raw_prompt": q,
+            }
 
     return None
