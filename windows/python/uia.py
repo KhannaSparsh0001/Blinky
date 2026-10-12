@@ -48,6 +48,25 @@ def get_visible_ui_text(window=None, target_pid: int | None = None, include_unla
         except Exception as exc:
             LOGGER.warning("UIA: failed to resolve process name: %s", exc)
 
+        active_title = ""
+        try:
+            active_title = (active.window_text() or "").lower().strip()
+        except Exception:
+            pass
+
+        # Known desktop applications are never ignored overlays
+        is_known_app = any(app in process_name for app in ["antigravity", "code", "chrome", "msedge", "firefox", "brave", "opera", "notepad", "terminal"])
+        if not is_known_app:
+            if any(p in process_name for p in ["wispr", "whisper", "raycast", "blinky", "tauri"]) or any(
+                hint in active_title for hint in ["wispr flow", "whisper flow"]
+            ) or active_title in {"status", "raycast", "recording toolbar", "blinky highlight overlay"}:
+                LOGGER.info(
+                    "UIA: Skipping scan for ignored overlay process/window '%s' (title: '%s')",
+                    process_name,
+                    active_title,
+                )
+                return []
+
         # Restrict traversal to interactive control types to prune layout panels
         # and wrappers. Speeds up UIA tree scanning ~50x.
         ALLOWED_CONTROL_TYPES = {
@@ -68,6 +87,12 @@ def get_visible_ui_text(window=None, target_pid: int | None = None, include_unla
         start_time = time.perf_counter()
         UIA_TIME_BUDGET_SECONDS = 2.0
         MAX_ITEMS = 250
+        pid_cache: dict[int, str] = {}
+        active_pid = None
+        try:
+            active_pid = active.process_id()
+        except Exception:
+            pass
 
         for element in active.descendants():
             if time.perf_counter() - start_time > UIA_TIME_BUDGET_SECONDS:
@@ -86,6 +111,22 @@ def get_visible_ui_text(window=None, target_pid: int | None = None, include_unla
                     continue
             except Exception:
                 continue
+
+            try:
+                elem_pid = element.element_info.process_id
+                if elem_pid and active_pid and elem_pid != active_pid:
+                    if elem_pid not in pid_cache:
+                        import psutil
+                        try:
+                            pid_cache[elem_pid] = psutil.Process(elem_pid).name().lower()
+                        except Exception:
+                            pid_cache[elem_pid] = ""
+                    elem_pname = pid_cache[elem_pid]
+                    if not any(app in elem_pname for app in ["antigravity", "code", "chrome", "msedge", "firefox", "brave", "opera", "notepad", "terminal"]):
+                        if any(p in elem_pname for p in ["wispr", "whisper", "raycast", "blinky", "tauri"]):
+                            continue
+            except Exception:
+                pass
 
             text = _element_text(element, ctype)
             if not text and not (include_unlabeled and ctype in {"Button", "Image", "Hyperlink"}):

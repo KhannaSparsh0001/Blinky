@@ -1,9 +1,10 @@
-from __future__ import annotations
-
+import logging
 import platform
 import re
+import time
 from typing import Any
 
+from . import tools
 from .tools import (
     ToolResult,
     open_app_tool,
@@ -13,7 +14,24 @@ from .tools import (
     normalize_app_name,
     APP_PROTOCOLS,
     APP_NAME_ALIASES,
+    SAFE_PROCESS_ALIASES,
+    type_text_tool,
+    play_spotify_track_tool,
+    play_youtube_video_tool,
+    seek_spotify_tool,
+    list_windows_tool,
+    get_app_state_tool,
 )
+
+def _get_tool(name: str):
+    """Resolve tool implementation dynamically, supporting mocks on either computer_use.tools or computer_use.agent."""
+    tools_val = getattr(tools, name, None)
+    agent_val = globals().get(name)
+    if hasattr(agent_val, "assert_called") or hasattr(agent_val, "mock_calls"):
+        return agent_val
+    return tools_val or agent_val
+
+LOGGER = logging.getLogger("blinky.computer_use.agent")
 
 
 WEB_DESTINATION_NAMES = {
@@ -48,7 +66,12 @@ SEARCH_WEB_RE = re.compile(
 )
 
 OPEN_APP_RE = re.compile(
-    r"^\s*(?:open|launch|start)\s+(?:the\s+)?(?P<app>[a-zA-Z0-9 .+_-]{2,60})\s*(?:app|application)?\s*$",
+    r"^\s*(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?P<app>[a-zA-Z0-9 .+_-]{2,60}?)(?:\s+(?:app|application|only|just|window|please))*\s*$",
+    re.IGNORECASE,
+)
+
+OPEN_AND_TYPE_RE = re.compile(
+    r"^\s*(?:open|launch|start)\s+(?:the\s+)?(?P<app>[a-zA-Z0-9 .+_-]{2,60}?)(?:\s+(?:app|application))?\s*(?:and|then|,)\s*(?:type|write|enter|input)\s+(?:the\s+(?:text|words?)\s+)?(?P<text>.+?)(?:\s+(?:in|into|on)\s+it)?\s*$",
     re.IGNORECASE,
 )
 
@@ -160,11 +183,11 @@ def looks_like_app_name(app_name: str) -> bool:
 def handle_media_playback_action(extracted_params: dict, query: str) -> ToolResult:
     media_action = str(extracted_params.get("media_action", "play")).lower().strip()
     if media_action in ("pause", "stop", "resume"):
-        return shortcut_tool("media_play_pause")
+        return _get_tool("shortcut_tool")("media_play_pause")
     elif media_action == "next":
-        return shortcut_tool("media_next")
+        return _get_tool("shortcut_tool")("media_next")
     elif media_action == "prev":
-        return shortcut_tool("media_prev")
+        return _get_tool("shortcut_tool")("media_prev")
     elif media_action == "seek":
         seek_sec = extracted_params.get("seek_seconds")
         try:
@@ -172,19 +195,16 @@ def handle_media_playback_action(extracted_params: dict, query: str) -> ToolResu
         except Exception:
             seconds = 10
         forward = seconds >= 0
-        from .tools import seek_spotify_tool
-        return seek_spotify_tool(abs(seconds), forward=forward)
+        return _get_tool("seek_spotify_tool")(abs(seconds), forward=forward)
     else:
         # Default to play song
         song = extracted_params.get("song_name")
         pform = str(extracted_params.get("platform", "spotify")).lower().strip()
         query_lower = query.lower()
         if pform == "youtube" or "youtube" in query_lower or "you tube" in query_lower:
-            from .tools import play_youtube_video_tool
-            return play_youtube_video_tool(song) if song else play_youtube_video_tool(query)
+            return _get_tool("play_youtube_video_tool")(song) if song else _get_tool("play_youtube_video_tool")(query)
         else:
-            from .tools import play_spotify_track_tool
-            return play_spotify_track_tool(song) if song else play_spotify_track_tool(query)
+            return _get_tool("play_spotify_track_tool")(song) if song else _get_tool("play_spotify_track_tool")(query)
 
 
 def try_run_agent_action(question: str, observation: dict[str, Any] | None = None) -> ToolResult | None:
@@ -207,25 +227,22 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
         LOGGER.debug("ESP32 light action failed: %s", exc)
 
     if wants_help_menu(question_cleaned, observation):
-
-        return shortcut_tool("alt+h")
+        return _get_tool("shortcut_tool")("alt+h")
 
     play_match = PLAY_SPOTIFY_RE.match(question_cleaned)
     if play_match:
         song = play_match.group("song1") or play_match.group("song2")
         if song:
-            from .tools import play_spotify_track_tool
-            return play_spotify_track_tool(song.strip())
+            return _get_tool("play_spotify_track_tool")(song.strip())
 
     play_yt_match = PLAY_YOUTUBE_RE.match(question_cleaned)
     if play_yt_match:
         query = play_yt_match.group("query1") or play_yt_match.group("query2")
         if query:
-            from .tools import play_youtube_video_tool
-            return play_youtube_video_tool(query.strip())
+            return _get_tool("play_youtube_video_tool")(query.strip())
 
     if STOP_SPOTIFY_RE.match(question_cleaned):
-        return shortcut_tool("media_play_pause")
+        return _get_tool("shortcut_tool")("media_play_pause")
 
     # Spotify seeking and track skipping control
     seek_forward_match = SEEK_FORWARD_RE.match(question_cleaned)
@@ -237,8 +254,7 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
             seconds = val * 60 if unit_str and unit_str.lower().startswith("m") else val
         else:
             seconds = 10
-        from .tools import seek_spotify_tool
-        return seek_spotify_tool(seconds, forward=True)
+        return _get_tool("seek_spotify_tool")(seconds, forward=True)
 
     seek_backward_match = SEEK_BACKWARD_RE.match(question_cleaned)
     if seek_backward_match:
@@ -249,17 +265,13 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
             seconds = val * 60 if unit_str and unit_str.lower().startswith("m") else val
         else:
             seconds = 10
-        from .tools import seek_spotify_tool
-        return seek_spotify_tool(seconds, forward=False)
-
-
+        return _get_tool("seek_spotify_tool")(seconds, forward=False)
 
     if NEXT_TRACK_RE.match(question_cleaned):
-        return shortcut_tool("media_next")
+        return _get_tool("shortcut_tool")("media_next")
 
     if PREV_TRACK_RE.match(question_cleaned):
-        return shortcut_tool("media_prev")
-
+        return _get_tool("shortcut_tool")("media_prev")
 
     # Spreadsheet creation fast-path
     try:
@@ -277,6 +289,22 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
     except Exception as exc:
         LOGGER.debug("Spreadsheet tool action failed: %s", exc)
 
+    # Windows-Use fast-path (e.g. Notepad new tab, type, or compound desktop tasks)
+    try:
+        from .windows_use_engine import resolve_windows_use_request, handle_windows_use_request
+        wu_params = resolve_windows_use_request(question_cleaned)
+        if wu_params:
+            wu_res = handle_windows_use_request(wu_params)
+            msg = wu_res.get("message") or "Windows UI action completed."
+            return ToolResult(
+                wu_res.get("success", False),
+                "windows_use_tool",
+                msg,
+                wu_res,
+            )
+    except Exception as exc:
+        LOGGER.debug("Windows-Use direct agent action failed: %s", exc)
+
     # Desktop actions (click element, type text, list windows, get app state)
     result = _try_desktop_action(question_cleaned)
     if result is not None:
@@ -292,7 +320,29 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
             or search_match.group("q5")
         )
         if query:
-            return open_web_search_tool(query.strip())
+            return _get_tool("open_web_search_tool")(query.strip())
+
+    open_and_type_match = OPEN_AND_TYPE_RE.match(question_cleaned)
+    if open_and_type_match:
+        app = cleanup_app_name(open_and_type_match.group("app"))
+        raw_text = open_and_type_match.group("text").strip().strip("'\"")
+        if app and raw_text:
+            open_res = _get_tool("open_app_tool")(app)
+            time.sleep(0.8)
+            type_res = _get_tool("type_text_tool")(raw_text, target_app=app)
+            if type_res.success:
+                return ToolResult(
+                    True,
+                    "open_and_type",
+                    f"Opened {app.capitalize()} and typed '{raw_text}'.",
+                    {"app": app, "text": raw_text, "open": open_res.to_dict(), "type": type_res.to_dict()},
+                )
+            return ToolResult(
+                False,
+                "open_and_type",
+                f"Opened {app.capitalize()}, but could not type: {type_res.message}",
+                {"app": app, "text": raw_text, "open": open_res.to_dict(), "type": type_res.to_dict()},
+            )
 
     match = OPEN_APP_RE.match(question_cleaned)
     if match:
@@ -300,31 +350,29 @@ def try_run_agent_action(question: str, observation: dict[str, Any] | None = Non
         if app and app not in {"help", "settings", "menu"}:
             normalized = normalize_app_name(app)
             # Check if it's a known desktop app first
-            is_known_app = normalized in APP_PROTOCOLS or normalized in APP_NAME_ALIASES
+            is_known_app = normalized in APP_PROTOCOLS or normalized in APP_NAME_ALIASES or normalized in SAFE_PROCESS_ALIASES
             if is_known_app:
-                return open_app_tool(app)
+                return _get_tool("open_app_tool")(app)
             if is_web_destination(app):
                 if observation is None:
                     return None
-                return open_web_destination_tool(app)
+                return _get_tool("open_web_destination_tool")(app)
             if not is_in_app_action(app) and looks_like_app_name(app):
-                return open_app_tool(app)
+                return _get_tool("open_app_tool")(app)
 
     return None
 
 def _try_desktop_action(question: str) -> ToolResult | None:
     # List windows
     if LIST_WINDOWS_RE.match(question):
-        from .tools import list_windows_tool
-        return list_windows_tool()
+        return _get_tool("list_windows_tool")()
 
     # Inspect an app
     app_match = GET_APP_STATE_RE.match(question)
     if app_match:
         app = app_match.group("app")
         if app and looks_like_app_name(app):
-            from .tools import get_app_state_tool
-            return get_app_state_tool(app)
+            return _get_tool("get_app_state_tool")(app)
 
     # Click an element
     click_match = CLICK_ELEMENT_RE.match(question)
@@ -369,8 +417,7 @@ def _try_desktop_action(question: str) -> ToolResult | None:
                     else:
                         cleaned_text = " ".join(str(i) for i in range(start_n, end_n + 1))
 
-            from .tools import type_text_tool
-            return type_text_tool(cleaned_text, target_app=app.strip() if app else None)
+            return _get_tool("type_text_tool")(cleaned_text, target_app=app.strip() if app else None)
 
     return None
 
@@ -380,7 +427,7 @@ _try_linux_action = _try_desktop_action
 
 def cleanup_app_name(value: str) -> str:
     text = " ".join(value.strip().split())
-    text = re.sub(r"\b(app|application)$", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\s+\b(app|application|only|just|window|please)$", "", text, flags=re.IGNORECASE).strip()
     return text
 
 

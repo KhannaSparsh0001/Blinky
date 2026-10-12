@@ -14,13 +14,23 @@ IGNORED_OVERLAY_PROCESSES = {
     "blinky.exe",
     "nvsphelper64.exe",
     "nvcontainer.exe",
+    "wispr flow.exe",
+    "wisprflow.exe",
+    "wispr.exe",
+    "whisper flow.exe",
+    "whisperflow.exe",
+    "whisper.exe",
+    "raycast.exe",
+    "raycast",
 }
 
 IGNORED_OVERLAY_TITLE_HINTS = {
     "recording toolbar",
-    "blinky",
-    "command",
-    "overlay",
+    "blinky highlight overlay",
+    "status",
+    "raycast",
+    "wispr flow",
+    "whisper flow",
 }
 
 IGNORED_SYSTEM_PROCESSES = {
@@ -36,6 +46,14 @@ IGNORED_SYSTEM_PROCESSES = {
     "runtimebroker.exe",
     "trae.exe",
     "blinky.exe",
+    "wispr flow.exe",
+    "wisprflow.exe",
+    "wispr.exe",
+    "whisper flow.exe",
+    "whisperflow.exe",
+    "whisper.exe",
+    "raycast.exe",
+    "raycast",
 }
 
 # explorer.exe hosts both real File-Explorer windows (which have a title like
@@ -54,7 +72,20 @@ EXPLORER_SHELL_WINDOW_CLASSES = {
 def _is_ignored_overlay_window(process_name: str, title: str) -> bool:
     name_lower = process_name.lower().strip()
     title_lower = title.lower().strip()
-    return name_lower in IGNORED_OVERLAY_PROCESSES or any(hint in title_lower for hint in IGNORED_OVERLAY_TITLE_HINTS)
+
+    # Known desktop applications (IDEs, editors, browsers, terminals) are never overlays
+    if any(app in name_lower for app in ["antigravity", "code", "chrome", "msedge", "firefox", "brave", "opera", "notepad", "terminal"]):
+        return False
+
+    if name_lower in IGNORED_OVERLAY_PROCESSES or name_lower in IGNORED_SYSTEM_PROCESSES:
+        return True
+    if any(p in name_lower for p in ["wispr", "whisper", "raycast", "blinky", "tauri"]):
+        return True
+    if name_lower in {"flow.exe"} and ("status" in title_lower or "wispr" in title_lower or not title_lower):
+        return True
+    if title_lower in {"recording toolbar", "blinky highlight overlay", "status", "raycast"}:
+        return True
+    return any(hint in title_lower for hint in ["wispr flow", "whisper flow"])
 
 
 def _is_window_cloaked(hwnd) -> bool:
@@ -270,7 +301,7 @@ def _get_target_window_element_impl(window=None, target_pid: int | None = None):
                     continue
                     
                 process_name = psutil.Process(process_id).name().lower()
-                if "blinky" in process_name or "tauri" in process_name or (title and "blinky" in title.lower()):
+                if "blinky" in process_name or "tauri" in process_name:
                     continue
                     
                 if _is_ignored_overlay_window(process_name, title):

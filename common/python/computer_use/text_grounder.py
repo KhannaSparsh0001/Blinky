@@ -11,6 +11,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import time
 from typing import Any
 
 from ai.client import ask_text_model
@@ -18,6 +19,8 @@ from utils.logging import get_logger
 from utils.screen_elements import assign_screen_element_refs, screen_element_name
 
 LOGGER = get_logger("blinky.computer_use.text_grounder")
+
+_last_grounder_rate_limit: float = 0.0
 
 
 def calculate_text_similarity(s1: str, s2: str) -> float:

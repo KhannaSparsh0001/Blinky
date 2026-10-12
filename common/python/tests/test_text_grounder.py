@@ -97,3 +97,30 @@ def test_ground_step_self_healing_ignores_failed_refs_and_re_evaluates():
         )
         assert grounded is not None
         assert grounded["target_ref"] == "ref_correct"
+
+
+def test_ground_step_rate_limit_cooldown():
+    import computer_use.text_grounder as tg
+    import time
+
+    visible_items = [
+        {"ref": "ref_1", "text": "Something Else", "x": 100, "y": 200, "width": 50, "height": 20, "control_type": "Button", "source": "uia"},
+    ]
+    step = {
+        "step": 1,
+        "target": "Target",
+        "action": "click",
+        "instruction": "Click target",
+    }
+
+    # Simulate recent rate limit
+    tg._last_grounder_rate_limit = time.time()
+    
+    # Should not call LLM and return None or fallback without crashing
+    with patch("computer_use.text_grounder.ask_text_model") as mock_ask:
+        grounded = tg.ground_step_to_screen(step, visible_items)
+        assert mock_ask.call_count == 0
+
+    # Reset cooldown
+    tg._last_grounder_rate_limit = 0.0
+

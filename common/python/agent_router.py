@@ -1009,6 +1009,13 @@ async def handle_request(line):
                 summary = bu_res.get("result", "Browser task completed.")
                 send_response(request_id, "success", data={"response": summary, "tool": "browser_use"})
                 return
+            elif intent == "WINDOWS_USE":
+                send_response(request_id, "processing", data={"message": "Executing Windows automation...", "percent": 50})
+                from main import run_windows_use_tool
+                wu_result = await asyncio.to_thread(run_windows_use_tool, extracted_params, query, time.perf_counter(), [])
+                summary = wu_result.get("summary", "Windows UI action completed.")
+                send_response(request_id, "success", data={"response": summary, "tool": "windows_use"})
+                return
             elif intent == "VIDEO_EDIT":
                 send_response(request_id, "processing", data={"message": "Editing media with AiCut...", "percent": 50})
                 from main import run_aicut_tool

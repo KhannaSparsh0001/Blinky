@@ -35,13 +35,23 @@ IGNORED_OVERLAY_PROCESSES = {
     "blinky.exe",
     "nvsphelper64.exe",
     "nvcontainer.exe",
+    "wispr flow.exe",
+    "wisprflow.exe",
+    "wispr.exe",
+    "whisper flow.exe",
+    "whisperflow.exe",
+    "whisper.exe",
+    "raycast.exe",
+    "raycast",
 }
 
 IGNORED_OVERLAY_TITLE_HINTS = {
     "recording toolbar",
-    "blinky",
-    "command",
-    "overlay",
+    "blinky highlight overlay",
+    "status",
+    "raycast",
+    "wispr flow",
+    "whisper flow",
 }
 
 
@@ -58,7 +68,20 @@ def is_process_supported(process_name: str) -> bool:
 def is_ignored_overlay_window(process_name: str, title: str) -> bool:
     name_lower = process_name.lower().strip()
     title_lower = title.lower().strip()
-    return name_lower in IGNORED_OVERLAY_PROCESSES or any(hint in title_lower for hint in IGNORED_OVERLAY_TITLE_HINTS)
+
+    # Known desktop applications (IDEs, editors, browsers, terminals) are never overlays
+    if any(app in name_lower for app in ["antigravity", "code", "chrome", "msedge", "firefox", "brave", "opera", "notepad", "terminal"]):
+        return False
+
+    if name_lower in IGNORED_OVERLAY_PROCESSES:
+        return True
+    if any(p in name_lower for p in ["wispr", "whisper", "raycast", "blinky", "tauri"]):
+        return True
+    if name_lower in {"flow.exe"} and ("status" in title_lower or "wispr" in title_lower or not title_lower):
+        return True
+    if title_lower in {"recording toolbar", "blinky highlight overlay", "status", "raycast"}:
+        return True
+    return any(hint in title_lower for hint in ["wispr flow", "whisper flow"])
 
 
 _local_ignored_rects: list[dict[str, int]] = []
@@ -92,25 +115,44 @@ def get_ignored_overlay_rects() -> list[dict[str, int]]:
     rects: list[dict[str, int]] = []
     try:
         from pywinauto import Desktop
+        import ctypes
+        user32 = ctypes.windll.user32
+        screen_w = user32.GetSystemMetrics(0) or 1920
+        screen_h = user32.GetSystemMetrics(1) or 1080
 
         for w in Desktop(backend="uia").windows():
             try:
                 if not w.is_visible():
                     continue
                 title = w.window_text()
-                # Skip the fullscreen highlight overlay window to prevent filtering out all elements on the screen
-                if "highlight overlay" in title.lower():
+                # Skip fullscreen or transparent overlay windows to prevent filtering out all elements on the screen
+                if "highlight overlay" in title.lower() or "cursoroverlay" in title.lower():
                     continue
                 process_name = psutil.Process(w.process_id()).name().lower()
                 if not is_ignored_overlay_window(process_name, title):
                     continue
                 rect = w.rectangle()
+                rw = max(0, int(rect.width()))
+                rh = max(0, int(rect.height()))
+
+                # CRITICAL GUARD: Never include fullscreen or large overlays as ignored rects!
+                # Fullscreen overlays (NVIDIA overlay, CUA cursor overlay, Blinky highlight overlay)
+                # are transparent click-through layers. If added to ignored rects, they mask out 100%
+                # of all UI elements on the entire screen!
+                if rw >= int(screen_w * 0.7) and rh >= int(screen_h * 0.7):
+                    continue
+                if rw * rh >= int(screen_w * screen_h * 0.5):
+                    continue
+                # Skip tiny zero/dummy windows (e.g. 1x1 hook windows)
+                if rw < 10 or rh < 10:
+                    continue
+
                 rects.append(
                     {
                         "x": int(rect.left),
                         "y": int(rect.top),
-                        "width": max(1, int(rect.width())),
-                        "height": max(1, int(rect.height())),
+                        "width": rw,
+                        "height": rh,
                     }
                 )
             except Exception:

@@ -154,6 +154,66 @@ def classify_with_laya(query: str) -> dict[str, Any] | None:
                 "source": "structural_guard",
             }
 
+    # 5. Windows-Use fast-path operations (Notepad tab creation, typing, compound UIA tasks)
+    if not WEB_DOMAINS_RE.search(q):
+        try:
+            from computer_use.windows_use_engine import resolve_windows_use_request
+            wu_match = resolve_windows_use_request(q)
+            if wu_match:
+                return {
+                    "intent": "WINDOWS_USE",
+                    "domain": "desktop_os",
+                    "action": "control_gui",
+                    "confidence": 1.0,
+                    "source": "structural_guard",
+                    "params": wu_match,
+                }
+        except Exception as exc:
+            LOGGER.debug("Windows-Use pre-check failed: %s", exc)
+
+        # DESKTOP_AUTOMATION structural guard:
+        # Fire only for compound "open APP and type TEXT" patterns that DO NOT contain notepad
+        # (notepad is always handled by Windows-Use engine above).
+        _has_notepad = "notepad" in q_lower
+        if not _has_notepad:
+            if re.search(r"\b(?:open|launch|start)\s+(?:the\s+)?[a-zA-Z0-9 ._-]+\s+(?:and|then)\s+(?:type|write|enter|input)\b", q_lower) or \
+               re.search(r"\b(?:type|write|enter|input)\s+.+?\s+(?:in|into|to)\s+(?:the\s+)?[a-zA-Z0-9 ._-]+\b", q_lower):
+                return {
+                    "intent": "DESKTOP_AUTOMATION",
+                    "domain": "desktop_os",
+                    "action": "control_gui",
+                    "confidence": 1.0,
+                    "source": "structural_guard",
+                }
+
+        # 6. Direct app launch fast-path (e.g. "open notepad", "open notepad only", "launch chrome")
+        app_open_match = re.match(
+            r"^\s*(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?P<app>[a-zA-Z0-9 .+_-]{2,40}?)\s*(?:app|application|only|just|window|please)*\s*$",
+            q,
+            re.IGNORECASE,
+        )
+        if app_open_match:
+            candidate = re.sub(r"\b(app|application|only|just|window|please)$", "", app_open_match.group("app"), flags=re.IGNORECASE).strip()
+            if candidate and not any(w in candidate.lower() for w in [" and ", " then ", " type ", " write ", " search ", " find "]):
+                # Notepad open goes to WINDOWS_USE so UIA can handle it properly
+                if "notepad" in candidate.lower():
+                    return {
+                        "intent": "WINDOWS_USE",
+                        "domain": "desktop_os",
+                        "action": "control_gui",
+                        "confidence": 1.0,
+                        "source": "structural_guard",
+                        "params": {"action": "notepad_open", "app": "notepad", "text": "", "raw_query": q},
+                    }
+                return {
+                    "intent": "OPEN_APP",
+                    "domain": "desktop_os",
+                    "action": "open_app",
+                    "confidence": 1.0,
+                    "source": "structural_guard",
+                    "params": {"app_name": candidate},
+                }
+
     # ── Laya System 1 Neural Forward Pass ──
     router = get_laya_router()
     if router is None:
@@ -181,26 +241,30 @@ def classify_with_laya(query: str) -> dict[str, Any] | None:
 
         if has_web_url:
             resolved_intent = "BROWSER_USE"
+        elif domain_choice == "desktop_os" or action_choice == "control_gui":
+            try:
+                from computer_use.windows_use_engine import resolve_windows_use_request
+                wu_check = resolve_windows_use_request(q)
+                if wu_check:
+                    resolved_intent = "WINDOWS_USE"
+                else:
+                    resolved_intent = "DESKTOP_AUTOMATION"
+            except Exception:
+                resolved_intent = "DESKTOP_AUTOMATION"
         elif domain_choice == "general_qa":
             # Conversational Q&A unless user explicitly asked to browse/search the web
             if action_choice == "browser_navigation" and any(k in q_lower for k in ["browse", "search online", "google", "web"]):
                 resolved_intent = "BROWSER_USE"
             else:
                 resolved_intent = "CHAT"
-        elif domain_choice == "web_url":
+        elif domain_choice == "web_url" or action_choice == "browser_navigation":
             resolved_intent = "BROWSER_USE"
-        elif domain_choice == "local_media":
+        elif domain_choice == "local_media" or action_choice == "media_editing":
             resolved_intent = "VIDEO_EDIT"
         elif domain_choice == "spreadsheet" or action_choice == "excel_operation":
             resolved_intent = "SPREADSHEET"
         elif domain_choice == "chat_messaging" or action_choice == "send_message":
             resolved_intent = "WHATSAPP"
-        elif action_choice == "browser_navigation":
-            resolved_intent = "BROWSER_USE"
-        elif action_choice == "media_editing":
-            resolved_intent = "VIDEO_EDIT"
-        elif action_choice == "control_gui" or domain_choice == "desktop_os":
-            resolved_intent = "DESKTOP_AUTOMATION"
         else:
             resolved_intent = "CHAT"
 
@@ -277,9 +341,35 @@ def get_preflight_from_laya(query: str, previous_question: str | None = None) ->
             extracted_params = {"action": "video edit", "prompt": query}
         needs_screen = False
 
+    elif intent == "OPEN_APP":
+        app_params = classification.get("params") or {}
+        extracted_params = app_params if app_params.get("app_name") else {"app_name": query}
+        needs_screen = False
+
+    elif intent == "WINDOWS_USE":
+        extracted_params = classification.get("params") or {}
+        if not extracted_params:
+            try:
+                from computer_use.windows_use_engine import resolve_windows_use_request
+                extracted_params = resolve_windows_use_request(query) or {"query": query}
+            except Exception:
+                extracted_params = {"query": query}
+        needs_screen = False
+
     elif intent == "DESKTOP_AUTOMATION":
-        needs_screen = True
-        extracted_params = {"backend": "cua", "query": query}
+        try:
+            from computer_use.windows_use_engine import resolve_windows_use_request
+            wu_match = resolve_windows_use_request(query)
+            if wu_match:
+                intent = "WINDOWS_USE"
+                needs_screen = False
+                extracted_params = wu_match
+            else:
+                needs_screen = True
+                extracted_params = {"backend": "cua", "query": query}
+        except Exception:
+            needs_screen = True
+            extracted_params = {"backend": "cua", "query": query}
 
     elif intent == "CHAT":
         intent = "INFORMATIONAL_CHAT"

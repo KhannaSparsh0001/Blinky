@@ -13,6 +13,12 @@ from ai.custom_client import ask_custom_text, ask_custom_vision
 
 from utils.logging import get_logger
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 LOGGER = get_logger("blinky.ai.client")
 
 
@@ -20,6 +26,12 @@ def _resolve_provider() -> str:
     provider = os.getenv("BLINKY_AI_PROVIDER", "").strip().lower()
     if provider:
         return provider
+    if not (os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
     if os.getenv("GROQ_API_KEY"):
         return "groq"
     if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):

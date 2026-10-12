@@ -117,6 +117,22 @@
       "action": "create",
       "topic": "test"
     }
+  },
+  "windows_use_tool": {
+    "name": "windows_use_tool",
+    "description": "Windows-Use native UI automation for compound desktop actions such as opening Notepad, creating new tabs, and typing text directly into controls via native Windows UI Automation (IUIAutomation).",
+    "filepath": "python/tools/windows_use_tool.py",
+    "arguments": [
+      "action",
+      "app",
+      "text",
+      "raw_query"
+    ],
+    "status": "generalized",
+    "verification_args": {
+      "action": "notepad_new_tab",
+      "app": "notepad"
+    }
   }
 }
 

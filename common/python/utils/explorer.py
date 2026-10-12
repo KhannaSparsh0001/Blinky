@@ -1,4 +1,4 @@
-﻿"""
+"""
 Windows File Explorer context inspector for Blinky.
 Extracts active directory path, selected files, and media files from open File Explorer windows.
 """

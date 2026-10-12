@@ -406,6 +406,9 @@ def run(
     elif intent == "BROWSER_USE":
         LOGGER.info("Routing to browser-use tool for intent: BROWSER_USE")
         return run_browser_use_tool(extracted_params, started, warnings)
+    elif intent == "WINDOWS_USE":
+        LOGGER.info("Routing to Windows-Use engine for intent: WINDOWS_USE")
+        return run_windows_use_tool(extracted_params, question, started, warnings)
     elif intent in {"COMPUTER_USE", "OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
 
         LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
@@ -421,13 +424,14 @@ def run(
     if agent_mode:
         is_continuation = False
 
+    # Direct deterministic agent actions (open app, open & type, shortcut, media playback)
+    direct_agent_result = try_run_agent_action(question)
+    if direct_agent_result is not None and direct_agent_result.success:
+        return build_agent_tool_result(direct_agent_result.to_dict(), started, warnings)
+
+    direct_agent_result = None
+
     if agent_mode:
-        direct_agent_result = try_run_agent_action(question)
-        if direct_agent_result is not None and direct_agent_result.success:
-            return build_agent_tool_result(direct_agent_result.to_dict(), started, warnings)
-
-        direct_agent_result = None
-
         # Reroute: if the query contains action verbs beyond just "open",
         # treat it as COMPUTER_USE so the full tool loop runs.
         if intent == "OPEN_APP" and _has_computer_use_action(question):
@@ -965,6 +969,8 @@ def get_or_build_visible_ui_map(active_app: dict, screenshot, target_pid: int | 
         if screenshot.screen_width != screenshot.width or screenshot.screen_height != screenshot.height:
             uia_items_filtered = scale_uia_items_to_screenshot(uia_items_filtered, screenshot)
 
+        uia_items_filtered = filter_ignored_overlay_items(uia_items_filtered, screenshot)
+
         merged = assign_screen_element_refs(merge_visible_items(ocr_items_filtered, uia_items_filtered))
         merged.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
         return merged
@@ -999,6 +1005,32 @@ def classify_request(
     conversation_history: list[dict] | None = None,
     agent_mode: bool = False,
 ) -> dict | None:
+    try:
+        from computer_use.windows_use_engine import resolve_windows_use_request
+        wu_match = resolve_windows_use_request(question)
+        if wu_match:
+            return {
+                "intent": "WINDOWS_USE",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": wu_match,
+            }
+    except Exception as exc:
+        LOGGER.debug("Fast-path WINDOWS_USE resolution failed: %s", exc)
+    try:
+        from computer_use.agent import OPEN_APP_RE, cleanup_app_name, looks_like_app_name
+        app_open_match = OPEN_APP_RE.match(question.strip().rstrip("?.!,;:"))
+        if app_open_match:
+            app_cand = cleanup_app_name(app_open_match.group("app"))
+            if app_cand and looks_like_app_name(app_cand):
+                return {
+                    "intent": "OPEN_APP",
+                    "needs_screen": False,
+                    "is_continuation": False,
+                    "extracted_params": {"app_name": app_cand},
+                }
+    except Exception as exc:
+        LOGGER.debug("Fast-path OPEN_APP resolution failed: %s", exc)
     try:
         from tools.browser_use_tool import resolve_browser_use_request
         bu_match = resolve_browser_use_request(question)
@@ -1376,6 +1408,36 @@ def run_browser_use_tool(
     }
 
 
+def run_windows_use_tool(
+    params: dict,
+    question: str,
+    started: float,
+    warnings: list[str],
+) -> dict:
+    """Execute Windows-Use native UI automation and return a Blinky-formatted result."""
+    from computer_use.windows_use_engine import handle_windows_use_request
+    _emit_status("windows_use", "Executing Windows UI automation...")
+    try:
+        res = handle_windows_use_request(params)
+        summary = res.get("message", "Windows UI action completed.")
+    except Exception as exc:
+        summary = f"Windows-Use action failed: {exc}"
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    app_name = str(params.get("app") or "Notepad").title()
+    app_proc = f"{params.get('app', 'notepad')}.exe"
+    return {
+        "summary": summary,
+        "steps": [],
+        "active_app": {"title": app_name, "process": app_proc, "supported": True},
+        "ocr": {"count": 0, "items": []},
+        "elapsed_ms": elapsed_ms,
+        "provider": get_provider_label(),
+        "warnings": warnings,
+        "is_continuation": False,
+        "windows_use": True,
+    }
+
+
 def run_attached_image_vision(question: str, attached_image_b64: str, started: float, warnings: list[str]) -> dict:
     """Describe a mobile-attached image via Groq/Gemini vision without screen capture."""
     _emit_status("vision", "Analyzing attached image...")
@@ -1693,6 +1755,8 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
 
     if screenshot.screen_width != screenshot.width or screenshot.screen_height != screenshot.height:
         uia_items = scale_uia_items_to_screenshot(uia_items, screenshot)
+
+    uia_items = filter_ignored_overlay_items(uia_items, screenshot)
 
     uia_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
     match_items = locator_match_items(question, uia_items)
@@ -2129,19 +2193,29 @@ def filter_ignored_overlay_items(items: list[dict], screenshot) -> list[dict]:
 
     sx = screenshot.width / screenshot.screen_width
     sy = screenshot.height / screenshot.screen_height
-    scaled_rects = [
-        {
-            "x": rect["x"] * sx,
-            "y": rect["y"] * sy,
-            "width": rect["width"] * sx,
-            "height": rect["height"] * sy,
-        }
-        for rect in rects
-    ]
+    max_area = (screenshot.width * screenshot.height) * 0.5
+    scaled_rects = []
+    for rect in rects:
+        rx = rect["x"] * sx
+        ry = rect["y"] * sy
+        rw = rect["width"] * sx
+        rh = rect["height"] * sy
+        if rw * rh >= max_area or (rw >= screenshot.width * 0.7 and rh >= screenshot.height * 0.7):
+            LOGGER.warning("Discarded oversized ignored overlay rect (%dx%d) to protect screen scanning", int(rw), int(rh))
+            continue
+        scaled_rects.append({
+            "x": rx,
+            "y": ry,
+            "width": rw,
+            "height": rh,
+        })
+    if not scaled_rects:
+        return items
+
     filtered = [item for item in items if not _item_center_in_any_rect(item, scaled_rects)]
     removed = len(items) - len(filtered)
     if removed:
-        LOGGER.info("Filtered %d OCR items inside ignored overlay windows", removed)
+        LOGGER.info("Filtered %d items inside ignored overlay windows", removed)
     return filtered
 
 

@@ -102,5 +102,36 @@ class TestLayaRouter(unittest.TestCase):
         self.assertFalse(res["needs_screen"])
 
 
+    def test_windows_use_notepad_tab_and_type_routes_to_windows_use(self):
+        """Notepad tab and type requests must route to WINDOWS_USE with needs_screen: False."""
+        queries = [
+            "open notepad and create new tab and type hello world",
+            "open notepad and create a new tab and type hello world",
+            "open notepad and then create a new tab and write hello world",
+            "create a new tab in notepad and type hello world",
+            "in notepad create new tab and type hello world",
+            "open notepad and write hello world",
+            "open notepad and write something",
+            "open notepad and type hello world",
+            "create new tab in notepad",
+            "open notepad and create new tab",
+        ]
+        for q in queries:
+            result = classify_with_laya(q)
+            self.assertIsNotNone(result, f"classify_with_laya failed for: {q}")
+            self.assertEqual(result["intent"], "WINDOWS_USE", f"Expected WINDOWS_USE for '{q}', got '{result['intent']}'")
+
+            preflight = get_preflight_from_laya(q)
+            self.assertIsNotNone(preflight, f"get_preflight_from_laya failed for: {q}")
+            self.assertEqual(preflight["intent"], "WINDOWS_USE", f"Expected preflight WINDOWS_USE for '{q}'")
+            self.assertFalse(preflight["needs_screen"], f"Expected needs_screen False for '{q}'")
+
+            main_res = classify_request(q, None, [])
+            self.assertIsNotNone(main_res, f"classify_request in main failed for: {q}")
+            self.assertEqual(main_res["intent"], "WINDOWS_USE", f"Expected main classify_request WINDOWS_USE for '{q}'")
+            self.assertFalse(main_res["needs_screen"], f"Expected needs_screen False in main for '{q}'")
+
+
 if __name__ == "__main__":
     unittest.main()
+
