@@ -124,6 +124,7 @@ def test_open_app_uses_windows_search_as_last_fallback() -> None:
 def test_normalize_app_name_removes_filler_words() -> None:
     assert normalize_app_name("WhatsApp installed app please") == "whatsapp"
     assert normalize_app_name("Microsoft Edge browser") == "microsoft edge"
+    assert normalize_app_name("Microsoft Store") == "store"
 
 
 def test_windows_search_fallback_clicks_visible_result() -> None:

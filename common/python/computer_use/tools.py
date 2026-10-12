@@ -132,6 +132,7 @@ KNOWN_EXECUTABLE_PATHS = {
 }
 
 APP_NAME_ALIASES = {
+    "microsoft store": "store",
     "ms edge": "edge",
     "microsoft edge browser": "microsoft edge",
     "whats app": "whatsapp",
@@ -1677,7 +1678,18 @@ def _mouse_tool_via_backend(
         if resolved == "move":
             if x is None or y is None:
                 return ToolResult(False, "mouse", "move requires x and y coordinates.", {})
-            result = backend.move_agent_cursor(int(x), int(y))
+            from computer_use.cursor_bridge import move_with_agent_cursor
+
+            result = move_with_agent_cursor(
+                backend, x=int(x), y=int(y), label="pointer target"
+            )
+            if result is None:
+                return ToolResult(
+                    True,
+                    "mouse",
+                    f"Pointed to ({int(x)}, {int(y)}) with Blinky's agent cursor.",
+                    {"action": "move", "x": int(x), "y": int(y), "cursor": "blinky"},
+                )
             return ToolResult(
                 result.ok,
                 "mouse",
@@ -1688,7 +1700,16 @@ def _mouse_tool_via_backend(
         if resolved == "click":
             if x is None or y is None:
                 return ToolResult(False, "mouse", "click requires x and y coordinates.", {})
-            result = backend.click(x=int(x), y=int(y), button=button, click_count=click_count)
+            from computer_use.cursor_bridge import click_with_agent_cursor
+
+            result = click_with_agent_cursor(
+                backend,
+                x=int(x),
+                y=int(y),
+                label=f"{button} click",
+                button=button,
+                click_count=click_count,
+            )
             return ToolResult(
                 result.ok,
                 "mouse",

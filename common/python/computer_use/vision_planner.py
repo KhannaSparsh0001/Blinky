@@ -5,6 +5,7 @@ Called before the first action and after recovery to decide the next atomic step
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,46 @@ from . import config
 from . import metrics
 
 LOGGER = get_logger("blinky.computer_use.vision_planner")
+
+
+def _image_dimensions_for_model(screenshot_path: str) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """Return (native screenshot size, encoded image size) for the selected vision client."""
+    try:
+        from PIL import Image
+
+        with Image.open(screenshot_path) as source:
+            native_size = source.size
+            from ai.client import _resolve_provider
+
+            provider = _resolve_provider()
+            max_dimension = None
+            if provider == "groq":
+                from ai.groq_client import _get_configured_image_max_dim
+
+                max_dimension = _get_configured_image_max_dim()
+            elif provider == "mimo":
+                max_dimension = 1024
+
+            if max_dimension and max(native_size) > max_dimension:
+                image = source.copy()
+                image.thumbnail((max_dimension, max_dimension))
+                return native_size, image.size
+            return native_size, native_size
+    except Exception:
+        LOGGER.debug("Could not determine vision image dimensions", exc_info=True)
+        return None
+
+
+def _scale_action_coordinates(args: dict[str, Any], native_size: tuple[int, int], image_size: tuple[int, int]) -> dict[str, Any]:
+    """Convert coordinates in the encoded vision image to native desktop pixels."""
+    if native_size == image_size or not isinstance(args, dict):
+        return args
+    if not all(isinstance(args.get(key), (int, float)) for key in ("x", "y")):
+        return args
+    scaled = dict(args)
+    scaled["x"] = round(args["x"] * native_size[0] / image_size[0])
+    scaled["y"] = round(args["y"] * native_size[1] / image_size[1])
+    return scaled
 
 
 def plan_action(
@@ -47,7 +88,20 @@ def plan_action(
 
     # Build prompt
     prompts = get_prompts()
-    prompt = prompts.get("vision_planner_prompt", "").format(query=query)
+    dimensions = _image_dimensions_for_model(screenshot_path)
+    if dimensions:
+        native_size, image_size = dimensions
+        image_width, image_height = image_size
+        screen_width, screen_height = native_size
+    else:
+        image_width = image_height = screen_width = screen_height = "unknown"
+    prompt = prompts.get("vision_planner_prompt", "").format(
+        query=query,
+        image_width=image_width,
+        image_height=image_height,
+        screen_width=screen_width,
+        screen_height=screen_height,
+    )
 
     start = time.perf_counter()
     try:
@@ -109,6 +163,9 @@ def plan_action(
             "args": {"suggestion": f"{action}: {json.dumps(args)}"},
             "reasoning": f"Model returned unparseable tool call after {misparses} retries",
         }
+
+    if dimensions and action in {"mouse", "click_element"}:
+        args = _scale_action_coordinates(args, native_size, image_size)
 
     metrics.log_vision_call(
         module="vision_planner",

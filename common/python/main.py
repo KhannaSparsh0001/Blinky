@@ -466,7 +466,43 @@ def run(
                 direct_agent_result = shortcut_tool(shortcut)
         elif intent == "COMPUTER_USE":
             from computer_use.loop import run_computer_use_loop
-            loop_result = run_computer_use_loop(question)
+            from computer_use.windows_use_engine import (
+                execute_microsoft_store_search,
+                extract_microsoft_store_install_search_query,
+            )
+
+            store_item = extract_microsoft_store_install_search_query(question)
+            if store_item:
+                # Store launch and search are stable, deterministic GUI steps.
+                # Do them first; vision is only useful once the result cards
+                # are visible and Blinky needs to choose the correct install control.
+                _emit_status("action", "Opening Microsoft Store and searching...")
+                search_result = execute_microsoft_store_search(store_item)
+                if not search_result.get("success"):
+                    return {
+                        "success": False,
+                        "summary": search_result.get("message", "Could not verify Microsoft Store search results."),
+                        "steps": [],
+                        "active_app": {"title": "Microsoft Store", "process": "", "supported": True},
+                        "ocr": {"count": 0, "items": []},
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        "provider": get_provider_label(),
+                        "warnings": warnings,
+                        "is_continuation": False,
+                        "computer_use": True,
+                    }
+
+                _emit_status("analyzing", "Checking the Store results for the download button...")
+                remaining_task = (
+                    f"Microsoft Store is already open on verified search results for {store_item!r}. "
+                    f"Continue from this screen. Identify the exact matching result and use its "
+                    "Get, Download, or Install button to start the download. Do not reopen Store, "
+                    "search again, or select a similarly named app. Verify the visible outcome "
+                    f"and report it accurately. Original request: {question}"
+                )
+                loop_result = run_computer_use_loop(remaining_task)
+            else:
+                loop_result = run_computer_use_loop(question)
             if loop_result.get("success"):
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 # Normalize agent steps to include frontend-safe fields
@@ -487,6 +523,19 @@ def run(
                     "active_app": {"title": "", "process": "", "supported": False},
                     "ocr": {"count": 0, "items": []},
                     "elapsed_ms": elapsed_ms,
+                    "provider": get_provider_label(),
+                    "warnings": warnings,
+                    "is_continuation": False,
+                    "computer_use": True,
+                }
+            if store_item:
+                return {
+                    "success": False,
+                    "summary": loop_result.get("error", "Store results were searched, but the download was not confirmed."),
+                    "steps": loop_result.get("steps", []),
+                    "active_app": {"title": "Microsoft Store", "process": "", "supported": True},
+                    "ocr": {"count": 0, "items": []},
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
                     "provider": get_provider_label(),
                     "warnings": warnings,
                     "is_continuation": False,
@@ -1005,6 +1054,39 @@ def classify_request(
     conversation_history: list[dict] | None = None,
     agent_mode: bool = False,
 ) -> dict | None:
+    # Compound Store searches must win before the broad OPEN_APP matcher; the
+    # latter otherwise strips the search action and leaves it in an agent loop.
+    try:
+        from computer_use.windows_use_engine import resolve_windows_use_request
+        wu_match = resolve_windows_use_request(question)
+        if wu_match and wu_match.get("action") == "microsoft_store_search":
+            return {
+                "intent": "WINDOWS_USE",
+                "needs_screen": False,
+                "is_continuation": False,
+                "extracted_params": wu_match,
+            }
+    except Exception as exc:
+        LOGGER.debug("Fast-path Microsoft Store search resolution failed: %s", exc)
+
+    # PRIORITY FIX: Check OPEN_APP before WINDOWS_USE to use fast launcher
+    # Simple "open X" commands should use the optimized open_app_tool, not slow UI automation
+    try:
+        from computer_use.agent import OPEN_APP_RE, cleanup_app_name, looks_like_app_name
+        app_open_match = OPEN_APP_RE.match(question.strip().rstrip("?.!,;:"))
+        if app_open_match:
+            app_cand = cleanup_app_name(app_open_match.group("app"))
+            if app_cand and looks_like_app_name(app_cand) and not _has_computer_use_action(question):
+                return {
+                    "intent": "OPEN_APP",
+                    "needs_screen": False,
+                    "is_continuation": False,
+                    "extracted_params": {"app_name": app_cand},
+                }
+    except Exception as exc:
+        LOGGER.debug("Fast-path OPEN_APP resolution failed: %s", exc)
+
+    # WINDOWS_USE now checked second - only for complex UI automation that's not simple app opening
     try:
         from computer_use.windows_use_engine import resolve_windows_use_request
         wu_match = resolve_windows_use_request(question)
@@ -1017,20 +1099,6 @@ def classify_request(
             }
     except Exception as exc:
         LOGGER.debug("Fast-path WINDOWS_USE resolution failed: %s", exc)
-    try:
-        from computer_use.agent import OPEN_APP_RE, cleanup_app_name, looks_like_app_name
-        app_open_match = OPEN_APP_RE.match(question.strip().rstrip("?.!,;:"))
-        if app_open_match:
-            app_cand = cleanup_app_name(app_open_match.group("app"))
-            if app_cand and looks_like_app_name(app_cand):
-                return {
-                    "intent": "OPEN_APP",
-                    "needs_screen": False,
-                    "is_continuation": False,
-                    "extracted_params": {"app_name": app_cand},
-                }
-    except Exception as exc:
-        LOGGER.debug("Fast-path OPEN_APP resolution failed: %s", exc)
     try:
         from tools.browser_use_tool import resolve_browser_use_request
         bu_match = resolve_browser_use_request(question)
@@ -1420,8 +1488,11 @@ def run_windows_use_tool(
     try:
         res = handle_windows_use_request(params)
         summary = res.get("message", "Windows UI action completed.")
+        if not res.get("success", True):
+            warnings.append(summary)
     except Exception as exc:
         summary = f"Windows-Use action failed: {exc}"
+        res = {"success": False}
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     app_name = str(params.get("app") or "Notepad").title()
     app_proc = f"{params.get('app', 'notepad')}.exe"
@@ -1435,6 +1506,7 @@ def run_windows_use_tool(
         "warnings": warnings,
         "is_continuation": False,
         "windows_use": True,
+        "success": bool(res.get("success", True)),
     }
 
 

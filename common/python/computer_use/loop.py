@@ -635,7 +635,10 @@ def run_computer_use_loop(
                 continue
 
             try:
-                result = _call_tool(tool_name, tool_fn, args)
+                from .cursor_bridge import agent_cursor_events, emit_cursor_protocol_event
+
+                with agent_cursor_events(emit_cursor_protocol_event):
+                    result = _call_tool(tool_name, tool_fn, args)
                 LOGGER.info("Tool result: success=%s, message=%s", result.success, result.message[:200])
                 if result.details:
                     LOGGER.info("Tool result details keys: %s", list(result.details.keys()))
@@ -736,6 +739,14 @@ def run_computer_use_loop(
                         )
                 except Exception as exc:
                     LOGGER.debug("open_app cheap verification skipped: %s", exc)
+            elif tool_name in ACTION_TOOLS and not result.success:
+                # A failed click cannot have produced the expected screen
+                # change. Calling the vision verifier here only adds another
+                # model round trip (and can itself fail under quota limits).
+                LOGGER.info("Vision verification skipped after failed %s action", tool_name)
+                conversation.append(
+                    "SYSTEM: The action failed before it was applied. Use the tool error above to choose a different target or approach; do not claim it succeeded."
+                )
             elif tool_name in ACTION_TOOLS:
                 _emit_status("analyzing", "Verifying action with vision...")
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from PIL import Image
 from unittest.mock import ANY, patch
 
-from computer_use.vision_planner import plan_action
+from computer_use.vision_planner import _scale_action_coordinates, plan_action
 
 
 def _tool_schema() -> dict:
@@ -138,3 +139,45 @@ def test_plan_action_metrics_logged_on_error(mock_ask) -> None:
             app_type="unknown",
             model_error=ANY,
         )
+
+
+@patch("ai.client.ask_model")
+def test_plan_action_scales_groq_vision_coordinates_to_native_pixels(mock_ask, tmp_path, monkeypatch) -> None:
+    screenshot = tmp_path / "screen.png"
+    Image.new("RGB", (2560, 1600)).save(screenshot)
+    monkeypatch.setenv("BLINKY_AI_PROVIDER", "groq")
+    mock_ask.return_value = {
+        "action": "mouse",
+        "args": {"action": "click", "x": 384, "y": 240},
+        "reasoning": "Click target",
+    }
+
+    result = plan_action(str(screenshot), "click target", [], _tool_schema())
+
+    assert result["args"]["x"] == 1280
+    assert result["args"]["y"] == 800
+    assert "768x480" in mock_ask.call_args.args[0]
+    assert "2560x1600" in mock_ask.call_args.args[0]
+
+
+@patch("ai.client.ask_model")
+def test_plan_action_keeps_custom_provider_native_coordinates(mock_ask, tmp_path, monkeypatch) -> None:
+    screenshot = tmp_path / "screen.png"
+    Image.new("RGB", (1280, 800)).save(screenshot)
+    monkeypatch.setenv("BLINKY_AI_PROVIDER", "custom")
+    mock_ask.return_value = {
+        "action": "mouse",
+        "args": {"action": "click", "x": 384, "y": 240},
+        "reasoning": "Click target",
+    }
+
+    result = plan_action(str(screenshot), "click target", [], _tool_schema())
+
+    assert result["args"]["x"] == 384
+    assert result["args"]["y"] == 240
+    assert "1280x800" in mock_ask.call_args.args[0]
+
+
+def test_scale_action_coordinates_preserves_non_coordinate_actions() -> None:
+    args = {"name": "Save"}
+    assert _scale_action_coordinates(args, (2560, 1600), (768, 480)) is args

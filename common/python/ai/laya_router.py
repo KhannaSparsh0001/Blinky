@@ -157,7 +157,19 @@ def classify_with_laya(query: str) -> dict[str, Any] | None:
     # 5. Windows-Use fast-path operations (Notepad tab creation, typing, compound UIA tasks)
     if not WEB_DOMAINS_RE.search(q):
         try:
-            from computer_use.windows_use_engine import resolve_windows_use_request
+            from computer_use.windows_use_engine import (
+                is_microsoft_store_install_request,
+                resolve_windows_use_request,
+            )
+            if is_microsoft_store_install_request(q):
+                return {
+                    "intent": "COMPUTER_USE",
+                    "domain": "desktop_os",
+                    "action": "control_gui",
+                    "confidence": 1.0,
+                    "source": "structural_guard",
+                    "params": {"backend": "cua", "query": q},
+                }
             wu_match = resolve_windows_use_request(q)
             if wu_match:
                 return {
@@ -370,6 +382,10 @@ def get_preflight_from_laya(query: str, previous_question: str | None = None) ->
         except Exception:
             needs_screen = True
             extracted_params = {"backend": "cua", "query": query}
+
+    elif intent == "COMPUTER_USE":
+        needs_screen = True
+        extracted_params = classification.get("params") or {"backend": "cua", "query": query}
 
     elif intent == "CHAT":
         intent = "INFORMATIONAL_CHAT"

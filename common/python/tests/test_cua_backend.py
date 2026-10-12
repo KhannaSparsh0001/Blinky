@@ -444,13 +444,13 @@ def test_is_dead_session_ignores_other_errors() -> None:
     assert _is_dead_session(_CuaDriverError("click", "pid has no on-screen window")) is False
 
 
-def test_backend_uses_no_session_by_default(monkeypatch) -> None:
+def test_backend_uses_shared_blinky_session_by_default(monkeypatch) -> None:
     monkeypatch.delenv("BLINKY_CUA_SESSION", raising=False)
 
     backend = CuaDriverBackend(binary="fake")
 
-    # A named session can expire and poison every later call, so we omit it.
-    assert backend._session is None
+    # Match the Rust bridge so both paths share the driver's hidden cursor.
+    assert backend._session == "blinky"
 
 
 def test_backend_session_from_env(monkeypatch) -> None:

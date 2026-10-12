@@ -1686,6 +1686,12 @@ async fn handle_desktop_action(app: &AppHandle, parsed: &serde_json::Value) {
     if status == Some("action") {
         if let Some(data) = parsed.get("data") {
             let action_type = data.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if action_type == "done" {
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    let _ = overlay.emit("blinky://agent-cursor-done", serde_json::json!({}));
+                }
+                return;
+            }
             if action_type == "click" || action_type == "point" {
                 if let (Some(x), Some(y)) = (
                     data.get("x").and_then(|v| v.as_i64()),

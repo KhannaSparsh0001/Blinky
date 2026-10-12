@@ -5,11 +5,13 @@ mod transport;
 mod websocket;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{atomic::{AtomicU64, Ordering}, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use tauri::{
@@ -25,6 +27,14 @@ use platform::{
     start_global_click_listener, type_text_impl,
 };
 
+type ActivePythonWorkers = Mutex<HashMap<String, u32>>;
+static ACTIVE_PYTHON_WORKERS: OnceLock<ActivePythonWorkers> = OnceLock::new();
+static NEXT_PYTHON_WORKER_ID: AtomicU64 = AtomicU64::new(1);
+
+fn active_python_workers() -> &'static ActivePythonWorkers {
+    ACTIVE_PYTHON_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +47,7 @@ struct TutorRequest {
     agent_mode: Option<bool>,
     attached_image: Option<String>,
     attached_file: Option<serde_json::Value>,
+    run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,17 +99,24 @@ async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<serde_json::
     let overlay = app.get_webview_window("overlay");
     let command = app.get_webview_window("command");
 
-    if let Some(ref w) = overlay {
-        set_window_capture_exclusion(w, true);
-    }
+    // The overlay contains the AI cursor and must remain visible to screen
+    // recorders. Only the private command panel is excluded from capture.
     if let Some(ref w) = command {
         set_window_capture_exclusion(w, true);
+    }
+    if let Some(ref w) = overlay {
+        set_window_capture_exclusion(w, false);
     }
 
     std::thread::sleep(Duration::from_millis(40));
 
+    let worker_run_id = request.run_id.clone().unwrap_or_else(|| {
+        format!("{}-{}", std::process::id(), NEXT_PYTHON_WORKER_ID.fetch_add(1, Ordering::Relaxed))
+    });
+
     let output_res = run_python_worker(
         &app,
+        &worker_run_id,
         &request.question,
         request.previous_question.as_deref(),
         request.progress.as_ref(),
@@ -117,13 +135,56 @@ async fn run_tutor(app: AppHandle, request: TutorRequest) -> Result<serde_json::
     if let Some(ref w) = overlay {
         set_window_capture_exclusion(w, false);
     }
-
     let output = output_res?;
 
-    let parsed: serde_json::Value = serde_json::from_str(&output)
+    let parsed: serde_json::Value = parse_worker_output(&output)
         .map_err(|err| format!("Python worker returned invalid JSON: {err}. Raw: {output}"))?;
 
     Ok(parsed)
+}
+
+#[tauri::command]
+fn cancel_tutor(run_id: String) -> Result<bool, String> {
+    let worker = active_python_workers()
+        .lock()
+        .map_err(|_| "Active Python worker registry is unavailable.".to_string())?
+        .get(&run_id)
+        .cloned();
+    let Some(pid) = worker else {
+        return Ok(false);
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        // The Python worker may have launched cua-driver or another actuator
+        // subprocess. Kill the process tree so no detached click loop survives.
+        let taskkill = Command::new("taskkill")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/T")
+            .arg("/F")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("Failed to stop desktop task process tree: {error}"))?;
+        if !taskkill.success() {
+            return Err("Windows could not stop the desktop task process tree.".to_string());
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()
+            .map_err(|error| format!("Failed to stop desktop task: {error}"))?;
+        if !status.success() {
+            return Err("The operating system could not stop the desktop task.".to_string());
+        }
+    }
+
+    Ok(true)
 }
 
 #[tauri::command]
@@ -579,6 +640,7 @@ fn get_active_shortcut_from_env(app: &AppHandle) -> String {
 
 fn run_python_worker(
     app: &AppHandle,
+    worker_run_id: &str,
     question: &str,
     previous_question: Option<&str>,
     progress: Option<&serde_json::Value>,
@@ -605,6 +667,11 @@ fn run_python_worker(
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|err| format!("Failed to start Python worker: {err}"))?;
+    let pid = child.id();
+    active_python_workers()
+        .lock()
+        .map_err(|_| "Active Python worker registry is unavailable.".to_string())?
+        .insert(worker_run_id.to_string(), pid);
 
     let mut command_rect = serde_json::Value::Null;
     if let Some(ref w) = command_window {
@@ -652,16 +719,52 @@ fn run_python_worker(
                 if let Some(ref w) = command_window {
                     set_window_capture_exclusion(w, false);
                 }
-                if let Some(ref w) = overlay_window {
-                    set_window_capture_exclusion(w, false);
-                }
                 restored = true;
             }
         } else {
+            let streamed = serde_json::Deserializer::from_str(trimmed)
+                .into_iter::<serde_json::Value>()
+                .collect::<Result<Vec<_>, _>>();
+            if let Ok(values) = streamed {
+                if !values.is_empty() {
+                    for parsed in values {
+                        if parsed.get("type").and_then(|value| value.as_str()) == Some("status") {
+                            if parsed.get("phase").and_then(|value| value.as_str())
+                                == Some("cursor_action")
+                            {
+                                handle_worker_cursor_action(overlay_window.as_ref(), &parsed);
+                            } else if let Some(ref w) = command_window {
+                                let _ = w.emit("blinky://tutor-status", parsed.clone());
+                            }
+                        } else if parsed.get("type").and_then(|value| value.as_str()) == Some("chunk") {
+                            if let Some(ref w) = command_window {
+                                let _ = w.emit("blinky://tutor-chunk", parsed.clone());
+                            }
+                        } else if matches!(
+                            parsed.get("status").and_then(|value| value.as_str()),
+                            Some("action" | "done")
+                        ) {
+                            // Older Python workers send cursor updates as adjacent JSON
+                            // objects instead of the newer status/phase envelope.
+                            handle_worker_cursor_action(overlay_window.as_ref(), &parsed);
+                        } else {
+                            stdout_accumulated.push_str(&parsed.to_string());
+                            stdout_accumulated.push('\n');
+                        }
+                    }
+                    line.clear();
+                    continue;
+                }
+            }
+
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 if let Some(msg_type) = parsed.get("type").and_then(|value| value.as_str()) {
                     if msg_type == "status" {
-                        if let Some(ref w) = command_window {
+                        if parsed.get("phase").and_then(|value| value.as_str())
+                            == Some("cursor_action")
+                        {
+                            handle_worker_cursor_action(overlay_window.as_ref(), &parsed);
+                        } else if let Some(ref w) = command_window {
                             let _ = w.emit("blinky://tutor-status", parsed.clone());
                         }
                     } else if msg_type == "chunk" {
@@ -669,8 +772,6 @@ fn run_python_worker(
                             let _ = w.emit("blinky://tutor-chunk", parsed.clone());
                         }
                     }
-                    line.clear();
-                    continue;
                 }
             }
             stdout_accumulated.push_str(&line);
@@ -682,6 +783,9 @@ fn run_python_worker(
     let status = child
         .wait()
         .map_err(|err| format!("Failed to wait for python worker: {err}"))?;
+    if let Ok(mut workers) = active_python_workers().lock() {
+        workers.remove(worker_run_id);
+    }
 
     if !status.success() {
         let mut stderr_str = String::new();
@@ -695,6 +799,66 @@ fn run_python_worker(
     }
 
     Ok(stdout_accumulated)
+}
+
+/// Route cursor bridge status frames to Blinky's overlay without adding them
+/// to the Python worker's single-JSON result payload.
+fn handle_worker_cursor_action(overlay: Option<&WebviewWindow>, parsed: &serde_json::Value) {
+    let Some(overlay) = overlay else { return };
+    let Some(data) = parsed.get("data") else { return };
+    match data.get("type").and_then(|value| value.as_str()) {
+        Some("done") => {
+            let _ = overlay.emit("blinky://agent-cursor-done", serde_json::json!({}));
+        }
+        Some("point") => {
+            let (Some(x), Some(y)) = (
+                data.get("x").and_then(|value| value.as_i64()),
+                data.get("y").and_then(|value| value.as_i64()),
+            ) else {
+                return;
+            };
+            let label = data
+                .get("label")
+                .and_then(|value| value.as_str())
+                .unwrap_or("target");
+            let _ = overlay.show();
+            let _ = overlay.set_always_on_top(true);
+            configure_overlay_passthrough(overlay);
+            let _ = overlay.emit(
+                "blinky://agent-cursor-move",
+                serde_json::json!({
+                    "x": x,
+                    "y": y,
+                    "instruction": format!("Here is {label}"),
+                }),
+            );
+        }
+        _ => {}
+    }
+}
+
+/// Parse a JSON stream from the Python worker and return its final result.
+/// Cursor-action frames are transport events, not the task's answer.
+fn parse_worker_output(output: &str) -> Result<serde_json::Value, serde_json::Error> {
+    let mut last_result = None;
+    for value in serde_json::Deserializer::from_str(output).into_iter::<serde_json::Value>() {
+        let value = value?;
+        if matches!(
+            value.get("status").and_then(|status| status.as_str()),
+            Some("action" | "done")
+        ) || (value.get("type").and_then(|kind| kind.as_str()) == Some("status")
+            && value.get("phase").and_then(|phase| phase.as_str()) == Some("cursor_action"))
+        {
+            continue;
+        }
+        last_result = Some(value);
+    }
+    last_result.ok_or_else(|| {
+        serde_json::Error::io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "worker output contained no result JSON",
+        ))
+    })
 }
 
 fn ensure_env_file(root: &Path) {
@@ -1120,6 +1284,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             run_tutor,
+            cancel_tutor,
             run_agent_query,
             get_secure_transport_info,
             get_mobile_pairing_payload,
@@ -1333,7 +1498,26 @@ fn show_command_window(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_env_line, parse_worker_error};
+    use super::{parse_env_line, parse_worker_error, parse_worker_output};
+
+    #[test]
+    fn parses_task_result_after_adjacent_cursor_action_frames() {
+        let stdout = r#"{"status":"action","data":{"type":"point","x":1279,"y":35,"label":"Search"}} {"status":"action","data":{"type":"done"}} {"summary":"Searched Store","success":true}"#;
+
+        assert_eq!(
+            parse_worker_output(stdout).unwrap(),
+            serde_json::json!({"summary":"Searched Store","success":true})
+        );
+    }
+
+    #[test]
+    fn accepts_single_json_task_result() {
+        let stdout = r#"{"summary":"done","success":true}"#;
+        assert_eq!(
+            parse_worker_output(stdout).unwrap(),
+            serde_json::json!({"summary":"done","success":true})
+        );
+    }
 
     #[test]
     fn parses_worker_json_error_from_stdout() {

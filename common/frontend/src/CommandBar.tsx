@@ -15,7 +15,7 @@ import {
   shouldCompleteStepOnHighlightClick,
   shouldShowSummaryBubble,
 } from './lib/guidance';
-import { runTutor, showOverlay, hideOverlay, resizeCommandWindow, setCommandWindowSize, getSettings, saveSettings, resizeAndMoveCommandWindow, clickElement, clickScreenPoint, openUrl, typeText, scrollAtPoint, pauseWakeWord, resumeWakeWord, logDebugMessage, confirmRecipeSave, setAgentCursorVisibility, getSecureTransportInfo, getMobilePairingPayload, regenerateRemoteToken, openNotebookWindow } from './lib/tauri';
+import { runTutor, cancelTutor, showOverlay, hideOverlay, resizeCommandWindow, setCommandWindowSize, getSettings, saveSettings, resizeAndMoveCommandWindow, clickElement, clickScreenPoint, openUrl, typeText, scrollAtPoint, pauseWakeWord, resumeWakeWord, logDebugMessage, confirmRecipeSave, setAgentCursorVisibility, getSecureTransportInfo, getMobilePairingPayload, regenerateRemoteToken, openNotebookWindow } from './lib/tauri';
 
 import { linkCitationMarkers, preprocessMarkdown } from './lib/citations';
 import {
@@ -729,6 +729,7 @@ export function CommandBar() {
   const conversationHistoryRef = useRef<TutorConversationMessage[]>([]);
   const runIdRef = useRef(0);
   const cancelledRunIdsRef = useRef<Set<number>>(new Set());
+  const activeWorkerRunIdRef = useRef<string | null>(null);
   const latestTranscriptRef = useRef<string>('');
   const isStartingRecordingRef = useRef(false);
 
@@ -1487,6 +1488,8 @@ export function CommandBar() {
 
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
+    const workerRunId = `${Date.now()}-${runId}`;
+    activeWorkerRunIdRef.current = workerRunId;
 
     // Immediately enable streaming TTS if requested
     workflowStartedWithReadbackRef.current = shouldSpeakAfter;
@@ -1523,7 +1526,7 @@ export function CommandBar() {
       let result: TutorResult;
       if (agentModeEnabled) {
         // Run the agent first — it may handle everything via MCP tools
-        const agentResult = await runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, false, true);
+        const agentResult = await runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, false, true, undefined, undefined, workerRunId);
 
         // If agent handled it purely via backend tool without UI steps, use its result directly.
         // Otherwise, run the autopilot loop so the AI cursor moves, glides, and clicks on screen.
@@ -1553,7 +1556,7 @@ export function CommandBar() {
                 firstObservation = agentResult;
                 return firstObservation;
               }
-              return runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, false, true);
+              return runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, false, true, undefined, undefined, workerRunId);
             },
             act: async (point, step) => {
               if (cancelledRunIdsRef.current.has(runId)) return;
@@ -1632,7 +1635,7 @@ export function CommandBar() {
           }
         }
       } else {
-        result = await runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, webSearchEnabled);
+        result = await runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, webSearchEnabled, undefined, undefined, undefined, workerRunId);
 
         await logDebugMessage(`[executeTutor] (Standard) Received result from backend. Steps count: ${result.steps?.length || 0}`);
         if (result.steps && result.steps.length > 0) {
@@ -1773,6 +1776,9 @@ export function CommandBar() {
     } finally {
       cancelledRunIdsRef.current.delete(runId);
       if (runIdRef.current === runId) {
+        if (activeWorkerRunIdRef.current === workerRunId) {
+          activeWorkerRunIdRef.current = null;
+        }
         isRunningRef.current = false;
         setIsRunning(false);
         if (!isPointing) {
@@ -1789,6 +1795,10 @@ export function CommandBar() {
     const runId = runIdRef.current;
     if (!isRunningRef.current || runId === 0) return;
     cancelledRunIdsRef.current.add(runId);
+    const workerRunId = activeWorkerRunIdRef.current;
+    if (workerRunId) {
+      void cancelTutor(workerRunId);
+    }
     isRunningRef.current = false;
     setIsRunning(false);
     setStatus('Stopped.');
@@ -3048,7 +3058,7 @@ export function CommandBar() {
                     event.stopPropagation();
                     stopCurrentRun();
                   }}
-                  title={isRunning ? 'Stop thinking' : 'Send'}
+                  title={isRunning ? 'Stop desktop task' : 'Send'}
                 >
                   {isRunning ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}
                 </button>

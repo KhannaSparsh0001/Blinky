@@ -8,10 +8,63 @@ import unittest
 from unittest.mock import patch
 
 from ai.laya_router import classify_with_laya, get_preflight_from_laya
+from computer_use.windows_use_engine import resolve_windows_use_request
 from main import classify_request
 
 
 class TestLayaRouter(unittest.TestCase):
+    def test_microsoft_store_search_phrase_resolves_to_fast_windows_use_path(self):
+        for query in (
+            "open Microsoft Store and search for Minecraft",
+            "search minecraft in Microsoft Store",
+            "find Minecraft on the Microsoft Store",
+        ):
+            with self.subTest(query=query):
+                params = resolve_windows_use_request(query)
+                self.assertEqual(params["action"], "microsoft_store_search")
+                self.assertEqual(params["app"], "store")
+                self.assertEqual(params["query"].casefold(), "minecraft")
+
+        classified = classify_request(
+            "open Microsoft Store and search for Minecraft",
+            previous_question=None,
+            warnings=[],
+        )
+        self.assertEqual(classified["intent"], "WINDOWS_USE")
+        self.assertEqual(classified["extracted_params"]["query"], "Minecraft")
+
+    def test_microsoft_store_install_request_keeps_full_task_for_cua(self):
+        query = "open microsoft store search for instagram and download it"
+
+        self.assertIsNone(resolve_windows_use_request(query))
+
+        classified = classify_with_laya(query)
+        self.assertEqual(classified["intent"], "COMPUTER_USE")
+        self.assertEqual(classified["source"], "structural_guard")
+        self.assertEqual(classified["params"]["query"], query)
+
+        preflight = get_preflight_from_laya(query)
+        self.assertEqual(preflight["intent"], "COMPUTER_USE")
+        self.assertTrue(preflight["needs_screen"])
+        self.assertEqual(preflight["extracted_params"]["query"], query)
+
+        main_result = classify_request(query, None, [])
+        self.assertEqual(main_result["intent"], "COMPUTER_USE")
+        self.assertEqual(main_result["extracted_params"]["query"], query)
+
+        # Safety wording after the install verb must still keep the whole task
+        # out of the search-only shortcut.
+        guarded_query = query + ", but stop at the Install button without clicking it"
+        self.assertIsNone(resolve_windows_use_request(guarded_query))
+        guarded = classify_with_laya(guarded_query)
+        self.assertEqual(guarded["intent"], "COMPUTER_USE")
+        self.assertEqual(guarded["params"]["query"], guarded_query)
+
+    def test_notepad_new_tab_phrase_resolves_without_llm(self):
+        result = resolve_windows_use_request("open notepad and in new tab type hello world")
+        self.assertEqual(result["action"], "notepad_new_tab_and_type")
+        self.assertEqual(result["text"], "hello world")
+
     def test_url_with_video_never_routes_to_video_edit(self):
         """Web URLs mentioning 'video' or 'instagram' must route to BROWSER_USE, NEVER VIDEO_EDIT."""
         queries = [
@@ -105,6 +158,12 @@ class TestLayaRouter(unittest.TestCase):
     def test_windows_use_notepad_tab_and_type_routes_to_windows_use(self):
         """Notepad tab and type requests must route to WINDOWS_USE with needs_screen: False."""
         queries = [
+            "open notepad in new tab and write hello world",
+            "open notepad in a new tab and write hello world",
+            "open Notepad in a new tab then type 'hello world'",
+            "open notepad and in new tab type hello world",
+            "open notepad and in a new tab write hello world",
+            "open notepad then in a new tab type hello world",
             "open notepad and create new tab and type hello world",
             "open notepad and create a new tab and type hello world",
             "open notepad and then create a new tab and write hello world",

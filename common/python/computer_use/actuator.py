@@ -182,7 +182,7 @@ def _resolve_target_window(app_name: str | None, backend: Any) -> Any | None:
             if target in (w.process or "").lower() or target in (w.title or "").lower()
         ]
         if matches:
-            return next((w for w in matches if w.supported), matches[0])
+            return next((w for w in matches if w.supported), None)
         return None
 
     active = backend.get_active_window()
@@ -305,8 +305,12 @@ def click_element(
         return _no_backend("click_element")
 
     try:
+        from computer_use.cursor_bridge import click_with_agent_cursor, run_with_agent_cursor
+
         if x is not None and y is not None:
-            result = backend.click(x=int(x), y=int(y))
+            result = click_with_agent_cursor(
+                backend, x=int(x), y=int(y), label=name or "target"
+            )
             if result.ok:
                 return _ok_result("click", result.message, x=int(x), y=int(y))
             if IS_WINDOWS:
@@ -327,7 +331,27 @@ def click_element(
                 match = _match_element(name, elements)
                 if match is not None:
                     cx, cy = match.center()
-                    result = backend.click(x=cx, y=cy)
+                    element_index = match.extra.get("element_index")
+                    element_token = match.extra.get("element_token")
+                    element_window_id = match.extra.get("window_id") or chosen.window_id
+                    element_pid = match.extra.get("pid") or chosen.pid
+                    if (element_index is not None or element_token) and element_window_id:
+                        result = run_with_agent_cursor(
+                            lambda: backend.click_element(
+                                element_index=int(element_index) if element_index is not None else None,
+                                element_token=str(element_token) if element_token else None,
+                                window_id=str(element_window_id),
+                                pid=int(element_pid) if element_pid is not None else None,
+                                snapshot_id=match.extra.get("snapshot_id"),
+                            ),
+                            x=cx,
+                            y=cy,
+                            label=match.text or name,
+                        )
+                    else:
+                        result = click_with_agent_cursor(
+                            backend, x=cx, y=cy, label=match.text or name
+                        )
                     return (
                         _ok_result(
                             "click",
@@ -338,6 +362,10 @@ def click_element(
                             matched_role=match.role,
                             matched_by="uia",
                             window_id=chosen.window_id,
+                        pid=element_pid,
+                        element_index=element_index,
+                        element_token=match.extra.get("element_token"),
+                        snapshot_id=match.extra.get("snapshot_id"),
                         )
                         if result.ok
                         else _fail_result("click", result.message)
@@ -349,7 +377,27 @@ def click_element(
             if 0 <= int(index) < len(elements):
                 target_el = elements[int(index)]
                 cx, cy = target_el.center()
-                result = backend.click(x=cx, y=cy)
+                element_index = target_el.extra.get("element_index")
+                element_token = target_el.extra.get("element_token")
+                if element_index is not None or element_token:
+                    result = run_with_agent_cursor(
+                        lambda: backend.click_element(
+                            element_index=int(element_index) if element_index is not None else None,
+                            element_token=str(element_token) if element_token else None,
+                            window_id=str(target_el.extra.get("window_id") or chosen.window_id),
+                            pid=int(target_el.extra.get("pid") or chosen.pid)
+                            if target_el.extra.get("pid") or chosen.pid is not None
+                            else None,
+                            snapshot_id=target_el.extra.get("snapshot_id"),
+                        ),
+                        x=cx,
+                        y=cy,
+                        label=target_el.text or name or "target",
+                    )
+                else:
+                    result = click_with_agent_cursor(
+                        backend, x=cx, y=cy, label=target_el.text or name or "target"
+                    )
                 return (
                     _ok_result(
                         "click",
@@ -364,14 +412,22 @@ def click_element(
                     else _fail_result("click", result.message)
                 )
 
-        # Name → window title/class match
+        # Name → window title/class match. When the caller named an app, keep
+        # this fallback inside that app; searching every window for a generic
+        # label like "Search" can pick Windows Search or another window and
+        # send the cursor to a completely unrelated control.
         if name:
             target = name.strip().lower()
-            for w in backend.list_windows():
+            fallback_windows = [chosen] if app_id and chosen is not None else (
+                [] if app_id else backend.list_windows()
+            )
+            for w in fallback_windows:
                 if target in (w.title or "").lower() or target in (w.process or "").lower():
                     cx = w.x + w.width // 2
                     cy = w.y + w.height // 2
-                    result = backend.click(x=cx, y=cy)
+                    result = click_with_agent_cursor(
+                        backend, x=cx, y=cy, label=name
+                    )
                     return (
                         _ok_result(
                             "click",
@@ -403,6 +459,30 @@ def _match_element(name: str, elements: list[Any]) -> Any | None:
     if not candidates:
         return None
 
+    # Search is an input intent, not a generic label lookup. Store and other
+    # modern Windows apps often expose several neighboring controls, and a
+    # fuzzy text match can otherwise choose a toolbar/title-bar item. Prefer
+    # editable UIA controls; if the tree exposes no edit control, only accept
+    # a control whose accessible name or automation id explicitly says search.
+    normalized_name = " ".join(name.casefold().split())
+    if any(word in normalized_name for word in ("search", "find", "filter")):
+        input_roles = {"edit", "textbox", "combobox", "searchbox"}
+        editable = [el for el in candidates if el.role.casefold() in input_roles]
+        if editable:
+            candidates = editable
+        else:
+            explicit = [
+                el
+                for el in candidates
+                if any(
+                    word in f"{el.text} {el.automation_id}".casefold()
+                    for word in ("search", "find", "filter")
+                )
+            ]
+            if not explicit:
+                return None
+            candidates = explicit
+
     if find_best_match_with_score is not None:
         items = [
             {
@@ -419,10 +499,10 @@ def _match_element(name: str, elements: list[Any]) -> Any | None:
         ]
         best = find_best_match_with_score(name, items, f"Click {name}")
         if best:
-            text = str(best.get("text") or "")
-            for el in candidates:
-                if el.text == text:
-                    return el
+            matched_item = best.get("item")
+            for candidate, item in zip(candidates, items):
+                if item is matched_item:
+                    return candidate
 
     # Plain case-insensitive fallback
     lowered = name.strip().lower()

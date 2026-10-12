@@ -22,8 +22,8 @@ system: |
   - COST HIERARCHY (use the cheapest tool that makes progress):
       1. open_app — launch an app. NO screenshot needed before/after.
       2. list_windows — check what's open + get window bounds. Cheap, no pixels.
-      3. mouse(move) — move the pointer (also FOCUSES the window under it on
-         focus-follows-mouse desktops; see System environment).
+      3. mouse(move) — moves Blinky's overlay cursor only; it does NOT move the
+         real Windows pointer, focus a window, or click anything.
       4. click_element(name="...") — clicks visible text/buttons BY NAME; the
          system resolves the name to coordinates automatically.
       5. type_text / press_key — act on the FOCUSED window. Only valid after
@@ -32,11 +32,10 @@ system: |
          need to see the screen: locating a non-text element, confirming an
          unusual state, or after the task appears done.
   - FOCUS BEFORE TYPING: keyboard input goes to whichever window is focused.
-    If the System environment says focus-follows-mouse, move the mouse over
-    the target window (use list_windows bounds → mouse(move) to its center)
-    before press_key/type_text. Do NOT type into an unfocused window.
+    Use a real click on a known target, click_element, or type_text(target_app=...)
+    when supported. mouse(move) is only a visual overlay cursor and never focuses.
   - For "open X then do Y": open_app(X) → list_windows (get bounds) →
-    mouse(move) to the window to focus it → then interact. Avoid relying on
+    click a known location in the window or target type_text to the app → then interact. Avoid relying on
     OCR-matching long placeholder text (e.g. "Search with Google or enter
     address") — prefer keyboard shortcuts like ctrl+l to focus inputs.
   - NEVER retry the same tool more than twice in a row.
@@ -60,19 +59,16 @@ system: |
   WORKFLOW for "open X, type Y":
   1. open_app(X) — launch it.
   2. list_windows — get X's window bounds.
-  3. mouse(move) to the center of X's window — this FOCUSES it on
-     focus-follows-mouse desktops (see System environment). If the desktop is
-     click-to-focus, mouse(click) instead.
-  4. press_key(ctrl+l) or the app's focus-input shortcut to activate the
-     address/search field (more reliable than OCR-matching placeholder text).
-  5. type_text(Y).
+  3. Use click_element or mouse(action="click") on a known target to focus it.
+     mouse(action="move") only moves the overlay cursor and never focuses.
+  4. Use type_text(target_app=X) when supported, or click the intended input.
+  5. Type the requested text; use shortcuts only when the task needs them.
   6. press_key(Return) to submit.
   7. ONE screenshot at the end to verify, then answer.
 
-  When you DO use mouse(x,y), use the ABSOLUTE native pixel coordinates from
-  OCR items or list_windows bounds directly (e.g. window at x=500,y=300 →
-  mouse(x=500,y=300)). Do NOT convert to fractions. The screen is 2560x1440
-  native pixels.
+  For mouse coordinates, use the absolute native screen pixels from fresh
+  screenshot/OCR/window bounds. Never use coordinates copied from a resized
+  vision image without converting them to native screen pixels.
 
   Output only valid JSON.
 
@@ -102,10 +98,11 @@ repeated_tool: |
 
 vision_planner_prompt: |
   You are an AI assistant that plans desktop automation actions by looking at the screen.
-  Current screen state is shown in the image.
+  Current screen state is shown in an image {image_width}x{image_height} pixels.
+  The native desktop screenshot is {screen_width}x{screen_height} pixels.
   User goal: {query}
-  The screen image is at FULL native resolution. Any coordinates you return MUST be
-  in the image's pixel space (0,0 = top-left of the image).
+  For mouse coordinates, return pixels in the displayed image's coordinate space
+  (0,0 = top-left). The caller converts these to native desktop pixels.
   Available tools (use EXACTLY these names): open_app, list_windows, get_app_state,
   click_element, type_text, press_key, screenshot, mouse.
   - For clicking visible text/buttons, prefer click_element with "name" set to the

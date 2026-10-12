@@ -44,15 +44,13 @@ a different and real reason: it is the only scope this backend's callers expect.
 
 Transport
 ---------
-`cua-driver call <tool> '<json>'` over the running daemon, rather than raw MCP
-stdio. Simple, debuggable, and reuses the daemon's element-index cache. The
-`_CuaTransport` seam exists so a persistent MCP client can drop in later
-without touching the backend.
-
-**This is currently the slow path**: one process per call, ~1.45s of pure startup
-before any work. The Rust bridge keeps a persistent `cua-driver mcp` child instead
-and runs the same ladder in ~0.4s. Any multi-call sequence added here will pay that
-cost per step, so the MCP drop-in is worth doing before this path grows.
+One persistent `cua-driver mcp` child speaking JSON-RPC over stdio — the same
+transport the Rust bridge (`windows/src-tauri/src/platform/cua.rs`) uses. The
+earlier implementation spawned one `cua-driver call <tool> <json>` process per
+action, which measured ~0.6-1.3s of pure startup per call (~8-10x slower than
+the persistent child: list_windows 1.29s → 0.11s, get_cursor_position 0.62s →
+0.006s). The child is spawned lazily on first call, shared for the process
+lifetime, and rebuilt automatically if the pipe wedges or the child dies.
 """
 
 from __future__ import annotations
@@ -63,6 +61,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -153,8 +152,124 @@ class _CuaDriverError(RuntimeError):
         self.payload = payload or {}
 
 
+_MCP_HANDSHAKE_TIMEOUT_S = 10.0
+
+
+class _McpChild:
+    """One persistent `cua-driver mcp` child process (JSON-RPC over stdio).
+
+    Mirrors the Rust bridge: spawn once, `initialize` handshake, then serve
+    every tool call over the same pipes. A dedicated reader thread drains
+    stdout (a child blocked on a full pipe never exits, which used to turn
+    large payloads into 20-second stalls) and files replies by id so the
+    caller wakes the instant its reply lands.
+
+    Not thread-safe by itself: callers serialize through `_CuaTransport._lock`.
+    """
+
+    def __init__(self, binary: str) -> None:
+        self._binary = binary
+        self._proc: subprocess.Popen[str] | None = None
+        self._replies: dict[int, dict[str, Any]] = {}
+        self._cond = threading.Condition()
+        self._next_id = 1
+        self._closed = False
+
+    # ── Lifecycle ──────────────────────────────────────────────────
+
+    def _spawn(self) -> None:
+        cmd = [self._binary, "mcp"]
+        creationflags = 0x0800_0000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
+        self._proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+        )
+        assert self._proc.stdout is not None
+        reader = threading.Thread(target=self._read_loop, daemon=True, name="cua-mcp-stdout")
+        reader.start()
+        self._request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "blinky-python", "version": "1"},
+            },
+            timeout=_MCP_HANDSHAKE_TIMEOUT_S,
+        )
+        self._write({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+
+    def _read_loop(self) -> None:
+        proc = self._proc
+        assert proc is not None and proc.stdout is not None
+        for line in proc.stdout:
+            trimmed = line.strip()
+            if not trimmed:
+                continue
+            try:
+                message = json.loads(trimmed)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(message, dict):
+                continue
+            reply_id = message.get("id")
+            if not isinstance(reply_id, int):
+                continue  # notification, no caller waiting on it
+            with self._cond:
+                self._replies[reply_id] = message
+                self._cond.notify_all()
+
+    def _write(self, message: dict[str, Any]) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None or self._closed:
+            raise BrokenPipeError("cua-driver mcp child is not running")
+        try:
+            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            raise BrokenPipeError(f"cua-driver mcp pipe write failed: {exc}") from exc
+
+    # ── Requests ───────────────────────────────────────────────────
+
+    def _request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        if self._proc is None:
+            self._spawn()
+        reply_id = self._next_id
+        self._next_id += 1
+        self._write({"jsonrpc": "2.0", "id": reply_id, "method": method, "params": params})
+
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while True:
+                reply = self._replies.pop(reply_id, None)
+                if reply is not None:
+                    return reply
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"{method} timed out after {timeout:.0f}s")
+                self._cond.wait(remaining)
+
+    def close(self) -> None:
+        self._closed = True
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+
+
 class _CuaTransport:
-    """Thin wrapper over the `cua-driver` CLI, which proxies the daemon.
+    """Persistent-session wrapper around the `cua-driver mcp` child.
 
     Sessions are **opt-in**. cua-driver's named lifecycle sessions expire
     (`session 'x' has ended; tool call was rejected`), and a stale id poisons
@@ -163,12 +278,15 @@ class _CuaTransport:
     omit `session` and let each call use the transport's implicit session.
 
     When a session *is* configured we recover automatically: a dead-session
-    error triggers `start_session` and one retry.
+    error triggers `start_session` and one retry. A wedged or dead child is
+    rebuilt transparently on the next call.
     """
 
     def __init__(self, binary: str, session: str | None = None) -> None:
         self.binary = binary
         self.session = session
+        self._lock = threading.RLock()
+        self._child: _McpChild | None = None
 
     def call(self, tool: str, payload: dict[str, Any] | None = None, *, _retry: bool = True) -> dict[str, Any]:
         args = dict(payload or {})
@@ -176,102 +294,182 @@ class _CuaTransport:
             args.setdefault("session", self.session)
 
         try:
-            return self._invoke(tool, args)
+            with self._lock:
+                return self._invoke(tool, args)
         except _CuaDriverError as exc:
             if _retry and self.session and _is_dead_session(exc):
                 LOGGER.info("cua-driver session %r expired; reviving.", self.session)
                 if self._revive():
                     return self.call(tool, payload, _retry=False)
             raise
-
-    def _revive(self) -> bool:
-        """Re-open the named lifecycle session. Best effort."""
-        try:
-            proc = subprocess.run(
-                [self.binary, "call", "start_session", json.dumps({"session": self.session})],
-                capture_output=True,
-                text=True,
-                timeout=_DEFAULT_TIMEOUT_S,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            LOGGER.warning("Failed to revive cua-driver session: %s", exc)
-            return False
-
-        if proc.returncode == 0:
-            return True
-        LOGGER.warning("Reviving cua-driver session failed: %s", (proc.stderr or "").strip()[:200])
-        return False
+        except (BrokenPipeError, TimeoutError) as exc:
+            # The child wedged or died — throw it away so the next call
+            # spawns a fresh one instead of poisoning the backend.
+            with self._lock:
+                self._discard_child()
+            raise _CuaDriverError(tool, f"transport failure: {exc}") from exc
 
     def _invoke(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         timeout = _SLOW_TIMEOUT_S if tool in _SLOW_TOOLS else _DEFAULT_TIMEOUT_S
-        cmd = [self.binary, "call", tool, json.dumps(args)]
-
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
+            reply = self._child_request(
+                "tools/call",
+                {"name": tool, "arguments": args},
                 timeout=timeout,
-                encoding="utf-8",
-                errors="replace",
             )
-        except subprocess.TimeoutExpired as exc:
-            raise _CuaDriverError(tool, f"timed out after {timeout:.0f}s") from exc
-        except OSError as exc:
-            raise _CuaDriverError(tool, f"could not execute driver: {exc}") from exc
+        except TimeoutError:
+            # A call near the timeout means the pipe is wedged; rebuild.
+            with self._lock:
+                self._discard_child()
+            raise _CuaDriverError(tool, f"timed out after {timeout:.0f}s")
+        except BrokenPipeError:
+            with self._lock:
+                self._discard_child()
+            raise
 
-        stdout = (proc.stdout or "").strip()
-        parsed: dict[str, Any] | None = None
-        if stdout:
+        if "error" in reply:
+            return self._raise_tool_error(tool, describe_json(reply["error"]))
+
+        result = reply.get("result")
+        if not isinstance(result, dict):
+            return self._raise_tool_error(tool, "driver returned no result")
+
+        payload = _unwrap_mcp_result(result)
+
+        if result.get("isError") is True:
+            return self._raise_tool_error(tool, _result_message(result, payload))
+
+        refusal = _refusal_message(payload)
+        if refusal:
+            return self._raise_tool_error(tool, refusal)
+
+        if not isinstance(payload, dict):
+            payload = {"value": payload}
+        return payload
+
+    @staticmethod
+    def _raise_tool_error(tool: str, message: str) -> dict[str, Any]:
+        raise _CuaDriverError(tool, message)
+
+    def _child_request(self, method: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        child = self._child
+        if child is None:
+            child = _McpChild(self.binary)
             try:
-                candidate = json.loads(stdout)
-                if isinstance(candidate, dict):
-                    parsed = candidate
+                child._spawn()
+            except Exception:
+                child.close()
+                raise
+            self._child = child
+        return child._request(method, params, timeout=timeout)
+
+    def _discard_child(self) -> None:
+        if self._child is not None:
+            self._child.close()
+            self._child = None
+
+    def close(self) -> None:
+        with self._lock:
+            self._discard_child()
+
+    def _revive(self) -> bool:
+        """Re-open the named session and suppress cua-driver's extra cursor."""
+        try:
+            self.call("start_session", {"session": self.session}, _retry=False)
+        except _CuaDriverError as exc:
+            LOGGER.warning("Reviving cua-driver session failed: %s", exc.message[:200])
+            return False
+        try:
+            self.call("set_agent_cursor_enabled", {"enabled": False}, _retry=False)
+        except _CuaDriverError as exc:
+            LOGGER.warning("Could not hide cua-driver's cursor overlay: %s", exc.message[:200])
+        return True
+
+
+def _unwrap_mcp_result(result: dict[str, Any]) -> Any:
+    """Extract the driver payload from an MCP tool result envelope.
+
+    Preference order mirrors the Rust bridge: `structuredContent`, then the
+    first text content block parsed as JSON, then the raw text.
+    """
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+
+    content = result.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            try:
+                return json.loads(text.strip())
             except json.JSONDecodeError:
-                # Some tools emit progress lines before the payload; take the last
-                # balanced JSON object we can find.
-                parsed = _last_json_object(stdout)
+                parsed = _last_json_object(text)
+                if parsed is not None:
+                    return parsed
+                return {"text": text}
 
-        if proc.returncode != 0:
-            detail = ""
-            if parsed:
-                detail = str(parsed.get("error") or parsed.get("message") or "")
-            detail = detail or (proc.stderr or "").strip() or f"exit code {proc.returncode}"
-            raise _CuaDriverError(tool, detail, parsed)
-
-        if parsed is None:
-            raise _CuaDriverError(tool, f"unparseable driver output: {stdout[:200]!r}")
-
-        if parsed.get("isError"):
-            message = str(parsed.get("error") or parsed.get("message") or "driver reported an error")
-            raise _CuaDriverError(tool, message, parsed)
-
-        return parsed
+    return result
 
 
 def _last_json_object(text: str) -> dict[str, Any] | None:
-    """Best-effort recovery of the final JSON object in noisy stdout."""
-    depth = 0
-    start: int | None = None
+    """Find the last top-level JSON object in noisy or concatenated output."""
+    decoder = json.JSONDecoder()
     last: dict[str, Any] | None = None
-    for index, char in enumerate(text):
-        if char == "{":
-            if depth == 0:
-                start = index
-            depth += 1
-        elif char == "}" and depth:
-            depth -= 1
-            if depth == 0 and start is not None:
-                try:
-                    candidate = json.loads(text[start : index + 1])
-                    if isinstance(candidate, dict):
-                        last = candidate
-                except json.JSONDecodeError:
-                    pass
-                start = None
+    offset = 0
+    while offset < len(text):
+        start = text.find("{", offset)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            offset = start + 1
+            continue
+        if isinstance(value, dict):
+            last = value
+        # Jump over this whole JSON value so nested objects are not mistaken
+        # for sibling result frames.
+        offset = max(end, start + 1)
     return last
+
+
+def _result_message(result: dict[str, Any], payload: Any) -> str:
+    """Human-readable message for a failed tool call."""
+    content = result.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = str(block.get("text") or "").strip()
+                if text:
+                    return text
+    return describe_json(payload)
+
+
+def _refusal_message(payload: Any) -> str | None:
+    """Detect a *refusal*, which arrives as a successful call — trusting
+    `isError` alone would treat a refused click as a completed one."""
+    if not isinstance(payload, dict):
+        return None
+    if "refusal" in payload:
+        return describe_json(payload["refusal"])
+    status = payload.get("status")
+    if status in ("refused", "error", "failed", "denied"):
+        return describe_json(payload)
+    return None
+
+
+def describe_json(value: Any) -> str:
+    """Compact, readable rendering of a JSON error value."""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)[:500]
+    except (TypeError, ValueError):
+        return str(value)[:500]
 
 
 def _is_background_unavailable(exc: _CuaDriverError) -> bool:
@@ -296,10 +494,11 @@ class CuaDriverBackend(ComputerUseBackend):
     ) -> None:
         self._binary = _resolve_binary() if binary is None else (binary or None)
 
-        # Sessions are opt-in: a named lifecycle session can expire and then
-        # rejects every call, which would silently disable the backend.
+        # Share the Rust bridge's named session so both paths use one driver
+        # cursor setting and snapshot cache. The transport revives idle-expired
+        # sessions and reapplies the hidden-driver-cursor preference.
         if session is None:
-            session = os.environ.get("BLINKY_CUA_SESSION") or None
+            session = os.environ.get("BLINKY_CUA_SESSION") or "blinky"
         self._session = session
 
         self._transport: _CuaTransport | None = None
@@ -313,6 +512,13 @@ class CuaDriverBackend(ComputerUseBackend):
         self._scale_factor: float = 1.0
         # (pid, window_id) -> snapshot_id from the last get_window_state call.
         self._snapshots: dict[tuple[int, int], str] = {}
+        # Short-lived list_windows cache. A single action ladder (resolve
+        # target window → walk elements → dispatch input) asks for the window
+        # list 2-4 times in a few hundred milliseconds; the desktop cannot
+        # change underneath it unless Blinky itself acts, so one list serves
+        # the whole ladder. Invalidated by every input dispatch.
+        self._windows_cache: tuple[float, list[WindowInfo], list[dict[str, Any]]] | None = None
+        self._windows_cache_ttl_s = 0.75
         # Set when the last get_window_state came back degraded (minimized
         # window, non-UIA surface) so callers know the element list is not
         # authoritative and should fall back to the visual path.
@@ -327,12 +533,26 @@ class CuaDriverBackend(ComputerUseBackend):
             raise _CuaDriverError("start", "cua-driver not found (set CUA_DRIVER_CMD or add it to PATH)")
         self._transport = _CuaTransport(self._binary, session=self._session)
         self._started = True
+        if self._session:
+            try:
+                self._call("start_session", {"session": self._session})
+            except _CuaDriverError as exc:
+                LOGGER.warning("Could not start cua-driver session %r: %s", self._session, exc.message[:200])
+            cursor_result = self.set_agent_cursor(False)
+            if not cursor_result.ok:
+                LOGGER.warning("Could not hide cua-driver cursor overlay: %s", cursor_result.message[:200])
         LOGGER.info("CuaDriverBackend ready (binary=%s, session=%s)", self._binary, self._session)
 
     def stop(self) -> None:
         self._started = False
+        if self._transport is not None:
+            try:
+                self._transport.close()
+            except Exception:
+                pass
         self._transport = None
         self._snapshots.clear()
+        self._windows_cache = None
         self._screen_size_cache = None
 
     def is_available(self) -> bool:
@@ -470,20 +690,43 @@ class CuaDriverBackend(ComputerUseBackend):
             window_id=str(item.get("window_id", "") or ""),
         )
 
-    def list_windows(self) -> list[WindowInfo]:
+    def _list_windows_raw(self) -> list[Any]:
+        """Raw window records, cached briefly (see _windows_cache_ttl_s).
+
+        A single action ladder (resolve target → walk elements → dispatch)
+        asks for the window list 2-4 times within a few hundred milliseconds;
+        the desktop cannot change underneath it unless Blinky itself acts, so
+        one driver call serves the whole ladder.
+        """
+        now = time.monotonic()
+        cached = self._windows_cache
+        if cached is not None and (now - cached[0]) < self._windows_cache_ttl_s:
+            # Keep the return type stable across cold and warm cache reads.
+            # Callers of this private method inspect raw cua-driver fields,
+            # while list_windows() separately consumes the normalized records.
+            return cached[2]
+
         data = self._call("list_windows")
         raw = data.get("windows")
         if not isinstance(raw, list):
             raw = data.get("_legacy_windows") or []
+        raw = [item for item in raw if isinstance(item, dict)]
 
         windows: list[WindowInfo] = []
         for item in raw:
-            if not isinstance(item, dict):
-                continue
             win = self._window_from_item(item)
             if win is not None:
                 windows.append(win)
-        return windows
+        self._windows_cache = (time.monotonic(), windows, raw)
+        return raw
+
+    def list_windows(self) -> list[WindowInfo]:
+        self._list_windows_raw()
+        cached = self._windows_cache
+        return list(cached[1]) if cached else []
+
+    def _invalidate_windows_cache(self) -> None:
+        self._windows_cache = None
 
     @staticmethod
     def _is_driver_overlay(item: dict[str, Any]) -> bool:
@@ -501,11 +744,21 @@ class CuaDriverBackend(ComputerUseBackend):
         if not target_lower:
             return None
         windows = self.list_windows()
+        matches = []
         for w in windows:
             w_title = (w.title or "").lower()
             w_proc = (w.process or "").lower()
             if target_lower in w_title or target_lower in w_proc:
-                return w
+                matches.append(w)
+        # Windows Store and some other packaged apps expose hidden activation
+        # HWNDs alongside the real visible window. Never target the first
+        # title match blindly: scoped keyboard input to that HWND is silently
+        # dropped while the user sees the visible window stay unchanged.
+        visible = next((w for w in matches if w.supported), None)
+        if visible is not None:
+            return visible
+        if matches:
+            return None
         # Common domain expansions
         spreadsheet_markers = ("sheet", "untitled spreadsheet", "docs.google.com", "excel", "calc")
         if target_lower in {"spreadsheet", "sheet", "sheets", "googlesheet", "googlesheets"}:
@@ -523,17 +776,13 @@ class CuaDriverBackend(ComputerUseBackend):
         on-screen entry that isn't the driver's own overlay cursor.
         """
         try:
-            data = self._call("list_windows")
+            raw = self._list_windows_raw()
         except _CuaDriverError as exc:
             LOGGER.debug("list_windows unavailable: %s", exc)
             return None
 
-        raw = data.get("windows")
-        if not isinstance(raw, list):
-            raw = data.get("_legacy_windows") or []
-
         for item in raw:
-            if not isinstance(item, dict) or self._is_driver_overlay(item):
+            if self._is_driver_overlay(item):
                 continue
             if not item.get("is_on_screen", True) or item.get("minimized"):
                 continue
@@ -570,6 +819,7 @@ class CuaDriverBackend(ComputerUseBackend):
         except _CuaDriverError as exc:
             return ActionResult(False, "open_app", exc.message, {"app_name": app_name})
 
+        self._invalidate_windows_cache()
         return ActionResult(
             True,
             "open_app",
@@ -614,17 +864,50 @@ class CuaDriverBackend(ComputerUseBackend):
             payload["y"] = int(y)
         return self._dispatch_input("scroll", payload, action="scroll")
 
+    def _resolve_typing_target(self, target_app: str | None) -> WindowInfo | None:
+        """Window a keyboard action should go to, from ONE window listing.
+
+        Name match first, else the frontmost real window. Previously this
+        path made up to two separate list_windows calls; the second one is
+        pure latency — the desktop cannot change between them.
+        """
+        if target_app:
+            # An explicit target must not fall through to the currently
+            # focused app when no visible matching window exists.
+            return self._resolve_target_window_by_name(target_app)
+        try:
+            raw = self._list_windows_raw()
+        except _CuaDriverError as exc:
+            LOGGER.debug("list_windows unavailable: %s", exc)
+            return None
+        for item in raw:
+            if self._is_driver_overlay(item):
+                continue
+            if not item.get("is_on_screen", True) or item.get("minimized"):
+                continue
+            win = self._window_from_item(item)
+            if win is not None:
+                return win
+        return None
+
     def type_text(self, text: str, target_app: str | None = None) -> ActionResult:
         payload: dict[str, Any] = {"text": text}
-        active = None
-        if target_app:
-            active = self._resolve_target_window_by_name(target_app)
-        if active is None:
-            active = self.get_active_window()
+        active = self._resolve_typing_target(target_app)
+        if target_app and active is None:
+            return ActionResult(
+                False,
+                "type_text",
+                f"No visible window matched the requested app '{target_app}'.",
+                {"target_app": target_app},
+            )
         if active is not None and active.pid is not None:
+            payload["scope"] = "window"
             payload["pid"] = int(active.pid)
             if active.window_id:
-                payload["window_id"] = str(active.window_id)
+                try:
+                    payload["window_id"] = int(active.window_id)
+                except (TypeError, ValueError):
+                    LOGGER.debug("Skipping non-numeric input window id %r", active.window_id)
         return self._dispatch_input("type_text", payload, action="type_text")
 
     def key(self, keys: str, target_app: str | None = None) -> ActionResult:
@@ -647,16 +930,24 @@ class CuaDriverBackend(ComputerUseBackend):
 
         # cua-driver's keyboard actions are window-scoped on Windows and
         # require the target process id. Resolve the frontmost real window at
-        # action time, excluding the driver's own cursor overlay.
-        active = None
-        if target_app:
-            active = self._resolve_target_window_by_name(target_app)
-        if active is None:
-            active = self.get_active_window()
+        # action time (one cached listing serves name match AND fallback),
+        # excluding the driver's own cursor overlay.
+        active = self._resolve_typing_target(target_app)
+        if target_app and active is None:
+            return ActionResult(
+                False,
+                "key",
+                f"No visible window matched the requested app '{target_app}'.",
+                {"target_app": target_app},
+            )
         if active is not None and active.pid is not None:
+            payload["scope"] = "window"
             payload["pid"] = int(active.pid)
             if active.window_id:
-                payload["window_id"] = str(active.window_id)
+                try:
+                    payload["window_id"] = int(active.window_id)
+                except (TypeError, ValueError):
+                    LOGGER.debug("Skipping non-numeric input window id %r", active.window_id)
 
         return self._dispatch_input(tool, payload, action="key")
 
@@ -884,7 +1175,8 @@ class CuaDriverBackend(ComputerUseBackend):
     def click_element(
         self,
         *,
-        element_index: int,
+        element_index: int | None = None,
+        element_token: str | None = None,
         window_id: str,
         pid: int | None = None,
         snapshot_id: str | None = None,
@@ -909,21 +1201,60 @@ class CuaDriverBackend(ComputerUseBackend):
         if pid is None:
             return ActionResult(False, "click_element", "could not resolve pid for window", {})
 
-        snap = snapshot_id or self._snapshots.get((int(pid), wid))
+        token = (element_token or "").strip()
+        if not token and element_index is None:
+            return ActionResult(False, "click_element", "element_index or element_token is required", {})
+
         payload: dict[str, Any] = {
             # Element-addressed clicks are window-scoped by definition — the
-            # element_index belongs to a (pid, window_id) snapshot.
+            # snapshot-bound token/index avoids moving the real pointer.
             "scope": "window",
             "pid": int(pid),
             "window_id": wid,
-            "element_index": int(element_index),
             "button": button,
             "count": max(1, min(3, int(click_count))),
         }
-        if snap:
-            payload["snapshot_id"] = snap
+        if token:
+            payload["element_token"] = token
+        else:
+            snap = snapshot_id or self._snapshots.get((int(pid), wid))
+            payload["element_index"] = int(element_index)
+            if snap:
+                payload["snapshot_id"] = snap
 
         return self._dispatch_input("click", payload, action="click_element")
+
+    def set_value(
+        self,
+        *,
+        element_token: str,
+        value: str,
+        pid: int,
+    ) -> ActionResult:
+        """Set a snapshot-bound UIA value without relying on focused typing."""
+        token = (element_token or "").strip()
+        if not token:
+            return ActionResult(False, "set_value", "element_token is required", {})
+        payload: dict[str, Any] = {
+            "element_token": token,
+            "pid": int(pid),
+            "value": str(value),
+        }
+        try:
+            result = self._call("set_value", payload)
+        except _CuaDriverError as exc:
+            return ActionResult(False, "set_value", exc.message, {"payload": payload})
+        refusal = _refusal_message(result)
+        if refusal:
+            return ActionResult(False, "set_value", refusal, {"payload": payload})
+        if result.get("code") in {"background_unavailable", "tool_invocation_failed"}:
+            return ActionResult(
+                False,
+                "set_value",
+                str(result.get("message") or result.get("code")),
+                {"payload": payload, "result": result},
+            )
+        return ActionResult(True, "set_value", "Element value set.", {"result": result})
 
     # ── Diagnostics ────────────────────────────────────────────────
 

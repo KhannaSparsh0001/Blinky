@@ -11,6 +11,7 @@ export async function runTutor(
   agentMode?: boolean,
   attachedImage?: string,
   attachedFile?: unknown,
+  runId?: string,
 ): Promise<TutorResult> {
   return invoke<TutorResult>('run_tutor', {
     request: {
@@ -22,8 +23,17 @@ export async function runTutor(
       agent_mode: agentMode,
       attached_image: attachedImage ?? null,
       attached_file: attachedFile ?? null,
+      run_id: runId ?? null,
     },
   });
+}
+
+export async function cancelTutor(runId: string): Promise<void> {
+  try {
+    await invoke('cancel_tutor', { runId });
+  } catch (error) {
+    console.error('Failed to stop the active desktop task:', error);
+  }
 }
 
 export async function runAgentQuery(query: string): Promise<TutorResult> {
