@@ -210,6 +210,21 @@ def handle_media_playback_action(extracted_params: dict, query: str) -> ToolResu
 def try_run_agent_action(question: str, observation: dict[str, Any] | None = None) -> ToolResult | None:
     question_cleaned = question.strip().rstrip("?.!,;:")
 
+    # Fast Folder and File Explorer launcher (<15ms OS-level execution)
+    try:
+        from .folder_launcher import is_folder_or_explorer_request, open_folder_or_path
+        if is_folder_or_explorer_request(question_cleaned):
+            folder_res = open_folder_or_path(question_cleaned)
+            if folder_res.get("success"):
+                return ToolResult(
+                    True,
+                    "open_folder",
+                    folder_res.get("message", "Opened folder in File Explorer."),
+                    folder_res,
+                )
+    except Exception as exc:
+        LOGGER.debug("Folder launcher action failed: %s", exc)
+
     # ESP32 physical light control
     try:
         from tools.esp32_light_tool import resolve_light_request, handle_request

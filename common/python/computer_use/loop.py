@@ -17,7 +17,7 @@ from utils.logging import get_logger
 
 LOGGER = get_logger("blinky.computer_use.loop")
 
-MAX_TOOL_CALLS = 10
+MAX_TOOL_CALLS = int(os.getenv("BLINKY_MAX_TOOL_CALLS", "50"))
 
 _SCREENSHOT_MODE: str | None = None
 
@@ -72,6 +72,7 @@ def _emit_status(phase: str, message: str, data: dict | None = None) -> None:
 from .tools import (
     ToolResult,
     open_app_tool,
+    open_folder_tool,
     list_windows_tool,
     get_app_state_tool,
     click_element_tool,
@@ -83,6 +84,7 @@ from .tools import (
 
 TOOL_MAP = {
     "open_app": open_app_tool,
+    "open_folder": open_folder_tool,
     "list_windows": list_windows_tool,
     "get_app_state": get_app_state_tool,
     "click_element": click_element_tool,
@@ -118,6 +120,7 @@ def capture_screenshot() -> str | None:
 def _describe_action(tool_name: str, args: dict[str, Any]) -> str:
     descriptions = {
         "open_app": f"Opening {args.get('app_name', 'app')}...",
+        "open_folder": f"Opening {args.get('folder_path', args.get('path', 'folder'))} in File Explorer...",
         "list_windows": "Looking at open windows...",
         "get_app_state": f"Inspecting {args.get('app_name', 'app')}...",
         "click_element": f"Clicking {args.get('name', 'element')}...",
@@ -133,6 +136,8 @@ def _essential_tool_schemas() -> list[dict]:
     return [
         {"name": "open_app", "description": "Launch a desktop app by name (calculator, firefox, terminal, settings, files, etc.)",
          "inputSchema": {"type": "object", "properties": {"app_name": {"type": "string"}}, "required": ["app_name"]}},
+        {"name": "open_folder", "description": "Open a folder, directory, or File Explorer in Windows by path or name",
+         "inputSchema": {"type": "object", "properties": {"folder_path": {"type": "string"}}, "required": ["folder_path"]}},
         {"name": "list_windows", "description": "List all open windows with titles and positions",
          "inputSchema": {"type": "object", "properties": {}}},
         # {"name": "get_app_state", "description": "Inspect an app's UI elements (buttons, fields, labels) — returns roles, names, positions",
@@ -516,7 +521,6 @@ def run_computer_use_loop(
     for iteration in range(max_calls + 1):
         if iteration >= max_calls:
             LOGGER.info("=== MAX CALLS REACHED (%d) ===", max_calls)
-            _emit_status("error", "Maximum steps reached.")
             return {"success": False, "error": f"Reached maximum tool calls ({max_calls}).", "steps": steps_taken}
 
         LOGGER.info("--- Iteration %d/%d ---", iteration + 1, max_calls)

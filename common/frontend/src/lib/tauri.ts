@@ -205,6 +205,10 @@ export async function openUrl(url: string): Promise<void> {
   return invoke('open_url', { url });
 }
 
+export async function openFolder(path: string): Promise<void> {
+  return invoke('open_folder', { path });
+}
+
 export async function clickScreenPoint(x: number, y: number): Promise<void> {
   return invoke('click_screen_point', { x, y });
 }

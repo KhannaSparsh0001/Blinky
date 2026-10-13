@@ -39,6 +39,7 @@ fn active_python_workers() -> &'static ActivePythonWorkers {
 
 #[derive(Debug, Deserialize)]
 struct TutorRequest {
+    #[serde(alias = "instruction")]
     question: String,
     previous_question: Option<String>,
     progress: Option<serde_json::Value>,
@@ -182,6 +183,10 @@ fn cancel_tutor(run_id: String) -> Result<bool, String> {
         if !status.success() {
             return Err("The operating system could not stop the desktop task.".to_string());
         }
+    }
+
+    if let Ok(mut workers) = active_python_workers().lock() {
+        workers.remove(&run_id);
     }
 
     Ok(true)
@@ -356,6 +361,32 @@ fn open_url(url: String) -> Result<(), String> {
     }
 
     open_url_impl(trimmed)
+}
+
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let p = path.trim();
+    if p.is_empty() {
+        return Err("No path provided.".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(p)
+            .spawn()
+            .map_err(|err| format!("Failed to open folder in File Explorer: {err}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(p)
+            .spawn()
+            .map_err(|err| format!("Failed to open folder: {err}"))?;
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -1285,6 +1316,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             run_tutor,
             cancel_tutor,
+            open_folder,
             run_agent_query,
             get_secure_transport_info,
             get_mobile_pairing_payload,

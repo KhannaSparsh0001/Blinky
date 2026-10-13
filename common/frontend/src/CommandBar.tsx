@@ -15,7 +15,7 @@ import {
   shouldCompleteStepOnHighlightClick,
   shouldShowSummaryBubble,
 } from './lib/guidance';
-import { runTutor, cancelTutor, showOverlay, hideOverlay, resizeCommandWindow, setCommandWindowSize, getSettings, saveSettings, resizeAndMoveCommandWindow, clickElement, clickScreenPoint, openUrl, typeText, scrollAtPoint, pauseWakeWord, resumeWakeWord, logDebugMessage, confirmRecipeSave, setAgentCursorVisibility, getSecureTransportInfo, getMobilePairingPayload, regenerateRemoteToken, openNotebookWindow } from './lib/tauri';
+import { runTutor, cancelTutor, showOverlay, hideOverlay, resizeCommandWindow, setCommandWindowSize, getSettings, saveSettings, resizeAndMoveCommandWindow, clickElement, clickScreenPoint, openUrl, openFolder, typeText, scrollAtPoint, pauseWakeWord, resumeWakeWord, logDebugMessage, confirmRecipeSave, setAgentCursorVisibility, getSecureTransportInfo, getMobilePairingPayload, regenerateRemoteToken, openNotebookWindow } from './lib/tauri';
 
 import { linkCitationMarkers, preprocessMarkdown } from './lib/citations';
 import {
@@ -1528,9 +1528,9 @@ export function CommandBar() {
         // Run the agent first — it may handle everything via MCP tools
         const agentResult = await runTutor(effectiveQuery, previousQuestion, currentProgress(), conversationHistory, false, true, undefined, undefined, workerRunId);
 
-        // If agent handled it purely via backend tool without UI steps, use its result directly.
-        // Otherwise, run the autopilot loop so the AI cursor moves, glides, and clicks on screen.
-        if (agentResult.computer_use && (!agentResult.steps || agentResult.steps.length === 0)) {
+        // If agent handled it via computer use, use its result directly.
+        // Autopilot loop is only for standard locator/vision questions that didn't run via computer_use loop.
+        if (agentResult.computer_use) {
           result = agentResult;
         } else {
           // Show overlay window so AI cursor is visible on screen
@@ -1719,7 +1719,12 @@ export function CommandBar() {
       } else {
         await hideOverlay();
       }
-      await currentWindow.setFocus();
+
+      // When opening a folder or app, don't steal foreground focus away from it
+      const agentTool = result.agent_action?.tool;
+      if (agentTool !== 'open_folder' && agentTool !== 'open_app') {
+        await currentWindow.setFocus();
+      }
       setStatus(result.summary);
       const newHistoryEntries: TutorConversationMessage[] = [
         { role: 'student', content: effectiveQuery },

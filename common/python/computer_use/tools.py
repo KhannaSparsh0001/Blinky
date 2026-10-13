@@ -108,6 +108,9 @@ SAFE_PROCESS_ALIASES = {
     "paint": "mspaint.exe",
     "chrome": "chrome.exe",
     "google chrome": "chrome.exe",
+    "file explorer": "explorer.exe",
+    "explorer": "explorer.exe",
+    "windows explorer": "explorer.exe",
 }
 
 APP_PROTOCOLS = {
@@ -163,6 +166,21 @@ WEB_DESTINATION_URLS = {
     "chatgpt": "https://chatgpt.com/",
     "chat gpt": "https://chatgpt.com/",
 }
+
+
+def open_folder_tool(folder_path: str = "") -> ToolResult:
+    """Open a folder or directory in File Explorer instantly."""
+    try:
+        from .folder_launcher import open_folder_or_path
+        res = open_folder_or_path(folder_path or "")
+        return ToolResult(
+            res.get("success", False),
+            "open_folder",
+            res.get("message", "Opened folder."),
+            res,
+        )
+    except Exception as exc:
+        return ToolResult(False, "open_folder", f"Failed to open folder: {exc}", {"folder": folder_path})
 
 
 def open_app_tool(app_name: str) -> ToolResult:

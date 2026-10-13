@@ -154,7 +154,22 @@ def classify_with_laya(query: str) -> dict[str, Any] | None:
                 "source": "structural_guard",
             }
 
-    # 5. Windows-Use fast-path operations (Notepad tab creation, typing, compound UIA tasks)
+    # 5. Fast Folder & File Explorer operations
+    if not WEB_DOMAINS_RE.search(q):
+        try:
+            from computer_use.folder_launcher import is_folder_or_explorer_request
+            if is_folder_or_explorer_request(q):
+                return {
+                    "intent": "OPEN_FOLDER",
+                    "domain": "desktop_os",
+                    "action": "open_folder",
+                    "confidence": 1.0,
+                    "source": "structural_guard",
+                }
+        except Exception as exc:
+            LOGGER.debug("Folder launcher guard check failed: %s", exc)
+
+    # 6. Windows-Use fast-path operations (Notepad tab creation, typing, compound UIA tasks)
     if not WEB_DOMAINS_RE.search(q):
         try:
             from computer_use.windows_use_engine import (

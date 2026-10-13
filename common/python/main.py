@@ -409,6 +409,16 @@ def run(
     elif intent == "WINDOWS_USE":
         LOGGER.info("Routing to Windows-Use engine for intent: WINDOWS_USE")
         return run_windows_use_tool(extracted_params, question, started, warnings)
+    elif intent == "OPEN_FOLDER":
+        LOGGER.info("Routing to fast folder launcher for intent: OPEN_FOLDER")
+        from computer_use.folder_launcher import open_folder_or_path
+        res = open_folder_or_path(question)
+        return build_agent_tool_result({
+            "success": res.get("success", False),
+            "tool": "open_folder",
+            "message": res.get("message", "Folder opened."),
+            "data": res,
+        }, started, warnings)
     elif intent in {"COMPUTER_USE", "OPEN_APP", "MEDIA_PLAYBACK", "SYSTEM_SHORTCUT"}:
 
         LOGGER.info("Automatically enabling agent mode for classified intent: %s", intent)
