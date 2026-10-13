@@ -11,14 +11,20 @@ from ai.prompt import build_chat_prompt, build_preflight_prompt, build_prompt
 from computer_use.tools import ToolResult
 from main import (
     assign_screen_element_refs,
+    build_multi_locator_result,
+    clean_locator_target,
     extract_click_target,
     classify_request,
     extract_locator_target,
+    extract_locator_targets,
+    match_sidebar_icon_fallback,
     merge_visible_items,
     resolve_locator_fast_path,
     run,
+    should_accept_locator_match,
     should_force_screen_context,
 )
+from utils.icon_text_merge import merge_icon_boxes
 from utils.matching import attach_matches
 from utils.matching import find_best_match, find_best_match_with_score
 from utils.ui_map_cache import UiMapCache, window_signature
@@ -31,6 +37,18 @@ except ImportError:
 
 
 class GuidanceFlowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Isolate unit tests from live machine state: the shell taskbar /
+        # desktop scan and the icon model read the real screen, so tests
+        # that mock the UIA/OCR boundary must stub these sources too.
+        # Tests covering shell/icon behavior patch them explicitly.
+        shell_patch = patch("main.get_shell_ui_items", return_value=[])
+        icon_patch = patch("main.get_icon_boxes_for_screenshot", return_value=[])
+        self.addCleanup(shell_patch.stop)
+        self.addCleanup(icon_patch.stop)
+        shell_patch.start()
+        icon_patch.start()
+
     def test_clients_preserve_empty_steps(self) -> None:
         payload = {"summary": "No visible action is needed.", "steps": []}
 
@@ -1349,6 +1367,155 @@ class GuidanceFlowTests(unittest.TestCase):
             mock_ask_model.assert_called_once()
             self.assertIn("Visual Studio Code", result["summary"])
             self.assertEqual(result["steps"], [])
+
+
+class MultiHighlightTests(unittest.TestCase):
+    def setUp(self) -> None:
+        shell_patch = patch("main.get_shell_ui_items", return_value=[])
+        icon_patch = patch("main.get_icon_boxes_for_screenshot", return_value=[])
+        self.addCleanup(shell_patch.stop)
+        self.addCleanup(icon_patch.stop)
+        shell_patch.start()
+        icon_patch.start()
+
+    def test_extract_locator_targets_splits_conjunctions(self) -> None:
+        self.assertEqual(
+            extract_locator_targets("highlight steam (on desktop) and edge (taskbar)"),
+            ["steam", "edge"],
+        )
+        self.assertEqual(
+            extract_locator_targets("highlight vlc media player"),
+            ["vlc media player"],
+        )
+        self.assertEqual(extract_locator_targets("where is settings?"), ["settings"])
+        self.assertEqual(extract_locator_targets("how to install x"), [])
+
+    def test_clean_locator_target_strips_parenthetical_hints(self) -> None:
+        self.assertEqual(clean_locator_target("steam (on desktop)"), "steam")
+        self.assertEqual(clean_locator_target("edge (taskbar)"), "edge")
+        self.assertEqual(clean_locator_target("extension button"), "extension")
+
+    def test_multi_target_fast_path_returns_one_step_per_target(self) -> None:
+        screenshot = SimpleNamespace(
+            path="screenshots/test.jpg",
+            width=1728,
+            height=1080,
+            screen_width=1728,
+            screen_height=1080,
+        )
+        uia_items = [
+            {
+                "text": "Steam", "x": 232, "y": 102, "width": 76, "height": 70,
+                "confidence": 0.98, "source": "uia", "control_type": "ListItem",
+            }
+        ]
+        shell_items = [
+            {
+                "text": "Microsoft Edge", "x": 797, "y": 1031, "width": 44, "height": 48,
+                "confidence": 0.98, "source": "uia", "control_type": "Button",
+                "shell_region": "taskbar",
+            }
+        ]
+        with (
+            patch("main.get_active_window", return_value={"title": "Desktop", "process": "explorer.exe"}),
+            patch("main.get_visible_ui_text", return_value=uia_items),
+            patch("main.get_shell_ui_items", return_value=shell_items),
+            patch("main.extract_visible_text", return_value=[]),
+        ):
+            result = resolve_locator_fast_path("highlight steam and edge", screenshot, None, [], 0.0)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result["steps"]), 2)
+        self.assertEqual(result["steps"][0]["target_text"], "Steam")
+        self.assertEqual(result["steps"][1]["target_text"], "Microsoft Edge")
+        self.assertNotEqual(result["steps"][0]["target_ref"], result["steps"][1]["target_ref"])
+
+    def test_build_multi_locator_result_numbers_steps(self) -> None:
+        screenshot = SimpleNamespace(path="s.jpg", width=100, height=100, screen_width=100, screen_height=100)
+        match_a = {"text": "Steam", "x": 1, "y": 2, "width": 3, "height": 4, "ref": "@e1"}
+        match_b = {"text": "Edge", "x": 5, "y": 6, "width": 7, "height": 8, "ref": "@e2"}
+        result = build_multi_locator_result(
+            "highlight steam and edge",
+            [("steam", match_a, None), ("edge", match_b, None)],
+            [match_a, match_b],
+            {"title": "", "process": ""},
+            screenshot,
+            [],
+            0.0,
+        )
+        self.assertEqual([s["step"] for s in result["steps"]], [1, 2])
+        self.assertIn("steam", result["summary"])
+        self.assertIn("edge", result["summary"])
+
+    def test_sidebar_fallback_finds_whatsapp_status_icon(self) -> None:
+        icons = [
+            {"text": "", "x": 10, "y": 100 + i * 60, "width": 40, "height": 40, "control_type": "Button"}
+            for i in range(4)
+        ]
+        match = match_sidebar_icon_fallback(
+            "status", "highlight whatsapp status icon", icons, {"process": "WhatsApp.exe"}
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(match["y"], 160)
+
+    def test_icon_source_accepted_for_control_question(self) -> None:
+        match_result = {
+            "is_exact_text": True, "text_similarity": 1.0, "score": 1.2,
+            "source": "icon", "control_type": "image",
+            "candidate_count": 1, "ambiguous_candidate_count": 1,
+        }
+        self.assertTrue(should_accept_locator_match("where is the steam icon?", match_result))
+
+    def test_merge_icon_boxes_fuses_desktop_label(self) -> None:
+        screenshot = SimpleNamespace(width=1728, height=1080)
+        ocr_items = [
+            {"text": "Steam", "x": 300, "y": 159, "width": 70, "height": 18,
+             "confidence": 0.9, "source": "ocr"},
+        ]
+        icon_boxes = [
+            {"text": "", "x": 232, "y": 95, "width": 77, "height": 89,
+             "confidence": 0.8, "source": "icon", "control_type": "Image", "clickable": True},
+        ]
+        merged = merge_icon_boxes(list(ocr_items), icon_boxes, screenshot)
+        fused = [item for item in merged if item.get("source") == "icon"]
+        self.assertEqual(len(fused), 1)
+        self.assertEqual(fused[0]["text"], "Steam")
+        # Full icon box covers picture AND label.
+        self.assertLessEqual(fused[0]["x"], 232)
+        self.assertLessEqual(fused[0]["y"], 95)
+        self.assertGreaterEqual(fused[0]["x"] + fused[0]["width"], 309)
+        # Standalone OCR label is consumed (no duplicates for the matcher).
+        self.assertEqual(len([i for i in merged if i.get("source") == "ocr"]), 0)
+
+    def test_merge_icon_boxes_ignores_non_desktop_regions(self) -> None:
+        screenshot = SimpleNamespace(width=1728, height=1080)
+        ocr_items = [
+            {"text": "8:15 PM", "x": 1610, "y": 1035, "width": 60, "height": 20,
+             "confidence": 0.9, "source": "ocr"},
+        ]
+        icon_boxes = [
+            {"text": "", "x": 1560, "y": 1031, "width": 40, "height": 44,
+             "confidence": 0.8, "source": "icon", "control_type": "Image", "clickable": True},
+        ]
+        merged = merge_icon_boxes(list(ocr_items), icon_boxes, screenshot)
+        fused = [item for item in merged if item.get("source") == "icon"]
+        self.assertEqual(len(fused), 1)
+        self.assertEqual(fused[0]["text"], "")
+        self.assertEqual(len([i for i in merged if i.get("source") == "ocr"]), 1)
+
+    def test_merge_does_not_steal_next_row_label(self) -> None:
+        screenshot = SimpleNamespace(width=1728, height=1080)
+        ocr_items = [
+            {"text": "Human", "x": 240, "y": 250, "width": 60, "height": 18,
+             "confidence": 0.9, "source": "ocr"},
+        ]
+        icon_boxes = [
+            {"text": "", "x": 232, "y": 95, "width": 77, "height": 89,
+             "confidence": 0.8, "source": "icon", "control_type": "Image", "clickable": True},
+        ]
+        merged = merge_icon_boxes(list(ocr_items), icon_boxes, screenshot)
+        fused = [item for item in merged if item.get("source") == "icon"]
+        self.assertEqual(fused[0]["text"], "")
 
 
 if __name__ == "__main__":

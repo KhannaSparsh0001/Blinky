@@ -264,10 +264,13 @@ def _normalize(value: str) -> str:
 
 
 def _is_safe_partial_match(target_norm: str, text_norm: str) -> bool:
+    # Short (<=3 char) labels like "Arc" substring-match far too often
+    # ("arc" is inside "search"); require 4+ chars for containment matches.
+    # Exact matches still score 1.0 regardless of length.
     if target_norm in text_norm:
-        return len(target_norm) >= 3
+        return len(target_norm) >= 4
     if text_norm in target_norm:
-        return len(text_norm) >= 3
+        return len(text_norm) >= 4
     return False
 
 

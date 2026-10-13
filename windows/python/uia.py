@@ -242,6 +242,109 @@ def get_visible_ui_text(window=None, target_pid: int | None = None, include_unla
         return []
 
 
+def get_shell_ui_items() -> list[dict]:
+    """Read taskbar buttons and desktop icon labels outside the active window.
+
+    The active-window scan (:func:`get_visible_ui_text`) cannot see the
+    Windows shell: taskbar pins (e.g. Edge) live under ``Shell_TrayWnd``
+    and desktop icons (e.g. Steam) under the Progman/WorkerW FolderView.
+    Items are tagged with ``shell_region`` = ``"taskbar"`` | ``"desktop"``
+    and use screen-absolute coordinates like the main UIA scan, so callers
+    must apply the same screenshot-space scaling.
+    """
+    import os
+    if os.name != "nt":
+        return []
+
+    items: list[dict] = []
+    try:
+        from pywinauto import Desktop
+    except Exception as exc:
+        LOGGER.warning("Shell UIA scan skipped (no pywinauto): %s", exc)
+        return []
+
+    try:
+        desktop = Desktop(backend="uia")
+    except Exception as exc:
+        LOGGER.warning("Shell UIA scan skipped (no desktop): %s", exc)
+        return []
+
+    for spec, region in _shell_scopes(desktop):
+        if region == "desktop" and sum(1 for i in items if i.get("shell_region") == "desktop") >= 10:
+            continue  # Progman already gave us the desktop icons; skip WorkerW.
+        try:
+            items.extend(_scan_shell_scope(spec, region))
+        except Exception as exc:
+            LOGGER.debug("Shell UIA scope '%s' failed: %s", region, exc)
+    LOGGER.info("Shell UIA returned %d taskbar/desktop items", len(items))
+    return _dedupe(items)
+
+
+def _shell_scopes(desktop):
+    scopes = []
+    try:
+        scopes.append((desktop.window(class_name="Shell_TrayWnd"), "taskbar"))
+    except Exception:
+        pass
+    for cls in ("Progman", "WorkerW"):
+        try:
+            scopes.append((desktop.window(class_name=cls), "desktop"))
+        except Exception:
+            continue
+    return scopes
+
+
+def _scan_shell_scope(scope, region: str) -> list[dict]:
+    items: list[dict] = []
+    start_time = time.perf_counter()
+    budget = 0.8
+    count = 0
+    try:
+        roots = [scope] + list(scope.descendants())
+    except Exception:
+        return []
+    for element in roots:
+        if time.perf_counter() - start_time > budget or count >= 120:
+            break
+        try:
+            ctype = element.element_info.control_type
+        except Exception:
+            continue
+        if ctype not in {"Button", "ListItem", "TreeItem", "MenuItem", "Image", "Custom", "Hyperlink", "Pane"}:
+            continue
+        text = _element_text(element, ctype)
+        if not text:
+            continue
+        try:
+            rect = element.rectangle()
+        except Exception:
+            continue
+        width = max(0, int(rect.width()))
+        height = max(0, int(rect.height()))
+        if width < 4 or height < 4:
+            continue
+        x, y = int(rect.left), int(rect.top)
+        if x < -1000 or y < -1000:
+            continue
+        # Desktop FolderView exposes huge folder panes; keep icon-sized rows.
+        if region == "desktop" and (width > 400 or height > 200):
+            continue
+        item = _uia_item(
+            text=text,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            source="uia",
+            control_type=ctype,
+            automation_id=_element_metadata(element, "automation_id"),
+        )
+        item["shell_region"] = region
+        items.append(item)
+        count += 1
+    return items
+
+
 def _element_text(element, control_type: str = "") -> str:
     try:
         name = element.window_text() or element.element_info.name or ""

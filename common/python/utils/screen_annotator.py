@@ -103,12 +103,14 @@ def save_parsed_ui_screenshot(screenshot_path: str, ref_items: list[dict]) -> st
     Draw bounding boxes and references (@e1, @e2, etc.) for all parsed UI elements
     onto the screenshot, and save it to the 'screenshots_parsed' folder.
     """
-    if not os.path.exists(screenshot_path):
+    from pathlib import Path
+
+    shot = Path(screenshot_path)
+    if not shot.exists():
         return None
 
     try:
-        from pathlib import Path
-        image = Image.open(screenshot_path)
+        image = Image.open(shot)
         draw = ImageDraw.Draw(image)
         
         # Load a nice font if possible
@@ -120,20 +122,27 @@ def save_parsed_ui_screenshot(screenshot_path: str, ref_items: list[dict]) -> st
         except Exception:
             pass
 
+        import math
+
         for item in ref_items:
-            x = item.get("x")
-            y = item.get("y")
-            w = item.get("width")
-            h = item.get("height")
+            try:
+                x = float(item.get("x", 0) or 0)
+                y = float(item.get("y", 0) or 0)
+                w = float(item.get("width", 0) or 0)
+                h = float(item.get("height", 0) or 0)
+            except (TypeError, ValueError):
+                continue
             ref = item.get("ref", "")
             source = item.get("source", "")
-            
-            if x is None or y is None or w is None or h is None or not ref:
+
+            if not ref or not all(math.isfinite(v) for v in (x, y, w, h)):
+                continue
+            if w <= 0 or h <= 0:
                 continue
 
             # Neon Green/Lime for UIA, Cyan/DeepSkyBlue for OmniParser/OCR
             color = "#39FF14" if source == "uia" else "#00E5FF"
-            
+
             # Ensure valid bounding box coordinates
             box_x0 = min(x, x + max(0, w))
             box_y0 = min(y, y + max(0, h))
@@ -178,14 +187,19 @@ def save_parsed_ui_screenshot(screenshot_path: str, ref_items: list[dict]) -> st
             # Text label
             draw.text((badge_x0 + 2, badge_y0 + 1), text, fill="black", font=font)
 
-        # Create screenshots_parsed folder in the parent directory of screenshots
+        # screenshots/screen-123.jpg -> screenshots_parsed/screen-123.jpg,
+        # resolved against the repo root regardless of worker cwd.
         screenshot_path_obj = Path(screenshot_path)
-        parent_dir = screenshot_path_obj.parent.parent
-        output_dir = parent_dir / "screenshots_parsed"
+        if screenshot_path_obj.parent.name.lower() == "screenshots":
+            output_dir = screenshot_path_obj.parent.parent / "screenshots_parsed"
+        else:
+            output_dir = screenshot_path_obj.resolve().parent / "screenshots_parsed"
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         output_path = output_dir / screenshot_path_obj.name
         image.save(output_path, format="JPEG", quality=85)
+        from utils.logging import get_logger
+        get_logger("blinky.screen_annotator").info("Saved parsed UI screenshot: %s", output_path)
         return str(output_path)
 
     except Exception as e:

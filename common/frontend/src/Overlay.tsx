@@ -439,8 +439,16 @@ export function Overlay() {
           // Cap to MAX_BOX, keeping the element center fixed
           // EXCEPT for wide elements (like sidebar lists) where we align to the left edge (with a small margin)
           // where the folder icon and text are actually situated!
-          const MAX_BOX_WIDTH = useIconFrame ? 100 : 140;
-          const MAX_BOX_HEIGHT = useIconFrame ? 40 : 44;
+          // Desktop icons (shell desktop ListView rows, open-source icon
+          // detector boxes) are TALL (picture + label, often 80-120px), so
+          // they bypass the short in-app caps or the frame gets crushed
+          // into a wide flat strip that misses the picture.
+          const matchSource = String(match.source || '').toLowerCase();
+          const isDesktopIcon =
+            (match as unknown as Record<string, unknown>).shell_region === 'desktop' ||
+            matchSource === 'icon';
+          const MAX_BOX_WIDTH = isDesktopIcon ? 130 : (useIconFrame ? 100 : 140);
+          const MAX_BOX_HEIGHT = isDesktopIcon ? 170 : (useIconFrame ? 40 : 44);
 
           // Enforce a minimum size of 36px for all highlights to ensure they are easily visible,
           // particularly for small icons and dots!
@@ -467,7 +475,7 @@ export function Overlay() {
             // Keep the exact input field width and bounds
             displayWidth = rawWidth;
             displayLeft = rawLeft;
-          } else if (!useIconFrame && rawWidth > 140) {
+          } else if (!useIconFrame && !isDesktopIcon && rawWidth > 140) {
             // Wide elements (likely list/sidebar rows):
             // Fit the width comfortably by estimating character length
             const textLength = match.text ? String(match.text).length : 8;

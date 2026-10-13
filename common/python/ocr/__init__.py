@@ -140,6 +140,7 @@ def get_ocr_provider() -> OcrProvider:
 
 def extract_visible_text(image_path: Path) -> list[dict[str, Any]]:
     try:
+        image_path = Path(image_path)
         provider = get_ocr_provider()
         items = provider.extract_text(image_path)
         if items:

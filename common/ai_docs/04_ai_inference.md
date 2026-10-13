@@ -55,7 +55,7 @@ Visible items are serialized compactly:
 Prompt selection rules:
 
 - Keep only the immediate next action.
-- Return at most one step.
+- Return at most one step (one step PER item for multi-highlight queries like "highlight steam and edge").
 - Use exact visible `target_text` for highlights.
 - Use an empty `target_text` only when guidance is needed but no visible target exists.
 - Skip navigation steps if the relevant search/filter/find box is already visible.
@@ -118,7 +118,7 @@ After model output:
 1. `attach_matches()` links `target_text` to visible coordinates.
 2. `skip_completed_navigation_steps()` removes a stale first navigation step when the next target is already visible.
 3. `_fill_empty_search_targets()` attaches visible search/filter/find inputs to search-like steps with empty target text.
-4. `steps[:1]` enforces single-step mode even if a model returns more.
+4. Single-step mode is enforced (`steps[:1]`) unless the query names multiple highlight targets, in which case one step per target is kept.
 
 See `common/ai/03_matching_heuristics.md` for scoring and merge details.
 

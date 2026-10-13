@@ -28,13 +28,14 @@ export function getCurrentGuideSteps(steps: TutorStep[], progress: CompletedGuid
 }
 
 export function getHighlightSteps(steps: TutorStep[]): TutorStep[] {
-  const nextStep = steps.find((step) => {
+  // Multi-highlight: every step with a grounded target gets a frame
+  // (e.g. "highlight steam and edge" lights up both at once).
+  return steps.filter((step) => {
     const hasTargetHandle = Boolean(step.target_text?.trim() || step.target_ref?.trim());
     if (!step.instruction?.trim() || !hasTargetHandle) return false;
     if (!step.match) return false;
     return true;
   });
-  return nextStep ? [nextStep] : [];
 }
 
 export function getWorkflowContinuationReadback(startedWithReadback: boolean): boolean {

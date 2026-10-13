@@ -13,7 +13,12 @@ from utils.screen_elements import assign_screen_element_refs
 DEFAULT_CACHE_DIR = Path("python/cache/ui_maps")
 
 
-def window_signature(active_app: dict[str, Any], screenshot: Any, target_pid: int | None = None) -> dict[str, Any]:
+def window_signature(
+    active_app: dict[str, Any],
+    screenshot: Any,
+    target_pid: int | None = None,
+    include_icons: bool = False,
+) -> dict[str, Any]:
     """Build a small signature for the currently mapped top-level window."""
     return {
         "title": str(active_app.get("title", "")),
@@ -23,6 +28,7 @@ def window_signature(active_app: dict[str, Any], screenshot: Any, target_pid: in
         "height": int(getattr(screenshot, "height", 0) or 0),
         "screen_width": int(getattr(screenshot, "screen_width", 0) or 0),
         "screen_height": int(getattr(screenshot, "screen_height", 0) or 0),
+        "icons": bool(include_icons),
     }
 
 

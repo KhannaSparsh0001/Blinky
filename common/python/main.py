@@ -78,6 +78,23 @@ try:
 except ImportError:
     def get_visible_ui_text(**kwargs):
         return []
+try:
+    from uia import get_shell_ui_items
+except ImportError:
+    def get_shell_ui_items():
+        return []
+try:
+    from ocr.icon_detect import detect_icons, is_available as icon_model_available
+except ImportError:
+    def detect_icons(image_path, conf_thresh=None, iou_thresh=None):
+        return []
+    def icon_model_available():
+        return False
+try:
+    from utils.icon_text_merge import merge_icon_boxes
+except ImportError:
+    def merge_icon_boxes(visible_items, icon_boxes):
+        return list(visible_items)
 from utils.window import get_active_window, get_ignored_overlay_rects
 
 LOGGER = get_logger("blinky.main")
@@ -788,7 +805,14 @@ def run(
     if locator_target:
         LOGGER.info("Locator deferred to screen AI for '%s'", locator_target)
 
-    observation = observe_app_state(screenshot, target_pid)
+    # Deferred locator queries need icon boxes + shell items in the prompt
+    # so the vision model can ground icon-only targets by sight.
+    needs_icons = bool(
+        locator_target
+        or extract_click_target(question)
+        or is_control_locator_question(question)
+    )
+    observation = observe_app_state(screenshot, target_pid, needs_icons)
     active_app = observation["active_app"]
     visible_items = observation["visible_items"]
 
@@ -910,8 +934,11 @@ def run(
     # auto-match to the first visible search/filter/find input control on screen.
     steps = _fill_empty_search_targets(steps, visible_items)
 
+    # Multi-highlight queries ("highlight steam and edge") keep one step per
+    # target; single-action workflows stay single-step as before.
+    multi_targets = extract_locator_targets(effective_question)
     if steps:
-        steps = steps[:1]
+        steps = steps[: max(1, len(multi_targets))] if len(multi_targets) > 1 else steps[:1]
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
@@ -934,11 +961,11 @@ def run(
     }
 
 
-def observe_app_state(screenshot, target_pid: int | None = None) -> dict:
+def observe_app_state(screenshot, target_pid: int | None = None, include_icons: bool = False) -> dict:
     active_started = time.perf_counter()
     active_app = get_active_window(target_pid=target_pid)
     log_stage_timing("active_window", active_started)
-    visible_items = get_or_build_visible_ui_map(active_app, screenshot, target_pid)
+    visible_items = get_or_build_visible_ui_map(active_app, screenshot, target_pid, include_icons)
     app_context = get_app_context(active_app)
     return {
         "active_app": active_app,
@@ -999,40 +1026,25 @@ def build_agent_tool_result(
     return result
 
 
-def get_or_build_visible_ui_map(active_app: dict, screenshot, target_pid: int | None = None) -> list[dict]:
-    signature = window_signature(active_app, screenshot, target_pid=target_pid)
+def get_or_build_visible_ui_map(active_app: dict, screenshot, target_pid: int | None = None, include_icons: bool = False) -> list[dict]:
+    if include_icons:
+        # A plain (icon-less) entry may already be cached for this screen;
+        # enrich it in place so locator queries never force an OCR/UIA rescan.
+        plain_signature = window_signature(active_app, screenshot, target_pid, False)
+        plain_cached = UI_MAP_CACHE.load(plain_signature)
+        if plain_cached is not None:
+            visible_items = _apply_icon_pass(plain_cached, screenshot)
+            visible_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
+            try:
+                from utils.screen_annotator import save_parsed_ui_screenshot
+                save_parsed_ui_screenshot(screenshot.path, visible_items)
+            except Exception:
+                pass
+            return visible_items
+    signature = window_signature(active_app, screenshot, target_pid, include_icons)
 
     def build_items() -> list[dict]:
-        ocr_started = time.perf_counter()
-        ocr_items = extract_visible_text(screenshot.path)
-        ocr_items = filter_ignored_overlay_items(ocr_items, screenshot)
-        log_stage_timing("ocr", ocr_started)
-        uia_started = time.perf_counter()
-        uia_items = get_visible_ui_text(target_pid=target_pid)
-        log_stage_timing("uia", uia_started)
-
-        if os.name != "nt":
-            # On Linux (GNOME/Wayland), the system status bar is at the very top (y < 35 in optimized screenshot pixels).
-            # We filter out these elements to prevent accidental matching of system tray clocks, status indicators, or active app labels.
-            ocr_items_filtered = [item for item in ocr_items if item.get("y", 0) >= 35]
-            uia_items_filtered = [item for item in uia_items if item.get("y", 0) >= 35]
-        else:
-            ocr_items_filtered = ocr_items
-            uia_items_filtered = uia_items
-
-        # UIA returns coordinates in screen-absolute space (physical pixel dimensions).
-        # The screenshot is scaled down to fit within 1920x1080 (thumbnail).
-        # The overlay then scales everything back up by (window.innerWidth / screenshot.width).
-        # To make both scales cancel correctly, we must first convert UIA coords
-        # from screen space -> screenshot space before the overlay sees them.
-        if screenshot.screen_width != screenshot.width or screenshot.screen_height != screenshot.height:
-            uia_items_filtered = scale_uia_items_to_screenshot(uia_items_filtered, screenshot)
-
-        uia_items_filtered = filter_ignored_overlay_items(uia_items_filtered, screenshot)
-
-        merged = assign_screen_element_refs(merge_visible_items(ocr_items_filtered, uia_items_filtered))
-        merged.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
-        return merged
+        return _build_visible_ui_map(active_app, screenshot, target_pid, include_icons)
 
     visible_items = UI_MAP_CACHE.get_or_build(signature, build_items)
     visible_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
@@ -1042,6 +1054,68 @@ def get_or_build_visible_ui_map(active_app: dict, screenshot, target_pid: int | 
     except Exception:
         pass
     return visible_items
+
+
+def _apply_icon_pass(items: list[dict], screenshot) -> list[dict]:
+    """Enrich cached/plain items with icon boxes without rescanning OCR/UIA."""
+    if not _icons_enabled():
+        return items
+    icon_boxes = get_icon_boxes_for_screenshot(screenshot)
+    if not icon_boxes:
+        return items
+    merged = merge_icon_boxes(list(items), icon_boxes, screenshot)
+    textless = [
+        item for item in merged
+        if not str(item.get("text", "")).strip()
+        and str(item.get("source", "")).lower() == "icon"
+    ]
+    if textless:
+        recover_icon_labels(textless, screenshot)
+    return assign_screen_element_refs(merged)
+
+
+def _build_visible_ui_map(active_app: dict, screenshot, target_pid: int | None, include_icons: bool) -> list[dict]:
+    ocr_started = time.perf_counter()
+    ocr_items = extract_visible_text(screenshot.path)
+    ocr_items = filter_ignored_overlay_items(ocr_items, screenshot)
+    log_stage_timing("ocr", ocr_started)
+    uia_started = time.perf_counter()
+    # include_unlabeled=True keeps icon-only controls (taskbar pins,
+    # WhatsApp sidebar) so the vision model can identify them by sight.
+    uia_items = get_visible_ui_text(target_pid=target_pid, include_unlabeled=True)
+    log_stage_timing("uia", uia_started)
+
+    if os.name != "nt":
+        # On Linux (GNOME/Wayland), the system status bar is at the very top (y < 35 in optimized screenshot pixels).
+        # We filter out these elements to prevent accidental matching of system tray clocks, status indicators, or active app labels.
+        ocr_items_filtered = [item for item in ocr_items if item.get("y", 0) >= 35]
+        uia_items_filtered = [item for item in uia_items if item.get("y", 0) >= 35]
+    else:
+        ocr_items_filtered = ocr_items
+        uia_items_filtered = uia_items
+
+    # UIA returns coordinates in screen-absolute space (physical pixel dimensions).
+    # The screenshot is scaled down to fit within 1920x1080 (thumbnail).
+    # The overlay then scales everything back up by (window.innerWidth / screenshot.width).
+    # To make both scales cancel correctly, we must first convert UIA coords
+    # from screen space -> screenshot space before the overlay sees them.
+    if screenshot.screen_width != screenshot.width or screenshot.screen_height != screenshot.height:
+        uia_items_filtered = scale_uia_items_to_screenshot(uia_items_filtered, screenshot)
+
+    uia_items_filtered = filter_ignored_overlay_items(uia_items_filtered, screenshot)
+
+    if include_icons:
+        merged = augment_visible_items(ocr_items_filtered, uia_items_filtered, screenshot)
+    else:
+        merged = merge_visible_items(ocr_items_filtered, uia_items_filtered)
+    merged = assign_screen_element_refs(merged)
+    merged.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
+    try:
+        from utils.screen_annotator import save_parsed_ui_screenshot
+        save_parsed_ui_screenshot(screenshot.path, merged)
+    except Exception:
+        pass
+    return merged
 
 
 # All query resolution is handled automatically by the AI model.
@@ -1822,9 +1896,220 @@ def handle_notebook_rpc(action: str, params: dict) -> dict:
 
 
 
+def _icons_enabled() -> bool:
+    return os.environ.get("BLINKY_ICON_DETECT", "1").strip() not in {"0", "false", "no", "off"}
+
+
+def get_shell_items_scaled(screenshot) -> list[dict]:
+    """Taskbar/desktop UIA items mapped into screenshot pixel space."""
+    try:
+        shell_items = get_shell_ui_items()
+    except Exception as exc:
+        LOGGER.debug("Shell UIA scan failed: %s", exc)
+        return []
+    if not shell_items:
+        return []
+    if screenshot.screen_width != screenshot.width or screenshot.screen_height != screenshot.height:
+        shell_items = scale_uia_items_to_screenshot(shell_items, screenshot)
+    return shell_items
+
+
+def get_icon_boxes_for_screenshot(screenshot) -> list[dict]:
+    """Generic icon boxes (picture part, no text) in screenshot pixel space."""
+    if not _icons_enabled():
+        return []
+    if not icon_model_available():
+        return []
+    try:
+        started = time.perf_counter()
+        boxes = detect_icons(screenshot.path)
+        log_stage_timing("icons", started)
+        return boxes
+    except Exception as exc:
+        LOGGER.debug("Icon detection failed: %s", exc)
+        return []
+
+
+def _word_run_around(line: list[dict], best: dict) -> list[dict]:
+    """Expand from the best word to gap-adjacent neighbors on the same line."""
+    if best not in line:
+        return [best]
+    idx = line.index(best)
+    run = [best]
+    # Expand left while the gap to the previous word is small.
+    i = idx - 1
+    while i >= 0:
+        gap = int(best.get("x", 0)) - (int(line[i].get("x", 0)) + int(line[i].get("width", 0)))
+        bound = max(30, int(line[i].get("height", 10)))
+        if gap < 0 or gap > bound:
+            break
+        run.insert(0, line[i])
+        best = line[i]
+        i -= 1
+    # Expand right from the run's last word.
+    j = line.index(run[-1]) + 1
+    while j < len(line):
+        prev = run[-1]
+        gap = int(line[j].get("x", 0)) - (int(prev.get("x", 0)) + int(prev.get("width", 0)))
+        bound = max(30, int(line[j].get("height", 10)))
+        if gap < 0 or gap > bound:
+            break
+        run.append(line[j])
+        j += 1
+    return run
+
+
+def recover_icon_labels(icon_items: list[dict], screenshot, limit: int = 20) -> int:
+    """Re-OCR the label strip under textless desktop icons in place.
+
+    Full-screen OCR often drops small desktop labels (e.g. "Steam").
+    Cropping the strip below each icon picture and OCR'ing it zoomed
+    recovers those labels. Returns the number of labels recovered.
+    """
+    candidates = [
+        item for item in icon_items
+        if not str(item.get("text", "")).strip()
+        and str(item.get("source", "")).lower() == "icon"
+    ]
+    if not candidates:
+        return 0
+    # Desktop grid lives on the left; taskbar/sidebar icons have no labels.
+    scr_w = int(screenshot.width or 0)
+    scr_h = int(screenshot.height or 0)
+    taskbar_top = scr_h - int(scr_h * 0.08) if scr_h else 0
+    desktop_side = max(int(scr_w * 0.35), 420) if scr_w else 420
+    targets = [
+        item for item in candidates
+        if int(item.get("x", 0)) <= desktop_side
+        and int(item.get("y", 0)) + int(item.get("height", 0)) <= taskbar_top
+        # Desktop icons are roughly square, 24-120px; web thumbnails are wider.
+        and 24 <= int(item.get("width", 0)) <= 120
+        and 24 <= int(item.get("height", 0)) <= 120
+    ][:limit]
+    if not targets:
+        return 0
+
+    try:
+        from PIL import Image
+    except Exception as exc:
+        LOGGER.debug("Label recovery skipped (no PIL): %s", exc)
+        return 0
+
+    try:
+        full = Image.open(screenshot.path).convert("RGB")
+    except Exception as exc:
+        LOGGER.debug("Label recovery skipped (cannot open screenshot): %s", exc)
+        return 0
+
+    recovered = 0
+    for item in targets:
+        try:
+            ix, iy = int(item.get("x", 0)), int(item.get("y", 0))
+            iw, ih = int(item.get("width", 0)), int(item.get("height", 0))
+            # Label sits under the picture and is often wider than the
+            # detected picture box, so pad a full icon width on each side
+            # and start mid-picture to never clip the label's top rows.
+            x1 = max(0, ix - iw)
+            y1 = max(0, iy + int(ih * 0.55))
+            x2 = min(full.width, ix + iw * 2)
+            y2 = min(full.height, y1 + ih)
+            if x2 - x1 < 20 or y2 - y1 < 12:
+                continue
+            crop = full.crop((x1, y1, x2, y2))
+            crop = crop.resize((crop.width * 2, crop.height * 2), Image.LANCZOS)
+            tmp_path = Path(screenshot.path).parent / f"_iconlabel_{ix}_{y1}.png"
+            try:
+                crop.save(tmp_path)
+                words = extract_visible_text(tmp_path)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            words = [w for w in words if str(w.get("text", "")).strip()]
+            if not words:
+                continue
+            # The crop spans neighbor icons too, so keep only the word run
+            # nearest the icon's horizontal center (crop coords are 2x).
+            icon_cx = (ix + iw / 2 - x1) * 2
+            words.sort(key=lambda w: int(w.get("y", 0)))
+            top_y = int(words[0].get("y", 0))
+            top_line = [w for w in words if abs(int(w.get("y", 0)) - top_y) <= 16]
+            top_line.sort(key=lambda w: int(w.get("x", 0)))
+            if not top_line:
+                continue
+            best = min(
+                top_line,
+                key=lambda w: abs(int(w.get("x", 0)) + int(w.get("width", 0)) / 2 - icon_cx),
+            )
+            line = _word_run_around(top_line, best)
+            # Wrapped labels ("Rocket / League") continue on the next line.
+            if len(words) > len(top_line):
+                rest = [w for w in words if w not in top_line]
+                rest.sort(key=lambda w: int(w.get("y", 0)))
+                next_y = int(rest[0].get("y", 0))
+                if 8 < next_y - top_y <= 60:
+                    next_line = [w for w in rest if abs(int(w.get("y", 0)) - next_y) <= 16]
+                    next_line.sort(key=lambda w: int(w.get("x", 0)))
+                    if next_line and min(
+                        abs(int(w.get("x", 0)) + int(w.get("width", 0)) / 2 - icon_cx)
+                        for w in next_line
+                    ) <= iw:
+                        line = [*line, *next_line]
+            label = " ".join(str(w.get("text", "")).strip() for w in line).strip()
+            # Desktop labels are short ("Steam", "Visual Studio Code");
+            # longer lines are window content, not icon labels.
+            if len(label) < 2 or len(label) > 20:
+                continue
+            lx1 = min(int(w.get("x", 0)) // 2 + x1 for w in line)
+            ly1 = min(int(w.get("y", 0)) // 2 + y1 for w in line)
+            lx2 = max((int(w.get("x", 0)) + int(w.get("width", 0))) // 2 + x1 for w in line)
+            ly2 = max((int(w.get("y", 0)) + int(w.get("height", 0))) // 2 + y1 for w in line)
+            item["text"] = label
+            item["x"] = min(ix, lx1)
+            item["y"] = min(iy, ly1)
+            item["width"] = max(ix + iw, lx2) - item["x"]
+            item["height"] = max(iy + ih, ly2) - item["y"]
+            item["confidence"] = max(float(item.get("confidence") or 0), 0.85)
+            recovered += 1
+            LOGGER.info("Label recovery: icon at (%d,%d) -> '%s'", ix, iy, label)
+        except Exception as exc:
+            LOGGER.debug("Label recovery failed for one icon: %s", exc)
+    return recovered
+
+
+def augment_visible_items(
+    ocr_items: list[dict],
+    uia_items: list[dict],
+    screenshot,
+    include_shell: bool = True,
+) -> list[dict]:
+    """Merge OCR + UIA (+shell taskbar/desktop) and fuse icon boxes.
+
+    Returns items *without* screen refs; callers apply
+    :func:`assign_screen_element_refs` afterwards.
+    """
+    if include_shell:
+        shell_items = get_shell_items_scaled(screenshot)
+        uia_all = [*uia_items, *shell_items] if shell_items else uia_items
+    else:
+        uia_all = uia_items
+    merged = merge_visible_items(ocr_items, uia_all)
+    icon_boxes = get_icon_boxes_for_screenshot(screenshot)
+    if icon_boxes:
+        merged = merge_icon_boxes(merged, icon_boxes, screenshot)
+        textless = [item for item in merged if str(item.get("source", "")).lower() == "icon"]
+        if textless:
+            recover_icon_labels(textless, screenshot)
+    return merged
+
+
 def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None, warnings: list[str], started: float) -> dict | None:
-    target = extract_locator_target(question) or extract_click_target(question)
-    if not target:
+    targets = extract_locator_targets(question)
+    if not targets:
+        click_target = extract_click_target(question)
+        targets = [click_target] if click_target else []
+    if not targets:
         return None
 
     active_started = time.perf_counter()
@@ -1839,25 +2124,22 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
         uia_items = scale_uia_items_to_screenshot(uia_items, screenshot)
 
     uia_items = filter_ignored_overlay_items(uia_items, screenshot)
+    shell_items = get_shell_items_scaled(screenshot)
+    shell_items = filter_ignored_overlay_items(shell_items, screenshot)
+    uia_all = [*uia_items, *shell_items] if shell_items else uia_items
+    uia_all.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
 
-    uia_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
-    match_items = locator_match_items(question, uia_items)
-    instruction = f"Locate the {target} control."
-    if match_items:
-        match_result = find_best_match_with_score(target, match_items, instruction)
-        if match_result:
-            if should_accept_locator_match(question, match_result):
-                return build_locator_result(
-                    question,
-                    target,
-                    match_result["item"],
-                    uia_items,
-                    active_app,
-                    screenshot,
-                    warnings,
-                    started,
-                    match_result,
-                )
+    # Stage 1: UIA-only matches (active window + taskbar/desktop shell).
+    accepted: list[tuple[str, dict, dict | None]] = []
+    pending = list(targets)
+    uia_match_items = locator_match_items(question, uia_all)
+    for target in targets:
+        instruction = f"Locate the {target} control."
+        match_result = find_best_match_with_score(target, uia_match_items, instruction) if uia_match_items else None
+        if match_result and should_accept_locator_match(question, match_result):
+            accepted.append((target, match_result["item"], match_result))
+            pending.remove(target)
+        elif match_result:
             LOGGER.info(
                 "Locator deferred to AI for '%s' reason=low_control_confidence score=%.3f text_similarity=%.3f candidate_count=%d",
                 target,
@@ -1867,56 +2149,148 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
             )
             return None
 
+    if not pending:
+        ref_items = assign_screen_element_refs(uia_all)
+        reffed_by_orig_id = {id(orig): reffed for orig, reffed in zip(uia_all, ref_items)}
+        resolved = []
+        for target, item, match_result in accepted:
+            resolved.append((target, reffed_by_orig_id.get(id(item), item), match_result))
+        ordered = sorted(ref_items, key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
+        return build_multi_locator_result(question, resolved, ordered, active_app, screenshot, warnings, started)
+
+    # Stage 2: full OCR + open-source icon model + label recovery.
     ocr_started = time.perf_counter()
     ocr_items = extract_visible_text(screenshot.path)
     ocr_items = filter_ignored_overlay_items(ocr_items, screenshot)
     log_stage_timing("locator.ocr", ocr_started)
     if os.name != "nt":
         ocr_items = [item for item in ocr_items if item.get("y", 0) >= 35]
-        uia_items = [item for item in uia_items if item.get("y", 0) >= 35]
+        uia_all = [item for item in uia_all if item.get("y", 0) >= 35]
 
-    visible_items = assign_screen_element_refs(merge_visible_items(ocr_items, uia_items))
+    merged = augment_visible_items(ocr_items, uia_all, screenshot, include_shell=False)
+    visible_items = assign_screen_element_refs(merged)
     visible_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
-    try:
-        from utils.screen_annotator import save_parsed_ui_screenshot
-        save_parsed_ui_screenshot(screenshot.path, visible_items)
-    except Exception:
-        pass
-    match_result = find_best_match_with_score(target, locator_match_items(question, visible_items), instruction)
-    if match_result:
-        if should_accept_locator_match(question, match_result):
-            return build_locator_result(
-                question,
+    pool = locator_match_items(question, visible_items)
+    # Re-resolve stage-1 hits against reffed items so refs stay consistent.
+    resolved = []
+    for target, item, match_result in accepted:
+        fresh = find_best_match_with_score(target, pool, f"Locate the {target} control.")
+        if fresh and should_accept_locator_match(question, fresh):
+            resolved.append((target, fresh["item"], fresh))
+        else:
+            resolved.append((target, item, match_result))
+    for target in pending:
+        sidebar_match = match_sidebar_icon_fallback(target, question, visible_items, active_app)
+        if sidebar_match is not None:
+            resolved.append((target, {**sidebar_match, "text": sidebar_match.get("text") or target}, None))
+            continue
+        match_result = find_best_match_with_score(target, pool, f"Locate the {target} control.")
+        if match_result and should_accept_locator_match(question, match_result):
+            resolved.append((target, match_result["item"], match_result))
+        elif match_result:
+            LOGGER.info(
+                "Locator deferred to AI for '%s' reason=low_control_confidence score=%.3f text_similarity=%.3f candidate_count=%d",
                 target,
-                match_result["item"],
-                visible_items,
-                active_app,
-                screenshot,
-                warnings,
-                started,
-                match_result,
+                match_result["score"],
+                match_result["text_similarity"],
+                match_result["candidate_count"],
             )
-        LOGGER.info(
-            "Locator deferred to AI for '%s' reason=low_control_confidence score=%.3f text_similarity=%.3f candidate_count=%d",
-            target,
-            match_result["score"],
-            match_result["text_similarity"],
-            match_result["candidate_count"],
-        )
-        return None
+            return None
+    if resolved:
+        return build_multi_locator_result(question, resolved, visible_items, active_app, screenshot, warnings, started)
 
-    if wants_control or icon_like_control_candidates(locator_match_items(question, uia_items)):
-        LOGGER.info("Locator deferred to AI for '%s' reason=icon_or_control_needs_ai", target)
+    icon_pool = [item for item in pool if str(item.get("source", "")).lower() in {"icon", "omniparser"}]
+    if wants_control or icon_like_control_candidates(locator_match_items(question, uia_all)) or icon_pool:
+        LOGGER.info("Locator deferred to AI for '%s' reason=icon_or_control_needs_ai", "|".join(targets))
         return None
 
     if is_open_action_question(question):
         return None
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    LOGGER.info("Locator local path did not find '%s' after checking %d visible items", target, len(visible_items))
+    missing = ", ".join(targets)
+    LOGGER.info("Locator local path did not find '%s' after checking %d visible items", missing, len(visible_items))
+    _save_parsed_for_analysis(screenshot, visible_items)
     return {
-        "summary": f"I could not find {target} on the current screen.",
+        "summary": f"I could not find {missing} on the current screen.",
         "steps": [],
+        "active_app": active_app,
+        "ocr": {"count": len(visible_items), "items": visible_items[:80]},
+        "screenshot": {
+            "path": str(screenshot.path),
+            "width": screenshot.width,
+            "height": screenshot.height,
+            "screen_width": screenshot.screen_width,
+            "screen_height": screenshot.screen_height,
+        },
+        "elapsed_ms": elapsed_ms,
+        "provider": "local",
+        "warnings": warnings,
+        "is_continuation": False,
+    }
+
+
+def _save_parsed_for_analysis(screenshot, visible_items: list[dict]) -> None:
+    """Write the @ref-annotated screenshot analysts inspect for misses."""
+    try:
+        from utils.screen_annotator import save_parsed_ui_screenshot
+        save_parsed_ui_screenshot(screenshot.path, visible_items)
+    except Exception as exc:
+        LOGGER.debug("Parsed screenshot save failed: %s", exc)
+
+
+def build_multi_locator_result(
+    question: str,
+    resolved: list[tuple[str, dict, dict | None]],
+    visible_items: list[dict],
+    active_app: dict,
+    screenshot,
+    warnings: list[str],
+    started: float,
+) -> dict:
+    """One highlight step per matched locator target (multi-highlight)."""
+    _save_parsed_for_analysis(screenshot, visible_items)
+    steps = []
+    found: list[str] = []
+    for idx, (target, match, match_result) in enumerate(resolved, start=1):
+        match_with_metadata = {**match}
+        if match_result:
+            match_with_metadata.update({
+                "score": match_result.get("score", 1.0),
+                "text_similarity": match_result.get("text_similarity", 1.0),
+                "is_exact_text": match_result.get("is_exact_text", True),
+                "match_method": "text" if match_result.get("match_method") != "ref" else "ref",
+                "candidate_count": match_result.get("candidate_count", 1),
+                "ambiguous_candidate_count": match_result.get("ambiguous_candidate_count", 1),
+            })
+        else:
+            match_with_metadata.update({
+                "score": 1.0,
+                "text_similarity": 1.0,
+                "is_exact_text": True,
+                "match_method": "ref" if match.get("ref") else "text",
+                "candidate_count": 1,
+                "ambiguous_candidate_count": 1,
+            })
+        steps.append({
+            "step": idx,
+            "instruction": local_target_instruction(question, target),
+            "target_text": str(match.get("text") or target),
+            "target_ref": str(match.get("ref", "")),
+            "match": match_with_metadata,
+        })
+        found.append(target)
+        LOGGER.info("Locator accepted local match '%s' to '%s'", target, match.get("text"))
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    on_screen = any(isinstance(m, dict) and m.get("shell_region") for _, m, _ in resolved)
+    if len(found) == 1:
+        where = "on your screen" if on_screen else "in the active app"
+        summary = f"I found the {found[0]} {where}."
+    else:
+        summary = f"I found {', '.join(found)} on your screen."
+    return {
+        "summary": summary,
+        "steps": steps,
         "active_app": active_app,
         "ocr": {"count": len(visible_items), "items": visible_items[:80]},
         "screenshot": {
@@ -1967,6 +2341,7 @@ def should_accept_locator_match(question: str, match_result: dict) -> bool:
     is_interactive = (
         (source == "uia" and control_type in {"button", "image", "tabitem", "menuitem", "edit", "textbox", "combobox", "listitem", "custom"})
         or (source == "omniparser")
+        or (source == "icon" and control_type in {"image", "button"})
         or (source in {"ocr", "winrt"} and match_result.get("is_exact_text"))
     )
     if not is_interactive:
@@ -2005,62 +2380,28 @@ def build_locator_result(
     started: float,
     match_result: dict | None = None,
 ) -> dict:
-    match_with_metadata = {**match}
-    if match_result:
-        match_with_metadata.update({
-            "score": match_result.get("score", 1.0),
-            "text_similarity": match_result.get("text_similarity", 1.0),
-            "is_exact_text": match_result.get("is_exact_text", True),
-            "match_method": "text" if match_result.get("match_method") != "ref" else "ref",
-            "candidate_count": match_result.get("candidate_count", 1),
-            "ambiguous_candidate_count": match_result.get("ambiguous_candidate_count", 1),
-        })
-    else:
-        match_with_metadata.update({
-            "score": 1.0,
-            "text_similarity": 1.0,
-            "is_exact_text": True,
-            "match_method": "ref" if match.get("ref") else "text",
-            "candidate_count": 1,
-            "ambiguous_candidate_count": 1,
-        })
+    return build_multi_locator_result(
+        question, [(target, match, match_result)], visible_items, active_app, screenshot, warnings, started,
+    )
 
-    step = {
-        "step": 1,
-        "instruction": local_target_instruction(question, target),
-        "target_text": str(match.get("text") or target),
-        "target_ref": str(match.get("ref", "")),
-        "match": match_with_metadata,
-    }
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    if match_result:
-        LOGGER.info(
-            "Locator accepted local match '%s' to '%s' score=%.3f text_similarity=%.3f candidate_count=%d",
-            target,
-            match.get("text"),
-            match_result["score"],
-            match_result["text_similarity"],
-            match_result["candidate_count"],
-        )
-    else:
-        LOGGER.info("Locator fast path matched '%s' to '%s'", target, match.get("text"))
-    return {
-        "summary": f"I found the {target} in the active app.",
-        "steps": [step],
-        "active_app": active_app,
-        "ocr": {"count": len(visible_items), "items": visible_items[:80]},
-        "screenshot": {
-            "path": str(screenshot.path),
-            "width": screenshot.width,
-            "height": screenshot.height,
-            "screen_width": screenshot.screen_width,
-            "screen_height": screenshot.screen_height,
-        },
-        "elapsed_ms": elapsed_ms,
-        "provider": "local",
-        "warnings": warnings,
-        "is_continuation": False,
-    }
+
+def extract_locator_targets(question: str) -> list[str]:
+    """Split multi-item locator queries ("highlight steam and edge")."""
+    single = extract_locator_target(question)
+    if not single:
+        return []
+    parts = re.split(r"\s+(?:and|&)\s+|\s*,\s*", single)
+    targets = [clean_locator_target(part) for part in parts]
+    targets = [t for t in targets if t]
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for target in targets:
+        key = target.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(target)
+    return unique or ([single] if single else [])
 
 
 def extract_locator_target(question: str) -> str | None:
@@ -2233,11 +2574,50 @@ def normalize_conversation_history(value) -> list[dict]:
 
 
 def clean_locator_target(value: str) -> str | None:
-    cleaned = value.strip(" .,!?:;\"'`()[]")
+    # Drop location hints in parentheses FIRST (before char-stripping eats
+    # the closing paren): "steam (on desktop)" -> "steam".
+    cleaned = re.sub(r"\s*\([^()]{1,40}\)", " ", value).strip()
+    cleaned = cleaned.strip(" .,!?:;\"'`()[]")
     cleaned = re.sub(r"\s+(?:in|on|from)\s+the\s+.*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+(?:on\s+desktop|on\s+taskbar|in\s+taskbar|on\s+the\s+desktop)$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+(?:button|icon|tab|menu|control|panel|view|folder)$", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip(" .,!?:;\"'`()[]")
     return cleaned or None
+
+
+# Sidebar icon aliases for apps whose nav icons carry no text label.
+# Maps app-process hint -> {query word -> 1-based sidebar position from top}.
+SIDEBAR_ICON_ORDER: dict[str, dict[str, int]] = {
+    "whatsapp": {"status": 2, "stories": 2, "updates": 2, "channels": 3, "communities": 4, "settings": 5, "chats": 1},
+}
+
+
+def match_sidebar_icon_fallback(target: str, question: str, visible_items: list[dict], active_app: dict) -> dict | None:
+    """Match textless sidebar icons by app-aware position (e.g. WhatsApp Status)."""
+    process = str((active_app or {}).get("process", "")).lower()
+    app_key = next((key for key in SIDEBAR_ICON_ORDER if key in process), None)
+    if app_key is None:
+        if "whatsapp" in question.lower() and "status" in target.lower():
+            app_key = "whatsapp"
+        else:
+            return None
+    position = SIDEBAR_ICON_ORDER[app_key].get(target.lower().strip())
+    if not position:
+        return None
+    sidebar_icons = [
+        item for item in visible_items
+        if not str(item.get("text", "")).strip()
+        and str(item.get("control_type", "")).lower() in {"button", "image", "hyperlink", "custom"}
+        and int(item.get("x", 9999)) <= 140
+        and 12 <= float(item.get("width") or 0) <= 120
+        and 12 <= float(item.get("height") or 0) <= 120
+    ]
+    sidebar_icons.sort(key=lambda item: (int(item.get("y", 0)), int(item.get("x", 0))))
+    if len(sidebar_icons) >= position:
+        match = sidebar_icons[position - 1]
+        LOGGER.info("Sidebar fallback: '%s' -> icon #%d at (%d,%d)", target, position, match.get("x"), match.get("y"))
+        return match
+    return None
 
 
 def scale_uia_items_to_screenshot(uia_items: list[dict], screenshot) -> list[dict]:
