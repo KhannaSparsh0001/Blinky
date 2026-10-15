@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "2ab3366b-82a4-4d16-9bbd-0a5240a197d0",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+  "output": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+  "specification": {
+    "sha256": "8b271a72b8036d5aab7359c530450e49c0f646d40d7045f3cee92aa7aa8ab8ae",
+    "bytes": 13129
+  },
+  "artifact": {
+    "sha256": "adac8d22a0226c46b704db0215676d984208265ead78e2b881195d7a6c069df1",
+    "bytes": 860163
+  }
+}

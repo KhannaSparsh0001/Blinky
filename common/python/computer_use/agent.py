@@ -168,6 +168,8 @@ def looks_like_app_name(app_name: str) -> bool:
     words = name_lower.split()
     if not words:
         return False
+    if name_lower in {"screen", "my screen", "the screen", "this screen", "current screen", "desktop", "display"} or any(w in {"screen", "display"} for w in words):
+        return False
     if len(words) > 3:
         known_long_apps = {"visual studio code", "windows media player", "mail and calendar"}
         if name_lower not in known_long_apps:

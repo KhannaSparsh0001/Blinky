@@ -17,8 +17,8 @@ from main import (
     classify_request,
     extract_locator_target,
     extract_locator_targets,
-    match_sidebar_icon_fallback,
     merge_visible_items,
+    partition_occluded_shell_items,
     resolve_locator_fast_path,
     run,
     should_accept_locator_match,
@@ -908,7 +908,7 @@ class GuidanceFlowTests(unittest.TestCase):
         self.assertIsNone(extract_click_target("open the YouTube tab"))
         self.assertIsNone(extract_click_target("how to install code runner extension"))
 
-    def test_click_question_uses_local_uia_match_without_ai(self) -> None:
+    def test_click_question_uses_local_match_without_ai(self) -> None:
         screenshot = SimpleNamespace(
             path="screenshots/test.jpg",
             width=1728,
@@ -934,7 +934,7 @@ class GuidanceFlowTests(unittest.TestCase):
             patch("utils.window.get_target_window_element", return_value=None),
             patch("main.get_active_window", return_value={"title": "Microsoft Edge", "process": "msedge.exe"}),
             patch("main.get_visible_ui_text", return_value=items),
-            patch("main.extract_visible_text", side_effect=AssertionError("OCR should be skipped")),
+            patch("main.extract_visible_text", return_value=[]),
             patch("main.ask_text_model", side_effect=AssertionError("preflight AI should be skipped")),
             patch("main.ask_model", side_effect=AssertionError("guidance AI should be skipped")),
         ):
@@ -944,7 +944,7 @@ class GuidanceFlowTests(unittest.TestCase):
         self.assertEqual(result["steps"][0]["instruction"], "Click YouTube.")
         self.assertEqual(result["steps"][0]["match"]["text"], "You Tube")
 
-    def test_locator_question_uses_local_uia_match_without_ocr_or_ai(self) -> None:
+    def test_locator_question_uses_local_match_without_ai(self) -> None:
         screenshot = SimpleNamespace(
             path="screenshots/test.jpg",
             width=1728,
@@ -970,7 +970,7 @@ class GuidanceFlowTests(unittest.TestCase):
             patch("utils.window.get_target_window_element", return_value=None),
             patch("main.get_active_window", return_value={"title": "VS Code", "process": "code.exe"}),
             patch("main.get_visible_ui_text", return_value=items),
-            patch("main.extract_visible_text", side_effect=AssertionError("OCR should be skipped")),
+            patch("main.extract_visible_text", return_value=[]),
             patch("main.ask_text_model", side_effect=AssertionError("preflight AI should be skipped")),
             patch("main.ask_model", side_effect=AssertionError("guidance AI should be skipped")),
         ):
@@ -1108,7 +1108,7 @@ class GuidanceFlowTests(unittest.TestCase):
         with (
             patch("main.get_active_window", return_value={"title": "OneNote", "process": "onenote.exe"}),
             patch("main.get_visible_ui_text", return_value=items),
-            patch("main.extract_visible_text", side_effect=AssertionError("OCR should be skipped")),
+            patch("main.extract_visible_text", return_value=[]),
         ):
             result = resolve_locator_fast_path("where is lol?", screenshot, None, [], 0.0)
 
@@ -1220,7 +1220,7 @@ class GuidanceFlowTests(unittest.TestCase):
         with (
             patch("main.get_active_window", return_value={"title": "ChatGPT", "process": "chatgpt.exe"}),
             patch("main.get_visible_ui_text", return_value=items),
-            patch("main.extract_visible_text", side_effect=AssertionError("OCR should be skipped")),
+            patch("main.extract_visible_text", return_value=[]),
         ):
             result = resolve_locator_fast_path("where is the new chat button?", screenshot, None, [], 0.0)
 
@@ -1418,6 +1418,7 @@ class MultiHighlightTests(unittest.TestCase):
         ]
         with (
             patch("main.get_active_window", return_value={"title": "Desktop", "process": "explorer.exe"}),
+            patch("utils.window.get_target_window_element", return_value=None),
             patch("main.get_visible_ui_text", return_value=uia_items),
             patch("main.get_shell_ui_items", return_value=shell_items),
             patch("main.extract_visible_text", return_value=[]),
@@ -1447,16 +1448,65 @@ class MultiHighlightTests(unittest.TestCase):
         self.assertIn("steam", result["summary"])
         self.assertIn("edge", result["summary"])
 
-    def test_sidebar_fallback_finds_whatsapp_status_icon(self) -> None:
-        icons = [
-            {"text": "", "x": 10, "y": 100 + i * 60, "width": 40, "height": 40, "control_type": "Button"}
-            for i in range(4)
-        ]
-        match = match_sidebar_icon_fallback(
-            "status", "highlight whatsapp status icon", icons, {"process": "WhatsApp.exe"}
+    def test_partition_occluded_shell_items_drops_covered_desktop_icons(self) -> None:
+        active = SimpleNamespace(
+            rectangle=lambda: SimpleNamespace(left=0, top=0, right=2560, bottom=1600),
+            element_info=SimpleNamespace(class_name="Chrome_WidgetWin_1"),
         )
-        self.assertIsNotNone(match)
-        self.assertEqual(match["y"], 160)
+        shell_items = [
+            {"text": "Steam", "x": 342, "y": 151, "width": 112, "height": 103,
+             "source": "uia", "control_type": "ListItem", "shell_region": "desktop"},
+            {"text": "Microsoft Edge", "x": 1176, "y": 1527, "width": 65, "height": 71,
+             "source": "uia", "control_type": "Button", "shell_region": "taskbar"},
+        ]
+        with patch("utils.window.get_target_window_element", return_value=active):
+            visible, occluded = partition_occluded_shell_items(shell_items)
+        self.assertEqual([i["text"] for i in visible], ["Microsoft Edge"])
+        self.assertEqual([i["text"] for i in occluded], ["Steam"])
+
+    def test_partition_keeps_desktop_icons_when_desktop_focused(self) -> None:
+        active = SimpleNamespace(
+            rectangle=lambda: SimpleNamespace(left=0, top=0, right=2560, bottom=1600),
+            element_info=SimpleNamespace(class_name="Progman"),
+        )
+        shell_items = [
+            {"text": "Steam", "x": 342, "y": 151, "width": 112, "height": 103,
+             "source": "uia", "control_type": "ListItem", "shell_region": "desktop"},
+        ]
+        with patch("utils.window.get_target_window_element", return_value=active):
+            visible, occluded = partition_occluded_shell_items(shell_items)
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(occluded, [])
+
+    def test_occluded_target_reports_behind_message(self) -> None:
+        screenshot = SimpleNamespace(
+            path="screenshots/test.jpg",
+            width=1728,
+            height=1080,
+            screen_width=1728,
+            screen_height=1080,
+        )
+        shell_items = [
+            {"text": "Steam", "x": 232, "y": 102, "width": 76, "height": 70,
+             "confidence": 0.98, "source": "uia", "control_type": "ListItem",
+             "shell_region": "desktop"},
+        ]
+        active = SimpleNamespace(
+            rectangle=lambda: SimpleNamespace(left=0, top=0, right=1728, bottom=1080),
+            element_info=SimpleNamespace(class_name="Chrome_WidgetWin_1"),
+        )
+        with (
+            patch("main.get_active_window", return_value={"title": "Edge", "process": "msedge.exe"}),
+            patch("main.get_visible_ui_text", return_value=[]),
+            patch("main.get_shell_ui_items", return_value=shell_items),
+            patch("utils.window.get_target_window_element", return_value=active),
+            patch("main.extract_visible_text", return_value=[]),
+        ):
+            result = resolve_locator_fast_path("highlight steam", screenshot, None, [], 0.0)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["steps"], [])
+        self.assertIn("covering", result["summary"])
+        self.assertIn("Steam", result["summary"])
 
     def test_icon_source_accepted_for_control_question(self) -> None:
         match_result = {

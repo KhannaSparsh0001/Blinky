@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "fail",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+    "sha256": "85cf09a95758283accb65719fad08e4de4cefc3005bd21348ac58b823f00c7da",
+    "bytes": 13246
+  },
+  "artifact": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+    "sha256": "0fc147759e0d37bede1d9b6bdf2dd8f130168b900ba7f550035bf9178a9ab007",
+    "bytes": 843885
+  },
+  "gates": {
+    "validate": "fail",
+    "deliver": "not-run",
+    "check": "not-run",
+    "browser-check": "not-run"
+  },
+  "failedStage": "validate",
+  "diagnostics": [
+    {
+      "code": "repository-evidence/line-out-of-range",
+      "severity": "error",
+      "message": "/components/7/sources/0 requests line 10, but crates/blinky-agent/src/lib.rs has 6 lines at revision 950e0f4508e820e15d8b2c4b3db6fffdddb0ef6a.",
+      "subject": {
+        "surface": "repository-evidence",
+        "path": "/components/7/sources/0",
+        "diagramType": "architecture",
+        "collection": "components",
+        "nodeId": "blinky_agent",
+        "componentId": "blinky_agent"
+      },
+      "evidence": {
+        "sourcePath": "crates/blinky-agent/src/lib.rs",
+        "requestedLine": 10,
+        "lineCount": 6,
+        "revision": "950e0f4508e820e15d8b2c4b3db6fffdddb0ef6a"
+      },
+      "supportedFixes": [
+        "use a line range that exists at the pinned revision"
+      ]
+    },
+    {
+      "code": "repository-evidence/line-out-of-range",
+      "severity": "error",
+      "message": "/components/8/sources/0 requests line 24, but crates/blinky-daemon/src/lib.rs has 23 lines at revision 950e0f4508e820e15d8b2c4b3db6fffdddb0ef6a.",
+      "subject": {
+        "surface": "repository-evidence",
+        "path": "/components/8/sources/0",
+        "diagramType": "architecture",
+        "collection": "components",
+        "nodeId": "blinky_daemon",
+        "componentId": "blinky_daemon"
+      },
+      "evidence": {
+        "sourcePath": "crates/blinky-daemon/src/lib.rs",
+        "requestedLine": 24,
+        "lineCount": 23,
+        "revision": "950e0f4508e820e15d8b2c4b3db6fffdddb0ef6a"
+      },
+      "supportedFixes": [
+        "use a line range that exists at the pinned revision"
+      ]
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 2,
+    "shown": 2,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-4\\blinky-map.finalize.json",
+    "summaryReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-4\\blinky-map.finalize-summary.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-15T05:38:00.636Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 595,
+  "nextAction": {
+    "action": "edit-in-place",
+    "candidate": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+    "constraint": "Preserve unaffected semantics and geometry; apply each diagnostic's supportedFixes, or the fix its message names, and do not replace the whole candidate.",
+    "then": "finalize-once"
+  }
+}

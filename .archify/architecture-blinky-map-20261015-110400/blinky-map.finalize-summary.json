@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+    "sha256": "d0f4c58ef2f47cba84cb26872bc44156d088ba2051037c881faa00378cbc19f5",
+    "bytes": 9685
+  },
+  "artifact": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+    "sha256": "6ec990e5896ee6a8ba8ec3564eead7fbd881552891c092728af4f4ff328f91c4",
+    "bytes": 844080
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.finalize.json",
+    "summaryReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-15T05:38:00.636Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2863,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 3
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "from": "ws_gateway",
+            "to": "tauri_rust",
+            "label": "Validated WS Packets",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "right": {
+            "from": "tauri_frontend",
+            "to": "sarvam_audio",
+            "label": "Audio &amp; Word Sync",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "point": [
+            400,
+            168
+          ]
+        },
+        {
+          "left": {
+            "from": "tauri_rust",
+            "to": "python_supervisor",
+            "label": "Stdio JSON IPC",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "right": {
+            "from": "tauri_frontend",
+            "to": "sarvam_audio",
+            "label": "Audio &amp; Word Sync",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "point": [
+            500,
+            168
+          ]
+        },
+        {
+          "left": {
+            "from": "vision_grounding",
+            "to": "computer_use",
+            "label": "@ref Spatial Index",
+            "collectionIndex": 10,
+            "artifactIndex": 11
+          },
+          "right": {
+            "from": "preflight_router",
+            "to": "app_context",
+            "label": "Shortcut Lookup",
+            "collectionIndex": 13,
+            "artifactIndex": 14
+          },
+          "point": [
+            930,
+            416
+          ]
+        }
+      ],
+      "detours": [],
+      "truncated": false
+    },
+    "hints": [
+      "ws_gateway → tauri_rust crosses tauri_frontend → sarvam_audio: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "tauri_rust → python_supervisor crosses tauri_frontend → sarvam_audio: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "vision_grounding → computer_use crosses preflight_router → app_context: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

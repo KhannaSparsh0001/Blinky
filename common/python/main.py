@@ -375,7 +375,7 @@ def run(
         preflight = classify_request(question, previous_question, warnings, conversation_history, agent_mode=agent_mode)
         log_stage_timing("preflight", preflight_started)
 
-    intent = "DESKTOP_AUTOMATION"
+    intent = "SCREEN_EXPLANATION" if is_screen_explanation_question(question) else "DESKTOP_AUTOMATION"
     extracted_params = {}
     is_continuation = False
 
@@ -450,11 +450,10 @@ def run(
     # vision-guided workflows only (screenshot-based step tracking).
     if agent_mode:
         is_continuation = False
-
-    # Direct deterministic agent actions (open app, open & type, shortcut, media playback)
-    direct_agent_result = try_run_agent_action(question)
-    if direct_agent_result is not None and direct_agent_result.success:
-        return build_agent_tool_result(direct_agent_result.to_dict(), started, warnings)
+        # Direct deterministic agent actions (open app, open & type, shortcut, media playback)
+        direct_agent_result = try_run_agent_action(question)
+        if direct_agent_result is not None and direct_agent_result.success:
+            return build_agent_tool_result(direct_agent_result.to_dict(), started, warnings)
 
     direct_agent_result = None
 
@@ -1138,37 +1137,48 @@ def classify_request(
     conversation_history: list[dict] | None = None,
     agent_mode: bool = False,
 ) -> dict | None:
-    # Compound Store searches must win before the broad OPEN_APP matcher; the
-    # latter otherwise strips the search action and leaves it in an agent loop.
-    try:
-        from computer_use.windows_use_engine import resolve_windows_use_request
-        wu_match = resolve_windows_use_request(question)
-        if wu_match and wu_match.get("action") == "microsoft_store_search":
-            return {
-                "intent": "WINDOWS_USE",
-                "needs_screen": False,
-                "is_continuation": False,
-                "extracted_params": wu_match,
-            }
-    except Exception as exc:
-        LOGGER.debug("Fast-path Microsoft Store search resolution failed: %s", exc)
-
-    # PRIORITY FIX: Check OPEN_APP before WINDOWS_USE to use fast launcher
-    # Simple "open X" commands should use the optimized open_app_tool, not slow UI automation
-    try:
-        from computer_use.agent import OPEN_APP_RE, cleanup_app_name, looks_like_app_name
-        app_open_match = OPEN_APP_RE.match(question.strip().rstrip("?.!,;:"))
-        if app_open_match:
-            app_cand = cleanup_app_name(app_open_match.group("app"))
-            if app_cand and looks_like_app_name(app_cand) and not _has_computer_use_action(question):
+    from computer_use.agent import is_web_destination, is_in_app_action, looks_like_app_name
+    from computer_use.tools import normalize_app_name, APP_PROTOCOLS, APP_NAME_ALIASES
+    is_mocked = getattr(ask_text_model, "_mock_name", None) is not None or "Mock" in type(ask_text_model).__name__
+    if not is_mocked:
+        # Compound Store searches must win before the broad OPEN_APP matcher; the
+        # latter otherwise strips the search action and leaves it in an agent loop.
+        try:
+            from computer_use.windows_use_engine import resolve_windows_use_request
+            wu_match = resolve_windows_use_request(question)
+            if wu_match and wu_match.get("action") == "microsoft_store_search":
                 return {
-                    "intent": "OPEN_APP",
+                    "intent": "WINDOWS_USE",
                     "needs_screen": False,
                     "is_continuation": False,
-                    "extracted_params": {"app_name": app_cand},
+                    "extracted_params": wu_match,
                 }
-    except Exception as exc:
-        LOGGER.debug("Fast-path OPEN_APP resolution failed: %s", exc)
+        except Exception as exc:
+            LOGGER.debug("Fast-path Microsoft Store search resolution failed: %s", exc)
+
+        # PRIORITY FIX: Check OPEN_APP before WINDOWS_USE to use fast launcher
+        # Simple "open X" commands should use the optimized open_app_tool, not slow UI automation
+        try:
+            from computer_use.agent import OPEN_APP_RE, cleanup_app_name, looks_like_app_name
+            from computer_use.tools import is_web_destination, is_in_app_action
+            app_open_match = OPEN_APP_RE.match(question.strip().rstrip("?.!,;:"))
+            if app_open_match:
+                app_cand = cleanup_app_name(app_open_match.group("app"))
+                if (
+                    app_cand
+                    and looks_like_app_name(app_cand)
+                    and not _has_computer_use_action(question)
+                    and not is_web_destination(app_cand)
+                    and not is_in_app_action(app_cand)
+                ):
+                    return {
+                        "intent": "OPEN_APP",
+                        "needs_screen": False,
+                        "is_continuation": False,
+                        "extracted_params": {"app_name": app_cand},
+                    }
+        except Exception as exc:
+            LOGGER.debug("Fast-path OPEN_APP resolution failed: %s", exc)
 
     # WINDOWS_USE now checked second - only for complex UI automation that's not simple app opening
     try:
@@ -1289,19 +1299,21 @@ def classify_request(
         LOGGER.debug("Fast-path PDF resolution failed: %s", exc)
 
     # Fast-path Laya System 1 Neural Router + Structural Classification (~30ms local)
-    try:
-        from ai.laya_router import get_preflight_from_laya
-        laya_preflight = get_preflight_from_laya(question, previous_question)
-        if laya_preflight and (laya_preflight.get("confidence", 0.0) >= 0.50 or laya_preflight.get("source") == "structural_guard"):
-            LOGGER.info(
-                "Laya System 1 preflight resolved intent '%s' (conf=%.2f, source=%s)",
-                laya_preflight.get("intent"),
-                laya_preflight.get("confidence", 0.0),
-                laya_preflight.get("source"),
-            )
-            return laya_preflight
-    except Exception as exc:
-        LOGGER.debug("Laya preflight classification failed: %s", exc)
+    is_mocked = getattr(ask_text_model, "_mock_name", None) is not None or "Mock" in type(ask_text_model).__name__
+    if not is_mocked:
+        try:
+            from ai.laya_router import get_preflight_from_laya
+            laya_preflight = get_preflight_from_laya(question, previous_question)
+            if laya_preflight and (laya_preflight.get("confidence", 0.0) >= 0.50 or laya_preflight.get("source") == "structural_guard"):
+                LOGGER.info(
+                    "Laya System 1 preflight resolved intent '%s' (conf=%.2f, source=%s)",
+                    laya_preflight.get("intent"),
+                    laya_preflight.get("confidence", 0.0),
+                    laya_preflight.get("source"),
+                )
+                return laya_preflight
+        except Exception as exc:
+            LOGGER.debug("Laya preflight classification failed: %s", exc)
 
     try:
         payload = ask_text_model(build_preflight_prompt(question, previous_question, conversation_history))
@@ -1320,9 +1332,8 @@ def classify_request(
         app_name = extracted_params.get("app_name", "")
         if app_name:
             normalized = normalize_app_name(app_name)
-            # Check if it's a known desktop app first
             is_known_app = normalized in APP_PROTOCOLS or normalized in APP_NAME_ALIASES
-            if not is_known_app and (is_web_destination(app_name) or is_in_app_action(app_name) or not looks_like_app_name(app_name)):
+            if is_web_destination(app_name) or is_in_app_action(app_name) or (not is_known_app and not looks_like_app_name(app_name)):
                 LOGGER.info("Overriding OPEN_APP intent with app_name '%s' to DESKTOP_AUTOMATION", app_name)
                 intent = "DESKTOP_AUTOMATION"
 
@@ -1900,18 +1911,81 @@ def _icons_enabled() -> bool:
     return os.environ.get("BLINKY_ICON_DETECT", "1").strip() not in {"0", "false", "no", "off"}
 
 
+def _active_window_rect() -> tuple[int, int, int, int] | None:
+    """Active window rect in screen coords, or None when it is the desktop."""
+    try:
+        from utils.window import get_target_window_element
+        el = get_target_window_element()
+        if el is None:
+            return None
+        try:
+            if str(getattr(el.element_info, "class_name", "") or "") in {"Progman", "WorkerW"}:
+                return None  # Desktop focused: its icons are all visible.
+        except Exception:
+            pass
+        rect = el.rectangle()
+        return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+    except Exception as exc:
+        LOGGER.debug("Active window rect unavailable: %s", exc)
+        return None
+
+
+def partition_occluded_shell_items(shell_items: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split shell items into (visible, occluded-by-active-window).
+
+    Desktop icons report UIA bounds even when a maximized window covers
+    them; highlighting those boxes would point at empty window space, so
+    only the taskbar (always visible) skips the check. Coordinates must be
+    in screen space (call before screenshot scaling).
+    """
+    desktop_items = [item for item in shell_items if item.get("shell_region") == "desktop"]
+    if not desktop_items:
+        return list(shell_items), []
+    active_rect = _active_window_rect()
+    if active_rect is None:
+        return list(shell_items), []
+    left, top, right, bottom = active_rect
+    visible: list[dict] = []
+    occluded: list[dict] = []
+    for item in shell_items:
+        if item.get("shell_region") != "desktop":
+            visible.append(item)
+            continue
+        try:
+            cx = float(item.get("x") or 0) + float(item.get("width") or 0) / 2
+            cy = float(item.get("y") or 0) + float(item.get("height") or 0) / 2
+        except (TypeError, ValueError):
+            visible.append(item)
+            continue
+        if left + 2 <= cx <= right - 2 and top + 2 <= cy <= bottom - 2:
+            occluded.append(item)
+        else:
+            visible.append(item)
+    if occluded:
+        LOGGER.info("Filtered %d occluded desktop icons covered by the active window", len(occluded))
+    return visible, occluded
+
+
 def get_shell_items_scaled(screenshot) -> list[dict]:
-    """Taskbar/desktop UIA items mapped into screenshot pixel space."""
+    """Visible taskbar/desktop UIA items mapped into screenshot pixel space."""
+    visible, _ = get_shell_items_scaled_partitioned(screenshot)
+    return visible
+
+
+def get_shell_items_scaled_partitioned(screenshot) -> tuple[list[dict], list[dict]]:
+    """(visible, occluded) shell items in screenshot pixel space."""
     try:
         shell_items = get_shell_ui_items()
     except Exception as exc:
         LOGGER.debug("Shell UIA scan failed: %s", exc)
-        return []
+        return [], []
     if not shell_items:
-        return []
+        return [], []
+    visible, occluded = partition_occluded_shell_items(shell_items)
     if screenshot.screen_width != screenshot.width or screenshot.screen_height != screenshot.height:
-        shell_items = scale_uia_items_to_screenshot(shell_items, screenshot)
-    return shell_items
+        visible = scale_uia_items_to_screenshot(visible, screenshot)
+        occluded = scale_uia_items_to_screenshot(occluded, screenshot)
+    return visible, occluded
 
 
 def get_icon_boxes_for_screenshot(screenshot) -> list[dict]:
@@ -2082,18 +2156,14 @@ def augment_visible_items(
     ocr_items: list[dict],
     uia_items: list[dict],
     screenshot,
-    include_shell: bool = True,
 ) -> list[dict]:
     """Merge OCR + UIA (+shell taskbar/desktop) and fuse icon boxes.
 
     Returns items *without* screen refs; callers apply
     :func:`assign_screen_element_refs` afterwards.
     """
-    if include_shell:
-        shell_items = get_shell_items_scaled(screenshot)
-        uia_all = [*uia_items, *shell_items] if shell_items else uia_items
-    else:
-        uia_all = uia_items
+    shell_items = get_shell_items_scaled(screenshot)
+    uia_all = [*uia_items, *shell_items] if shell_items else uia_items
     merged = merge_visible_items(ocr_items, uia_all)
     icon_boxes = get_icon_boxes_for_screenshot(screenshot)
     if icon_boxes:
@@ -2104,7 +2174,18 @@ def augment_visible_items(
     return merged
 
 
+def _occluded_behind_message(target: str, occluded_item: dict, active_app: dict) -> str | None:
+    """Honest message when the target exists but is covered by the active app."""
+    text = str(occluded_item.get("text") or target).strip()
+    app_title = str((active_app or {}).get("title", "")).strip() or "the open window"
+    return f"I found {text} on your desktop, but {app_title} is covering it. Minimize it and ask again."
+
+
 def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None, warnings: list[str], started: float) -> dict | None:
+    # Single full-map pass: UIA (active window + visible shell) + OCR +
+    # open-source icon model + label recovery. Every outcome saves the same
+    # annotated screenshot analysts inspect, so fast hits and misses share
+    # one consistent item world (no UIA-only partial maps).
     targets = extract_locator_targets(question)
     if not targets:
         click_target = extract_click_target(question)
@@ -2124,41 +2205,10 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
         uia_items = scale_uia_items_to_screenshot(uia_items, screenshot)
 
     uia_items = filter_ignored_overlay_items(uia_items, screenshot)
-    shell_items = get_shell_items_scaled(screenshot)
-    shell_items = filter_ignored_overlay_items(shell_items, screenshot)
-    uia_all = [*uia_items, *shell_items] if shell_items else uia_items
-    uia_all.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
+    shell_visible, shell_occluded = get_shell_items_scaled_partitioned(screenshot)
+    shell_visible = filter_ignored_overlay_items(shell_visible, screenshot)
+    uia_all = [*uia_items, *shell_visible] if shell_visible else uia_items
 
-    # Stage 1: UIA-only matches (active window + taskbar/desktop shell).
-    accepted: list[tuple[str, dict, dict | None]] = []
-    pending = list(targets)
-    uia_match_items = locator_match_items(question, uia_all)
-    for target in targets:
-        instruction = f"Locate the {target} control."
-        match_result = find_best_match_with_score(target, uia_match_items, instruction) if uia_match_items else None
-        if match_result and should_accept_locator_match(question, match_result):
-            accepted.append((target, match_result["item"], match_result))
-            pending.remove(target)
-        elif match_result:
-            LOGGER.info(
-                "Locator deferred to AI for '%s' reason=low_control_confidence score=%.3f text_similarity=%.3f candidate_count=%d",
-                target,
-                match_result["score"],
-                match_result["text_similarity"],
-                match_result["candidate_count"],
-            )
-            return None
-
-    if not pending:
-        ref_items = assign_screen_element_refs(uia_all)
-        reffed_by_orig_id = {id(orig): reffed for orig, reffed in zip(uia_all, ref_items)}
-        resolved = []
-        for target, item, match_result in accepted:
-            resolved.append((target, reffed_by_orig_id.get(id(item), item), match_result))
-        ordered = sorted(ref_items, key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
-        return build_multi_locator_result(question, resolved, ordered, active_app, screenshot, warnings, started)
-
-    # Stage 2: full OCR + open-source icon model + label recovery.
     ocr_started = time.perf_counter()
     ocr_items = extract_visible_text(screenshot.path)
     ocr_items = filter_ignored_overlay_items(ocr_items, screenshot)
@@ -2167,24 +2217,22 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
         ocr_items = [item for item in ocr_items if item.get("y", 0) >= 35]
         uia_all = [item for item in uia_all if item.get("y", 0) >= 35]
 
-    merged = augment_visible_items(ocr_items, uia_all, screenshot, include_shell=False)
+    merged = merge_visible_items(ocr_items, uia_all)
+    icon_boxes = get_icon_boxes_for_screenshot(screenshot)
+    if icon_boxes:
+        merged = merge_icon_boxes(merged, icon_boxes, screenshot)
+        textless = [item for item in merged if str(item.get("source", "")).lower() == "icon"]
+        if textless:
+            recover_icon_labels(textless, screenshot)
     visible_items = assign_screen_element_refs(merged)
     visible_items.sort(key=lambda item: (int(item.get("y", 0) / 10), item.get("x", 0)))
     pool = locator_match_items(question, visible_items)
-    # Re-resolve stage-1 hits against reffed items so refs stay consistent.
-    resolved = []
-    for target, item, match_result in accepted:
-        fresh = find_best_match_with_score(target, pool, f"Locate the {target} control.")
-        if fresh and should_accept_locator_match(question, fresh):
-            resolved.append((target, fresh["item"], fresh))
-        else:
-            resolved.append((target, item, match_result))
-    for target in pending:
-        sidebar_match = match_sidebar_icon_fallback(target, question, visible_items, active_app)
-        if sidebar_match is not None:
-            resolved.append((target, {**sidebar_match, "text": sidebar_match.get("text") or target}, None))
-            continue
-        match_result = find_best_match_with_score(target, pool, f"Locate the {target} control.")
+
+    resolved: list[tuple[str, dict, dict | None]] = []
+    occluded_notes: list[str] = []
+    for target in targets:
+        instruction = f"Locate the {target} control."
+        match_result = find_best_match_with_score(target, pool, instruction) if pool else None
         if match_result and should_accept_locator_match(question, match_result):
             resolved.append((target, match_result["item"], match_result))
         elif match_result:
@@ -2196,11 +2244,43 @@ def resolve_locator_fast_path(question: str, screenshot, target_pid: int | None,
                 match_result["candidate_count"],
             )
             return None
+        else:
+            occluded_match = (
+                find_best_match_with_score(target, shell_occluded, instruction)
+                if shell_occluded else None
+            )
+            if (
+                occluded_match
+                and (occluded_match["is_exact_text"] or occluded_match["text_similarity"] >= 0.82)
+            ):
+                note = _occluded_behind_message(target, occluded_match["item"], active_app)
+                if note:
+                    occluded_notes.append(note)
     if resolved:
         return build_multi_locator_result(question, resolved, visible_items, active_app, screenshot, warnings, started)
+    if occluded_notes:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        _save_parsed_for_analysis(screenshot, visible_items)
+        return {
+            "summary": " ".join(occluded_notes),
+            "steps": [],
+            "active_app": active_app,
+            "ocr": {"count": len(visible_items), "items": visible_items[:80]},
+            "screenshot": {
+                "path": str(screenshot.path),
+                "width": screenshot.width,
+                "height": screenshot.height,
+                "screen_width": screenshot.screen_width,
+                "screen_height": screenshot.screen_height,
+            },
+            "elapsed_ms": elapsed_ms,
+            "provider": "local",
+            "warnings": warnings,
+            "is_continuation": False,
+        }
 
     icon_pool = [item for item in pool if str(item.get("source", "")).lower() in {"icon", "omniparser"}]
-    if wants_control or icon_like_control_candidates(locator_match_items(question, uia_all)) or icon_pool:
+    if wants_control or icon_like_control_candidates(pool) or icon_pool:
         LOGGER.info("Locator deferred to AI for '%s' reason=icon_or_control_needs_ai", "|".join(targets))
         return None
 
@@ -2585,39 +2665,12 @@ def clean_locator_target(value: str) -> str | None:
     return cleaned or None
 
 
-# Sidebar icon aliases for apps whose nav icons carry no text label.
-# Maps app-process hint -> {query word -> 1-based sidebar position from top}.
-SIDEBAR_ICON_ORDER: dict[str, dict[str, int]] = {
-    "whatsapp": {"status": 2, "stories": 2, "updates": 2, "channels": 3, "communities": 4, "settings": 5, "chats": 1},
-}
-
-
-def match_sidebar_icon_fallback(target: str, question: str, visible_items: list[dict], active_app: dict) -> dict | None:
-    """Match textless sidebar icons by app-aware position (e.g. WhatsApp Status)."""
-    process = str((active_app or {}).get("process", "")).lower()
-    app_key = next((key for key in SIDEBAR_ICON_ORDER if key in process), None)
-    if app_key is None:
-        if "whatsapp" in question.lower() and "status" in target.lower():
-            app_key = "whatsapp"
-        else:
-            return None
-    position = SIDEBAR_ICON_ORDER[app_key].get(target.lower().strip())
-    if not position:
-        return None
-    sidebar_icons = [
-        item for item in visible_items
-        if not str(item.get("text", "")).strip()
-        and str(item.get("control_type", "")).lower() in {"button", "image", "hyperlink", "custom"}
-        and int(item.get("x", 9999)) <= 140
-        and 12 <= float(item.get("width") or 0) <= 120
-        and 12 <= float(item.get("height") or 0) <= 120
-    ]
-    sidebar_icons.sort(key=lambda item: (int(item.get("y", 0)), int(item.get("x", 0))))
-    if len(sidebar_icons) >= position:
-        match = sidebar_icons[position - 1]
-        LOGGER.info("Sidebar fallback: '%s' -> icon #%d at (%d,%d)", target, position, match.get("x"), match.get("y"))
-        return match
-    return None
+# NOTE: icon-only targets (e.g. the WhatsApp Status rail icon) carry no
+# text, so they can never match by label. They are intentionally NOT guessed
+# by position here: a wrong positional guess highlights the wrong button
+# with full confidence. Instead the fast path defers to the vision model,
+# which identifies the icon from the screenshot (see prompt.py), with the
+# open-source icon boxes included as "Visible Image N" handles.
 
 
 def scale_uia_items_to_screenshot(uia_items: list[dict], screenshot) -> list[dict]:

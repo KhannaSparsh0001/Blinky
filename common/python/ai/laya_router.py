@@ -222,6 +222,15 @@ def classify_with_laya(query: str) -> dict[str, Any] | None:
         if app_open_match:
             candidate = re.sub(r"\b(app|application|only|just|window|please)$", "", app_open_match.group("app"), flags=re.IGNORECASE).strip()
             if candidate and not any(w in candidate.lower() for w in [" and ", " then ", " type ", " write ", " search ", " find "]):
+                from computer_use.agent import is_web_destination, is_in_app_action
+                if is_web_destination(candidate) or is_in_app_action(candidate):
+                    return {
+                        "intent": "DESKTOP_AUTOMATION",
+                        "domain": "desktop_os",
+                        "action": "control_gui",
+                        "confidence": 1.0,
+                        "source": "structural_guard",
+                    }
                 # Notepad open goes to WINDOWS_USE so UIA can handle it properly
                 if "notepad" in candidate.lower():
                     return {

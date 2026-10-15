@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blinky System Architecture & Execution Map",
+    "output": ".archify/architecture-blinky-map-20261015-110400/blinky-map.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/KingSahil/Blinky.git",
+      "revision": "950e0f4508e820e15d8b2c4b3db6fffdddb0ef6a",
+      "provider": "github",
+      "link_mode": "web"
+    }
+  },
+  "components": [
+    {
+      "id": "mobile",
+      "type": "frontend",
+      "label": "Mobile Companion",
+      "sublabel": "Expo React Native 57",
+      "tag": "TLS Pinning + WoL",
+      "pos": [40, 260],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/mobile/App.tsx", "line": 1, "end_line": 40, "label": "Mobile Companion UI" },
+        { "path": "common/mobile/usePCWebSocket.ts", "line": 1, "end_line": 40, "label": "BlinkySecureSocket Transport" }
+      ]
+    },
+    {
+      "id": "peripherals",
+      "type": "external",
+      "label": "External Peripherals",
+      "sublabel": "ESP32 & WhatsApp Bot",
+      "pos": [40, 440],
+      "size": [140, 64],
+      "sources": [
+        { "path": "esp32_firmware/BlinkyUniversalDaemon/BlinkyUniversalDaemon.ino", "line": 1, "end_line": 30, "label": "ESP32 Micro-Daemon Firmware" },
+        { "path": "common/whatsapp_backend/server.js", "line": 1, "end_line": 35, "label": "WhatsApp Bridge Server" }
+      ]
+    },
+    {
+      "id": "tauri_frontend",
+      "type": "frontend",
+      "label": "Desktop Overlay",
+      "sublabel": "React 19 / Transparent HUD",
+      "tag": "WDA_EXCLUDE",
+      "pos": [230, 80],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/frontend/src/App.tsx", "line": 1, "end_line": 35, "label": "CommandBar & Overlay UI" }
+      ]
+    },
+    {
+      "id": "ws_gateway",
+      "type": "security",
+      "label": "WebSocket Gateway",
+      "sublabel": "Rustls WSS :9001",
+      "tag": "SHA-256 Pinning",
+      "pos": [230, 260],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/websocket.rs", "line": 430, "end_line": 445, "label": "WSS Listener Bind 9001" }
+      ]
+    },
+    {
+      "id": "file_server",
+      "type": "backend",
+      "label": "File Server",
+      "sublabel": "16MB Chunked HTTPS :9002",
+      "pos": [230, 440],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/file_transfer.rs", "line": 70, "end_line": 85, "label": "File Server Bind 9002" }
+      ]
+    },
+    {
+      "id": "tauri_rust",
+      "type": "backend",
+      "label": "Tauri 2 Rust Core",
+      "sublabel": "IPC Router & Window Control",
+      "pos": [430, 80],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/main.rs", "line": 1, "end_line": 23, "label": "Tauri Entry & CursorGuard" },
+        { "path": "common/src-tauri/src/lib.rs", "line": 20, "end_line": 60, "label": "IPC Commands & Python Process" }
+      ]
+    },
+    {
+      "id": "python_supervisor",
+      "type": "backend",
+      "label": "Python Orchestrator",
+      "sublabel": "Subprocess Daemon (main.py)",
+      "pos": [430, 260],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/main.py", "line": 1, "end_line": 40, "label": "Python Daemon Entry" }
+      ]
+    },
+    {
+      "id": "preflight_router",
+      "type": "backend",
+      "label": "Preflight Classifier",
+      "sublabel": "Intent Routing & Dispatch",
+      "tag": "Zero-Screen Fast Path",
+      "pos": [650, 260],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/ai/laya_router.py", "line": 95, "end_line": 120, "label": "Preflight Intent Classification" },
+        { "path": "common/python/agent_router.py", "line": 955, "end_line": 975, "label": "Multi-Tool Router Dispatch" }
+      ]
+    },
+    {
+      "id": "computer_use",
+      "type": "backend",
+      "label": "Actuation & Autopilot",
+      "sublabel": "SendInput / ydotool Loop",
+      "tag": "@ref Spatial Index",
+      "pos": [860, 260],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/computer_use/actuator.py", "line": 1, "end_line": 30, "label": "Platform Actuator Facade" },
+        { "path": "common/python/computer_use/loop.py", "line": 1, "end_line": 35, "label": "Bounded Execution Loop" }
+      ]
+    },
+    {
+      "id": "screen_capture",
+      "type": "backend",
+      "label": "Screen Capture",
+      "sublabel": "dxcam / PipeWire / Portal",
+      "pos": [650, 440],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/capture/__init__.py", "line": 1, "end_line": 35, "label": "Hardware Frame Grabber" }
+      ]
+    },
+    {
+      "id": "vision_grounding",
+      "type": "backend",
+      "label": "Vision Grounding",
+      "sublabel": "WinRT OCR + OmniParser YOLO",
+      "pos": [860, 440],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/ocr/omniparser.py", "line": 15, "end_line": 35, "label": "OmniParser Icon Grounder" }
+      ]
+    },
+    {
+      "id": "sarvam_audio",
+      "type": "external",
+      "label": "Sarvam Voice & Audio",
+      "sublabel": "saaras:v3 STT / bulbul:v3 TTS",
+      "tag": "Word Highlight Sync",
+      "pos": [1060, 80],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/websocket.rs", "line": 2195, "end_line": 2205, "label": "Sarvam STT WebSocket Route" }
+      ]
+    },
+    {
+      "id": "wil_searxng",
+      "type": "cloud",
+      "label": "Web-In-The-Loop",
+      "sublabel": "Playwright + Local SearXNG",
+      "pos": [1060, 260],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/browser_agent.py", "line": 1, "end_line": 30, "label": "Browser Agent Planning" }
+      ]
+    },
+    {
+      "id": "app_context",
+      "type": "cloud",
+      "label": "App Context Cache",
+      "sublabel": "Dynamic Shortcut Discovery",
+      "pos": [1060, 440],
+      "size": [140, 64],
+      "sources": [
+        { "path": "common/python/main.py", "line": 50, "end_line": 70, "label": "Dynamic App Context Knowledge" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Desktop Host (Tauri 2 + Python Runtime)",
+      "wraps": [
+        "tauri_frontend",
+        "tauri_rust",
+        "ws_gateway",
+        "python_supervisor",
+        "preflight_router",
+        "computer_use",
+        "file_server",
+        "screen_capture",
+        "vision_grounding"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "security-group",
+      "label": "Local TLS Gateway (:9001 / :9002)",
+      "wraps": ["ws_gateway", "file_server"],
+      "pad": 10
+    }
+  ],
+  "connections": [
+    {
+      "from": "mobile",
+      "to": "ws_gateway",
+      "label": "WSS :9001",
+      "variant": "security"
+    },
+    {
+      "from": "mobile",
+      "to": "file_server",
+      "label": "HTTPS :9002",
+      "variant": "emphasis"
+    },
+    {
+      "from": "peripherals",
+      "to": "ws_gateway",
+      "label": "Wi-Fi & Sockets",
+      "variant": "dashed"
+    },
+    {
+      "from": "tauri_frontend",
+      "to": "tauri_rust",
+      "label": "Tauri IPC",
+      "variant": "emphasis"
+    },
+    {
+      "from": "ws_gateway",
+      "to": "tauri_rust",
+      "label": "Validated WS Packets",
+      "variant": "security"
+    },
+    {
+      "from": "file_server",
+      "to": "python_supervisor",
+      "label": "File Chunks",
+      "variant": "default"
+    },
+    {
+      "from": "tauri_rust",
+      "to": "python_supervisor",
+      "label": "Stdio JSON IPC",
+      "variant": "emphasis"
+    },
+    {
+      "from": "python_supervisor",
+      "to": "preflight_router",
+      "label": "Classify Query",
+      "variant": "default"
+    },
+    {
+      "from": "preflight_router",
+      "to": "screen_capture",
+      "label": "Automation Intent",
+      "variant": "emphasis"
+    },
+    {
+      "from": "screen_capture",
+      "to": "vision_grounding",
+      "label": "Raw Pixels",
+      "variant": "emphasis"
+    },
+    {
+      "from": "vision_grounding",
+      "to": "computer_use",
+      "label": "@ref Spatial Index",
+      "variant": "emphasis"
+    },
+    {
+      "from": "tauri_frontend",
+      "to": "sarvam_audio",
+      "label": "Audio & Word Sync",
+      "variant": "dashed"
+    },
+    {
+      "from": "preflight_router",
+      "to": "wil_searxng",
+      "label": "Web Search Intent",
+      "variant": "default"
+    },
+    {
+      "from": "preflight_router",
+      "to": "app_context",
+      "label": "Shortcut Lookup",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Unified Desktop & Mobile",
+      "items": [
+        "Expo Companion connects via WSS :9001 with certificate public-key pinning",
+        "16MB chunked file transfer server on port :9002 for media and screenshots",
+        "Wake-on-LAN and Sentinel telemetry monitor PC status and power controls"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Computer-Use & Grounding Engine",
+      "items": [
+        "Preflight intent classifier routes zero-screen queries without capturing screenshots",
+        "OmniParser YOLO and WinRT OCR fuse into stable @ref interactive spatial index",
+        "Bounded autopilot loop executes actions via SendInput (Win) and ydotool (Linux)"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Multimodal Voice & External Bridges",
+      "items": [
+        "Sarvam AI saaras:v3 STT and bulbul:v3 TTS with synchronized dynamic word highlight",
+        "ESP32 ambient light micro-daemon signals agent and system states via WiFi",
+        "Headless WhatsApp Web bridge enables conversational triggers from outside local LAN"
+      ]
+    }
+  ]
+}

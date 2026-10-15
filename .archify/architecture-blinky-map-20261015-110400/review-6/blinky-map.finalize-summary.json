@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+    "sha256": "877e901a882a9086e24e2003000b43fb07c478af52dcb5a951bf45a66a308de1",
+    "bytes": 13129
+  },
+  "artifact": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+    "sha256": "2cc933859af68865d765ae728187e8eab00682cdb834c1bf3c57614caa60fb7e",
+    "bytes": 860122
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-6\\blinky-map.finalize.json",
+    "summaryReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-6\\blinky-map.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-6\\blinky-map.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-15T05:38:00.636Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2658,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "from": "mobile",
+            "to": "file_server",
+            "label": "HTTPS :9002",
+            "collectionIndex": 3,
+            "artifactIndex": 4
+          },
+          "right": {
+            "from": "peripherals",
+            "to": "ws_gateway",
+            "label": "Wi-Fi &amp; Sockets",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "point": [
+            223,
+            300.22222222222223
+          ]
+        }
+      ],
+      "detours": [],
+      "truncated": false
+    },
+    "hints": [
+      "mobile → file_server crosses peripherals → ws_gateway: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

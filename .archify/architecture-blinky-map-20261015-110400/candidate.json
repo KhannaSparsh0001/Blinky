@@ -1,0 +1,427 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blinky System Architecture & Execution Map",
+    "output": ".archify/architecture-blinky-map-20261015-110400/blinky-map.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/KingSahil/Blinky.git",
+      "revision": "950e0f4508e820e15d8b2c4b3db6fffdddb0ef6a",
+      "provider": "github",
+      "link_mode": "web"
+    }
+  },
+  "components": [
+    {
+      "id": "antigravity_ide",
+      "type": "external",
+      "label": "Antigravity IDE",
+      "sublabel": "Agent Lifecycle Hooks",
+      "tag": "IDE Integration",
+      "pos": [40, 80],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/antigravity_bridge.py", "line": 1, "end_line": 25, "label": "Antigravity Bridge Hook Client" }
+      ]
+    },
+    {
+      "id": "peripherals",
+      "type": "external",
+      "label": "External Peripherals",
+      "sublabel": "ESP32 & WhatsApp Bot",
+      "pos": [40, 260],
+      "size": [150, 64],
+      "sources": [
+        { "path": "esp32_firmware/BlinkyUniversalDaemon/BlinkyUniversalDaemon.ino", "line": 1, "end_line": 30, "label": "ESP32 Micro-Daemon Firmware" },
+        { "path": "common/whatsapp_backend/server.js", "line": 1, "end_line": 35, "label": "WhatsApp Bridge Server" }
+      ]
+    },
+    {
+      "id": "mobile",
+      "type": "frontend",
+      "label": "Mobile Companion",
+      "sublabel": "Expo React Native 57",
+      "tag": "TLS Pinning + KeyStore",
+      "pos": [40, 440],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/mobile/App.tsx", "line": 1, "end_line": 40, "label": "Mobile Companion UI" },
+        { "path": "common/mobile/usePCWebSocket.ts", "line": 1, "end_line": 40, "label": "BlinkySecureSocket Transport" }
+      ]
+    },
+    {
+      "id": "antigravity_bridge",
+      "type": "backend",
+      "label": "Antigravity Bridge",
+      "sublabel": "Webhook Listener (:9003)",
+      "tag": "Mobile HITL Gate",
+      "pos": [250, 80],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/antigravity_bridge.py", "line": 30, "end_line": 55, "label": "Port 9003 Webhook Dispatch" }
+      ]
+    },
+    {
+      "id": "ws_gateway",
+      "type": "security",
+      "label": "WebSocket Gateway",
+      "sublabel": "Rustls WSS :9001",
+      "tag": "SHA-256 Pinning",
+      "pos": [250, 260],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/websocket.rs", "line": 430, "end_line": 445, "label": "WSS Listener Bind 9001" }
+      ]
+    },
+    {
+      "id": "file_server",
+      "type": "backend",
+      "label": "File Server",
+      "sublabel": "16MB Chunked HTTPS :9002",
+      "pos": [250, 440],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/file_transfer.rs", "line": 70, "end_line": 85, "label": "File Server Bind 9002" }
+      ]
+    },
+    {
+      "id": "aicut_suite",
+      "type": "backend",
+      "label": "AiCut Video & MCP",
+      "sublabel": "C++17 Engine + FFmpeg",
+      "tag": "faster-whisper Aligner",
+      "pos": [250, 620],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/aicut/aicut_mcp.py", "line": 1, "end_line": 40, "label": "AiCut MCP Server Protocol" },
+        { "path": "common/aicut/CMakeLists.txt", "line": 1, "end_line": 25, "label": "AiCut C++17 CMake Engine" }
+      ]
+    },
+    {
+      "id": "tauri_rust",
+      "type": "backend",
+      "label": "Tauri 2 Rust Core",
+      "sublabel": "IPC Router & Window Control",
+      "pos": [470, 80],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/main.rs", "line": 1, "end_line": 23, "label": "Tauri Entry & CursorGuard" },
+        { "path": "common/src-tauri/src/lib.rs", "line": 20, "end_line": 60, "label": "IPC Commands & Python Process" }
+      ]
+    },
+    {
+      "id": "blinky_agent",
+      "type": "backend",
+      "label": "Pure Rust Agent",
+      "sublabel": "crates/blinky-agent Loop",
+      "tag": "Multi-Provider LLM",
+      "pos": [470, 260],
+      "size": [150, 64],
+      "sources": [
+        { "path": "crates/blinky-agent/src/lib.rs", "line": 1, "end_line": 6, "label": "Native Rust Agent Interface" },
+        { "path": "crates/blinky-agent/src/tools/desktop.rs", "line": 1, "end_line": 30, "label": "Native Desktop Actuation Tools" }
+      ]
+    },
+    {
+      "id": "blinky_daemon",
+      "type": "backend",
+      "label": "Pure Rust Daemon",
+      "sublabel": "crates/blinky-daemon",
+      "tag": "Wayland & /dev/uinput",
+      "pos": [470, 440],
+      "size": [150, 64],
+      "sources": [
+        { "path": "crates/blinky-daemon/src/lib.rs", "line": 1, "end_line": 23, "label": "Headless Linux Daemon Modules" }
+      ]
+    },
+    {
+      "id": "tauri_frontend",
+      "type": "frontend",
+      "label": "Desktop Overlay",
+      "sublabel": "React 19 / Transparent HUD",
+      "tag": "WDA_EXCLUDE",
+      "pos": [740, 80],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/frontend/src/App.tsx", "line": 1, "end_line": 35, "label": "CommandBar & Overlay UI" }
+      ]
+    },
+    {
+      "id": "decision_engine",
+      "type": "backend",
+      "label": "System 1 Neural Router",
+      "sublabel": "decision_engine/ (ONNX)",
+      "tag": "<1ms Non-Autoregressive",
+      "pos": [740, 260],
+      "size": [150, 64],
+      "sources": [
+        { "path": "decision_engine/infer.py", "line": 1, "end_line": 40, "label": "System 1 Transformer Inference" },
+        { "path": "crates/blinky-agent/src/decision/mod.rs", "line": 1, "end_line": 35, "label": "Rust Decision Classifier" }
+      ]
+    },
+    {
+      "id": "python_supervisor",
+      "type": "backend",
+      "label": "Python Backend",
+      "sublabel": "Preflight Router & Daemon",
+      "pos": [740, 440],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/main.py", "line": 1, "end_line": 40, "label": "Python Daemon Entry" },
+        { "path": "common/python/ai/laya_router.py", "line": 95, "end_line": 120, "label": "Preflight Intent Classification" }
+      ]
+    },
+    {
+      "id": "screen_capture",
+      "type": "backend",
+      "label": "Screen Capture",
+      "sublabel": "dxcam / PipeWire / Portal",
+      "pos": [740, 620],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/capture/__init__.py", "line": 1, "end_line": 35, "label": "Hardware Frame Grabber" }
+      ]
+    },
+    {
+      "id": "notebook_okf",
+      "type": "backend",
+      "label": "Notebook Hub & OKF",
+      "sublabel": "Full-Context Knowledge",
+      "tag": "▶ Execute on PC",
+      "pos": [1010, 80],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/notebooks/okf_context_builder.py", "line": 1, "end_line": 35, "label": "OKF Context Formatter" },
+        { "path": "docs/OKF.md", "line": 1, "end_line": 30, "label": "OKF Architecture Specification" }
+      ]
+    },
+    {
+      "id": "computer_use",
+      "type": "backend",
+      "label": "Actuation & Autopilot",
+      "sublabel": "SendInput / ydotool Loop",
+      "tag": "@ref Spatial Index",
+      "pos": [1010, 260],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/computer_use/actuator.py", "line": 1, "end_line": 30, "label": "Platform Actuator Facade" },
+        { "path": "common/python/computer_use/loop.py", "line": 1, "end_line": 35, "label": "Bounded Execution Loop" }
+      ]
+    },
+    {
+      "id": "vision_grounding",
+      "type": "backend",
+      "label": "Vision Grounding",
+      "sublabel": "WinRT OCR + OmniParser YOLO",
+      "pos": [1010, 620],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/ocr/omniparser.py", "line": 15, "end_line": 35, "label": "OmniParser Icon Grounder" }
+      ]
+    },
+    {
+      "id": "sarvam_audio",
+      "type": "external",
+      "label": "Sarvam Voice & Audio",
+      "sublabel": "saaras:v3 STT / bulbul:v3 TTS",
+      "tag": "Word Highlight Sync",
+      "pos": [1280, 80],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/src-tauri/src/websocket.rs", "line": 2195, "end_line": 2205, "label": "Sarvam STT WebSocket Route" }
+      ]
+    },
+    {
+      "id": "wil_searxng",
+      "type": "cloud",
+      "label": "Web-In-The-Loop",
+      "sublabel": "Playwright + Local SearXNG",
+      "pos": [1280, 260],
+      "size": [150, 64],
+      "sources": [
+        { "path": "common/python/browser_agent.py", "line": 1, "end_line": 30, "label": "Browser Agent Planning" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Desktop Host (Tauri 2 + Python + Native Rust)",
+      "wraps": [
+        "antigravity_bridge",
+        "ws_gateway",
+        "file_server",
+        "aicut_suite",
+        "tauri_rust",
+        "blinky_agent",
+        "blinky_daemon",
+        "tauri_frontend",
+        "decision_engine",
+        "python_supervisor",
+        "screen_capture",
+        "notebook_okf",
+        "computer_use",
+        "vision_grounding"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "security-group",
+      "label": "Local Gateway & Bridges (:9001 / :9002 / :9003)",
+      "wraps": ["antigravity_bridge", "ws_gateway", "file_server", "aicut_suite"],
+      "pad": 10
+    }
+  ],
+  "connections": [
+    {
+      "from": "antigravity_ide",
+      "to": "antigravity_bridge",
+      "label": "IDE Hooks",
+      "variant": "dashed"
+    },
+    {
+      "from": "antigravity_bridge",
+      "to": "ws_gateway",
+      "label": "Stream Status",
+      "variant": "default"
+    },
+    {
+      "from": "mobile",
+      "to": "ws_gateway",
+      "label": "WSS :9001",
+      "variant": "security"
+    },
+    {
+      "from": "mobile",
+      "to": "file_server",
+      "label": "HTTPS :9002",
+      "variant": "emphasis"
+    },
+    {
+      "from": "peripherals",
+      "to": "ws_gateway",
+      "label": "Wi-Fi & Sockets",
+      "variant": "dashed"
+    },
+    {
+      "from": "file_server",
+      "to": "aicut_suite",
+      "label": "Media Sync",
+      "variant": "default"
+    },
+    {
+      "from": "ws_gateway",
+      "to": "tauri_rust",
+      "label": "Validated WS",
+      "variant": "security"
+    },
+    {
+      "from": "tauri_frontend",
+      "to": "tauri_rust",
+      "label": "Tauri IPC",
+      "variant": "emphasis"
+    },
+    {
+      "from": "tauri_rust",
+      "to": "blinky_agent",
+      "label": "Native Agent",
+      "variant": "emphasis"
+    },
+    {
+      "from": "blinky_agent",
+      "to": "blinky_daemon",
+      "label": "UNIX Socket",
+      "variant": "emphasis"
+    },
+    {
+      "from": "blinky_agent",
+      "to": "decision_engine",
+      "label": "System 1 Reflex",
+      "variant": "emphasis"
+    },
+    {
+      "from": "python_supervisor",
+      "to": "decision_engine",
+      "label": "<1ms Classifier",
+      "variant": "default"
+    },
+    {
+      "from": "decision_engine",
+      "to": "computer_use",
+      "label": "Atomic Action",
+      "variant": "emphasis"
+    },
+    {
+      "from": "python_supervisor",
+      "to": "screen_capture",
+      "label": "Trigger Capture",
+      "variant": "default"
+    },
+    {
+      "from": "screen_capture",
+      "to": "vision_grounding",
+      "label": "Raw Pixels",
+      "variant": "emphasis"
+    },
+    {
+      "from": "vision_grounding",
+      "to": "computer_use",
+      "label": "@ref Spatial Index",
+      "variant": "emphasis"
+    },
+    {
+      "from": "tauri_frontend",
+      "to": "notebook_okf",
+      "label": "Notebook Hub",
+      "variant": "default"
+    },
+    {
+      "from": "notebook_okf",
+      "to": "computer_use",
+      "label": "▶ Execute on PC",
+      "variant": "emphasis"
+    },
+    {
+      "from": "notebook_okf",
+      "to": "sarvam_audio",
+      "label": "Audio & Word Sync",
+      "variant": "dashed"
+    },
+    {
+      "from": "computer_use",
+      "to": "wil_searxng",
+      "label": "Web Search Intent",
+      "variant": "default"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Unified Desktop & Standalone Mobile",
+      "items": [
+        "Expo Companion connects via WSS :9001 with certificate public-key pinning and WoL",
+        "Standalone mobile mode syncs API keys to Android KeyStore for offline PC querying",
+        "16MB chunked file transfer server on port :9002 for media, screenshots, and AiCut"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Dual-Tier Cognitive Routing & Actuation",
+      "items": [
+        "System 1 neural engine classifies reflex commands in <1ms without token generation",
+        "Pure Rust blinky-agent and headless blinky-daemon orchestrate zero-overhead execution",
+        "OmniParser YOLO and WinRT OCR fuse into stable @ref interactive spatial index"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Notebook Hub, OKF & Multimedia AI",
+      "items": [
+        "Offline Knowledge Format (OKF) replaces vector RAG with 100% full-context fidelity",
+        "Citations render interactive '▶ Execute on PC' buttons to trigger desktop workflows",
+        "AiCut C++17 and MCP server power natural language trimming, silence cut, and subtitles"
+      ]
+    }
+  ]
+}

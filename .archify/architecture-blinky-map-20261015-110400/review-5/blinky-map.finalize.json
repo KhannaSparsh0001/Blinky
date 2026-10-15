@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "fail",
+  "type": "architecture",
+  "quality": "showcase",
+  "startedAt": "2026-10-15T06:13:28.156Z",
+  "specification": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+    "sha256": "ff7feabe45be34fdc5a983d1ae3cc0bf81270443b9fffc187cee39401e34c2b8",
+    "bytes": 13245
+  },
+  "artifact": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+    "sha256": "0fc147759e0d37bede1d9b6bdf2dd8f130168b900ba7f550035bf9178a9ab007",
+    "bytes": 843885
+  },
+  "stages": {
+    "validate": {
+      "status": "fail",
+      "exitCode": 1,
+      "durationMs": null,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Projects\\Blinky\\.agents\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "architecture",
+        "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+        "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "C:\\Projects\\Blinky",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "ok": false,
+        "command": "deliver",
+        "receiptId": "f2a55434-43e5-4774-900c-f711a2669069",
+        "stage": "render",
+        "type": "architecture",
+        "input": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+        "output": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+        "error": "Architecture layout validation failed:\n- Label \"System 1 Reflex\" has only 70px between \"blinky_agent\" and \"decision_engine\"; it needs at least 98px to stay beside its route — increase that clear gap or place the connected nodes on another readable row, preserving the label.\n- [composition/label-route-clearance] showcase architecture label \"System 1 Reflex\" on connections[10] \"blinky_agent\" -> \"decision_engine\" label \"System 1 Reflex\" is 0px from connections[8] \"tauri_rust\" -> \"python_supervisor\" label \"Stdio JSON IPC\" segment 1 [625, 127.1] -> [625, 472] (label rect [584, 264, 82, 14]; minimum 4px) — adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+        "diagnostics": [
+          {
+            "code": "composition/label-route-clearance",
+            "severity": "error",
+            "message": "[composition/label-route-clearance] showcase architecture label \"System 1 Reflex\" on connections[10] \"blinky_agent\" -> \"decision_engine\" label \"System 1 Reflex\" is 0px from connections[8] \"tauri_rust\" -> \"python_supervisor\" label \"Stdio JSON IPC\" segment 1 [625, 127.1] -> [625, 472] (label rect [584, 264, 82, 14]; minimum 4px) — adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+            "subject": {
+              "diagramType": "architecture",
+              "collection": "connections",
+              "index": 10,
+              "from": "blinky_agent",
+              "to": "decision_engine"
+            },
+            "evidence": {
+              "label": "System 1 Reflex",
+              "otherRelationship": {
+                "diagramType": "architecture",
+                "collection": "connections",
+                "index": 8,
+                "from": "tauri_rust",
+                "to": "python_supervisor"
+              },
+              "segmentIndex": 1,
+              "clearancePx": 0,
+              "minimumPx": 4,
+              "labelRect": {
+                "relation": {
+                  "from": "blinky_agent",
+                  "to": "decision_engine",
+                  "label": "System 1 Reflex",
+                  "variant": "emphasis"
+                },
+                "relationIndex": 10,
+                "label": "System 1 Reflex",
+                "x": 584,
+                "y": 263.95,
+                "width": 82,
+                "height": 14,
+                "lx": 625,
+                "ly": 273.95
+              },
+              "from": [
+                625,
+                127.05
+              ],
+              "to": [
+                625,
+                472
+              ]
+            },
+            "supportedFixes": [
+              "adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel"
+            ]
+          },
+          {
+            "code": "composition/label-gap",
+            "severity": "error",
+            "message": "Label \"System 1 Reflex\" has only 70px between \"blinky_agent\" and \"decision_engine\"; it needs at least 98px to stay beside its route — increase that clear gap or place the connected nodes on another readable row, preserving the label.",
+            "subject": {
+              "diagramType": "architecture",
+              "collection": "connections",
+              "from": "blinky_agent",
+              "to": "decision_engine"
+            },
+            "evidence": {
+              "clearGapPx": 70,
+              "minimumGapPx": 98,
+              "labelWidthPx": 82,
+              "obstacles": [
+                "blinky_agent",
+                "decision_engine"
+              ]
+            },
+            "supportedFixes": [
+              "increase the clear gap between the connected nodes to at least 98px",
+              "reposition the connected nodes together while preserving the full relationship label"
+            ]
+          }
+        ],
+        "provenance": "failed",
+        "update": {
+          "status": "unavailable",
+          "installedVersion": null,
+          "availableVersion": null,
+          "releaseNotes": null,
+          "checkedAt": null,
+          "source": null,
+          "noticeRequired": false,
+          "noticeText": null,
+          "reason": "disabled"
+        }
+      },
+      "execution": "embedded-in-deliver"
+    },
+    "deliver": {
+      "status": "not-run",
+      "execution": "blocked-by-validate"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "composition/label-route-clearance",
+      "severity": "error",
+      "message": "[composition/label-route-clearance] showcase architecture label \"System 1 Reflex\" on connections[10] \"blinky_agent\" -> \"decision_engine\" label \"System 1 Reflex\" is 0px from connections[8] \"tauri_rust\" -> \"python_supervisor\" label \"Stdio JSON IPC\" segment 1 [625, 127.1] -> [625, 472] (label rect [584, 264, 82, 14]; minimum 4px) — adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+      "subject": {
+        "diagramType": "architecture",
+        "collection": "connections",
+        "index": 10,
+        "from": "blinky_agent",
+        "to": "decision_engine"
+      },
+      "evidence": {
+        "label": "System 1 Reflex",
+        "otherRelationship": {
+          "diagramType": "architecture",
+          "collection": "connections",
+          "index": 8,
+          "from": "tauri_rust",
+          "to": "python_supervisor"
+        },
+        "segmentIndex": 1,
+        "clearancePx": 0,
+        "minimumPx": 4,
+        "labelRect": {
+          "relation": {
+            "from": "blinky_agent",
+            "to": "decision_engine",
+            "label": "System 1 Reflex",
+            "variant": "emphasis"
+          },
+          "relationIndex": 10,
+          "label": "System 1 Reflex",
+          "x": 584,
+          "y": 263.95,
+          "width": 82,
+          "height": 14,
+          "lx": 625,
+          "ly": 273.95
+        },
+        "from": [
+          625,
+          127.05
+        ],
+        "to": [
+          625,
+          472
+        ]
+      },
+      "supportedFixes": [
+        "adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel"
+      ]
+    },
+    {
+      "code": "composition/label-gap",
+      "severity": "error",
+      "message": "Label \"System 1 Reflex\" has only 70px between \"blinky_agent\" and \"decision_engine\"; it needs at least 98px to stay beside its route — increase that clear gap or place the connected nodes on another readable row, preserving the label.",
+      "subject": {
+        "diagramType": "architecture",
+        "collection": "connections",
+        "from": "blinky_agent",
+        "to": "decision_engine"
+      },
+      "evidence": {
+        "clearGapPx": 70,
+        "minimumGapPx": 98,
+        "labelWidthPx": 82,
+        "obstacles": [
+          "blinky_agent",
+          "decision_engine"
+        ]
+      },
+      "supportedFixes": [
+        "increase the clear gap between the connected nodes to at least 98px",
+        "reposition the connected nodes together while preserving the full relationship label"
+      ]
+    }
+  ],
+  "evidence": {
+    "receipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-5\\blinky-map.finalize.json",
+    "summaryReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-5\\blinky-map.finalize-summary.json"
+  },
+  "visualReview": "not-requested",
+  "failedStage": "validate",
+  "finishedAt": "2026-10-15T06:13:28.793Z",
+  "durationMs": 636,
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-15T05:38:00.636Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  }
+}

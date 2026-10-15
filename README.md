@@ -45,20 +45,23 @@ Learning complex desktop software often means switching between tutorials, docum
 
 | Capability | What it does |
 |---|---|
+| **System 1 Neural Decision Engine** | Sub-millisecond (<1ms) non-autoregressive ONNX Transformer classifier (`decision_engine/`) routing queries before LLM invocation. |
+| **Blinky Notebook Hub & OKF** | Offline Knowledge Format (OKF) personal workspace (`docs/OKF.md`) with 100% full-context document reasoning, "▶ Execute on PC" actionable citations, and standalone mobile mode with Android KeyStore encryption. |
+| **Pure Rust Agent (`blinky-agent`)** | Ultra-fast native Rust autonomous agent loop (`crates/blinky-agent`) with multi-provider LLM calling (OpenAI, Gemini, Groq, Ollama), native tool registry, and embedded SQLite vector store. |
 | **Screen-aware tutoring** | Captures the active screen, combines OCR with accessibility or visual UI detection, and gives step-by-step guidance with on-screen highlights. |
 | **Voice interaction** | Supports realtime speech input, voice-agent tool calls, spoken responses, turn-taking, and synchronized readback through configured voice providers. |
 | **Hey Blinky wake word** | Runs the bundled `python/hey_blinky.onnx` model locally through ONNX Runtime to detect the wake phrase and start hands-free interaction. |
 | **Agent Mode** | Uses a bounded observe-and-act loop for app launching, keyboard shortcuts, typing, scrolling, and grounded clicks. |
-| **Linux desktop support** | Provides native capture, OCR, application launching, input, scrolling, and system controls. Hyprland is the primary Wayland path; available behavior varies by desktop environment. |
+| **Linux desktop daemon (`blinky-daemon`)** | Native headless Rust daemon for Wayland (Hyprland/wlroots) and X11 with direct `/dev/uinput`, AT-SPI2 DBus trees, and PipeWire capture. |
 | **WhatsApp and AI summaries** | Connects WhatsApp Web by QR code, reports connection status, lists chats, and creates recaps of selected group or direct conversations. |
-| **AiCut video editing** | Handles natural-language trim and merge requests, audio, captions, subtitle generation, script alignment, and caption styles with FFmpeg and faster-whisper. |
+| **AiCut C++17 & MCP Video Suite** | C++17 core engine, CMake build, faster-whisper forced word aligner, intelligent silence removal, and MCP server (`aicut_mcp.py`) for natural language video editing. |
 | **Web research** | Uses the Web Intelligence Layer and SearXNG to retrieve pages and return synthesized answers with clickable sources. Public search fallbacks are available when configured local search is unavailable. |
 | **Browser and app tools** | Provides persistent browser automation, application launching, Spotify playback, product search, YouTube channel statistics, cryptocurrency prices, and Wikipedia lookups. |
-| **Android companion** | Connects to the desktop over an authenticated WebSocket for remote chat, voice, quick actions, and PC controls over LAN, USB, or Tailscale. |
-| **Remote files and camera transfer** | Browses PC files, transfers files between phone and computer, syncs camera selections, and sends media into supported AiCut workflows. |
+| **Android companion** | Connects to the desktop over an authenticated WebSocket with TLS public-key pinning for remote chat, voice, quick actions, and PC controls over LAN, USB, or Tailscale. |
+| **Remote files and camera transfer** | Browses PC files, transfers files between phone and computer with 16MB streaming chunks, syncs camera selections, and sends media into supported AiCut workflows. |
 | **PC power and Wake-on-LAN** | Shows system telemetry and supports lock, sleep, hibernate, restart, shutdown, and Wake-on-LAN for appropriately configured hardware and networks. |
-| **Antigravity IDE bridge** | Sends prompts from mobile, streams IDE activity, and reports final responses or requests for user input. |
-| **ESP32 lighting** | Controls RGB color and brightness through the Blinky ESP32 daemon. |
+| **Antigravity IDE bridge & HITL Gate** | Streams IDE lifecycle events and terminal actions to mobile on port 9003 with human-in-the-loop mobile safety approval cards. |
+| **ESP32 lighting** | Controls RGB color and brightness through the Blinky ESP32 daemon firmware. |
 | **Android access options** | Integrates RevenueCat purchase and entitlement handling, with configured promo codes available for PC-control access. |
 
 Some capabilities need API credentials, optional system packages, or connected hardware. Local Ollama inference is available; selecting a cloud AI or voice provider sends the relevant request data to that provider.
@@ -149,11 +152,15 @@ flowchart  LR
 
 | Layer | Main components |
 |---|---|
-| Desktop interface | React 19, TypeScript, Tauri 2, and Rust |
-| Assistant (`blinky-agent`) | Pure Rust orchestrator, multi-provider AI engine, System 1 reflex logic, request routing |
-| OS & Inputs (`blinky-daemon`) | Headless Rust daemon for Hyprland/wlroots, visual capture, AT-SPI2, /dev/uinput, coordinate transformations |
-| AI and voice | Local Ollama, Groq, assembly/sarvam APIs, with grounded visual targets and normalized JSON-RPC outputs |
-| Mobile | Expo and React Native with authenticated desktop transport |
+| Desktop interface | React 19, TypeScript, Tauri 2 multi-window HUD overlay (`WDA_EXCLUDEFROMCAPTURE`) |
+| Assistant (`blinky-agent`) | Pure Rust orchestrator, multi-provider AI engine (OpenAI, Gemini, Groq, Ollama), native tool registry, embedded vector store |
+| OS & Inputs (`blinky-daemon`) | Headless Rust daemon for Hyprland/wlroots, visual capture, AT-SPI2, `/dev/uinput`, coordinate transformations |
+| Decision Engine (`decision_engine/`) | Sub-millisecond (<1ms) non-autoregressive ONNX Transformer reflex classifier and calibrated logit router |
+| Knowledge Hub (`docs/OKF.md`) | Offline Knowledge Format (OKF) context engine, actionable "▶ Execute on PC" desktop execution, Android KeyStore sync |
+| Media & Video (`common/aicut/`) | C++17 video processing engine, CMake, FFmpeg, faster-whisper forced alignment, and AiCut MCP server |
+| AI and voice | Local Ollama, Groq, AssemblyAI, Sarvam `saaras:v3`/`bulbul:v3` with synchronized dynamic word highlight |
+| Integrations & Bridges | Antigravity IDE bridge (:9003) with mobile HITL safety gate, ESP32 NeoPixel daemon, WhatsApp Web bot |
+| Mobile Companion | Expo React Native with TLS public-key pinning, Sentinel telemetry, WoL, and 16MB chunked file transfer |
 
 ## Installation
 
@@ -241,18 +248,20 @@ docker compose -f common/docker-compose.yml up -d
 
 | Path | Contents |
 |---|---|
-| `common/frontend/` | React command bar, visual overlay, voice, guidance, and autopilot UI |
-| `common/src-tauri/` | Tauri desktop host, Rust platform services, authenticated WebSocket, and file transfer |
+| `crates/blinky-agent/` | Pure Rust AI agent orchestration loop, multi-provider LLM engine, native tool registry, embedded vector store |
+| `crates/blinky-daemon/` | Pure Rust OS/hardware headless Linux daemon (Wayland/X11, AT-SPI2 DBus, `/dev/uinput`, PipeWire) |
+| `decision_engine/` | Sub-millisecond (<1ms) ONNX Transformer reflex classification model, dataset generator, and calibration |
+| `common/frontend/` | React 19 command bar, visual overlay (`WDA_EXCLUDEFROMCAPTURE`), voice, guidance, and autopilot UI |
+| `common/src-tauri/` | Tauri 2 desktop host, Rust platform services, TLS WebSocket gateway (:9001), and 16MB file streamer (:9002) |
+| `common/python/notebooks/` | Blinky Notebook Hub & Offline Knowledge Format (OKF) engine, document parsers, and vector store |
+| `common/aicut/` | C++17 video processing engine, CMake build, faster-whisper forced alignment, and AiCut MCP server |
+| `common/mobile/` | Expo/React Native Android companion, remote control, files, and standalone Android KeyStore support |
 | `common/whatsapp_backend/` | WhatsApp Web session, chat, and summary service |
-| `common/aicut/` | C++ video processing components used by AiCut |
-| `common/mobile/` | Expo/React Native Android companion, remote control, files, and system screens |
 | `windows/` | Windows-specific Rust, setup, and system integrations |
-| `crates/blinky-daemon/` | Pure Rust OS/hardware headless Linux daemon (Wayland/X11) |
-| `crates/blinky-agent/` | Pure Rust AI agent orchestration loop, intent classifier, tools |
 | `linux/` | Linux setup scripts and quick-start guide |
 | `python/` | Shared wake-word listener and bundled `hey_blinky.onnx` model |
-| `esp32_firmware/` | ESP32 universal daemon firmware for lighting and device control |
-| `docs/` | Platform, security, voice, distribution, and architecture guides |
+| `esp32_firmware/` | ESP32 universal daemon firmware for NeoPixel lighting and device control |
+| `docs/` | Platform, security, voice, OKF, distribution, and architecture guides |
 | `local-docs/` | Runtime flow, configuration, testing, and release notes |
 
 ## Configuration and privacy
@@ -275,6 +284,8 @@ Keep `.env` and all secret keys out of source control. The mobile desktop connec
 
 | Guide | Covers |
 |---|---|
+| [`BLINKY_SUMMARY.md`](BLINKY_SUMMARY.md) | Full architectural summary, System 1 engine, pure-Rust agent/daemon, OKF, and integrations |
+| [`docs/OKF.md`](docs/OKF.md) | Blinky Notebook Hub: Offline Knowledge Format (OKF) & RAG architecture plan |
 | [`linux/quick_start.md`](linux/quick_start.md) | Linux dependencies, inference setup, OCR, and launch steps |
 | [`docs/LINUX-PORT-ROADMAP.md`](docs/LINUX-PORT-ROADMAP.md) | Linux backends and desktop-environment support status |
 | [`docs/ASSEMBLYAI_VOICE_AGENT.md`](docs/ASSEMBLYAI_VOICE_AGENT.md) | AssemblyAI voice-agent integration |

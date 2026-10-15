@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\candidate.json",
+    "sha256": "8b271a72b8036d5aab7359c530450e49c0f646d40d7045f3cee92aa7aa8ab8ae",
+    "bytes": 13129
+  },
+  "artifact": {
+    "path": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\blinky-map.html",
+    "sha256": "adac8d22a0226c46b704db0215676d984208265ead78e2b881195d7a6c069df1",
+    "bytes": 860163
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-7\\blinky-map.finalize.json",
+    "summaryReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-7\\blinky-map.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Projects\\Blinky\\.archify\\architecture-blinky-map-20261015-110400\\review-7\\blinky-map.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-15T05:38:00.636Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2698,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "from": "mobile",
+            "to": "ws_gateway",
+            "label": "WSS :9001",
+            "collectionIndex": 2,
+            "artifactIndex": 3
+          },
+          "bends": 3,
+          "stretch": 1
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "mobile → ws_gateway needs 3 bends: move node mobile or ws_gateway so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}
